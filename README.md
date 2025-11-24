@@ -15,13 +15,13 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 ## Demo Videos
 
 ### Demo
-https://github.com/user-attachments/assets/b67c5022-a7b5-4263-80f7-91fb0eff7cee
+![Demo](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/demo1.gif)
 
 ### File Editing
-https://github.com/user-attachments/assets/6689f0ca-be30-4b89-9545-e18afee1a76e
+![File Editing](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/edit-file.gif)
 
 ### File Context
-https://github.com/user-attachments/assets/a5b2a5c1-b601-4b05-9de9-2b387e21b3f2
+![File Context](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/file-context.gif)
 
 ## Coming Soon
 
