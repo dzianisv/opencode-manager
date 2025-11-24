@@ -22,12 +22,7 @@ export default defineConfig({
         target: process.env.VITE_API_URL,
         changeOrigin: true,
       },
-    } : {
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-    },
+    } : undefined,
   },
   build: {
     assetsInlineLimit: 4096,
