@@ -12,6 +12,17 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 -  **File Browser** - Browse, edit, and manage files in your workspaces
 -  **Push PRs to GitHub** - Create and push pull requests directly from your phone on the go
 
+## Demo Videos
+
+### File Context
+https://github.com/user-attachments/assets/a5b2a5c1-b601-4b05-9de9-2b387e21b3f2
+
+### File Editing
+https://github.com/user-attachments/assets/6689f0ca-be30-4b89-9545-e18afee1a76e
+
+### Demo
+https://github.com/user-attachments/assets/b67c5022-a7b5-4263-80f7-91fb0eff7cee
+
 ## Coming Soon
 
 -  **Authentication** - User authentication and session management
