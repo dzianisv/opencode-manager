@@ -145,7 +145,13 @@ export class SettingsService {
     const contentValidated = OpenCodeConfigSchema.parse(request.content)
     const now = Date.now()
 
-    if (request.isDefault) {
+    const existingCount = this.db
+      .query('SELECT COUNT(*) as count FROM opencode_configs WHERE user_id = ?')
+      .get(userId) as { count: number }
+    
+    const shouldBeDefault = request.isDefault || existingCount.count === 0
+
+    if (shouldBeDefault) {
       this.db
         .query('UPDATE opencode_configs SET is_default = FALSE WHERE user_id = ?')
         .run(userId)
@@ -160,7 +166,7 @@ export class SettingsService {
         userId,
         request.name,
         JSON.stringify(contentValidated),
-        request.isDefault || false,
+        shouldBeDefault,
         now,
         now
       )
@@ -169,7 +175,7 @@ export class SettingsService {
       id: result.lastInsertRowid as number,
       name: request.name,
       content: contentValidated,
-      isDefault: request.isDefault || false,
+      isDefault: shouldBeDefault,
       createdAt: now,
       updatedAt: now,
     }
@@ -240,6 +246,7 @@ export class SettingsService {
     const deleted = result.changes > 0
     if (deleted) {
       logger.info(`Deleted OpenCode config '${configName}' for user: ${userId}`)
+      this.ensureSingleConfigIsDefault(userId)
     }
 
     return deleted
@@ -372,6 +379,25 @@ export class SettingsService {
     } catch (error) {
       logger.error(`Failed to stringify config '${configName}':`, error)
       return null
+    }
+  }
+
+  ensureSingleConfigIsDefault(userId: string = 'default'): void {
+    const hasDefault = this.db
+      .query('SELECT COUNT(*) as count FROM opencode_configs WHERE user_id = ? AND is_default = TRUE')
+      .get(userId) as { count: number }
+
+    if (hasDefault.count === 0) {
+      const firstConfig = this.db
+        .query('SELECT config_name FROM opencode_configs WHERE user_id = ? ORDER BY created_at ASC LIMIT 1')
+        .get(userId) as { config_name: string } | undefined
+
+      if (firstConfig) {
+        this.db
+          .query('UPDATE opencode_configs SET is_default = TRUE WHERE user_id = ? AND config_name = ?')
+          .run(userId, firstConfig.config_name)
+        logger.info(`Auto-set '${firstConfig.config_name}' as default (only config)`)
+      }
     }
   }
 }

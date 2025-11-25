@@ -133,7 +133,7 @@ export function createSettingsRoutes(db: Database) {
         return c.json({ error: 'Config not found' }, 404)
       }
       
-      if (validated.isDefault) {
+      if (config.isDefault) {
         const configPath = getOpenCodeConfigFilePath()
         const configContent = JSON.stringify(config.content, null, 2)
         await writeFileContent(configPath, configContent)
