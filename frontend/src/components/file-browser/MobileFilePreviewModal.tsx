@@ -1,11 +1,5 @@
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { FilePreview } from "./FilePreview";
-import { X } from "lucide-react";
 import type { FileInfo } from "@/types/files";
 
 interface MobileFilePreviewModalProps {
@@ -34,11 +28,12 @@ export function MobileFilePreviewModal({
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()} hideCloseButton={true}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         className="w-screen h-screen max-w-none max-h-none p-0 bg-background border-0 flex flex-col"
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
+        hideCloseButton
       >
         <div
           className={`flex-1 overflow-hidden min-h-0 ${showFilePreviewHeader ? "" : "pb-8"}`}

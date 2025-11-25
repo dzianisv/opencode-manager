@@ -6,6 +6,16 @@ RUN apt-get update && apt-get install -y \
     lsof \
     ripgrep \
     ca-certificates \
+    grep \
+    gawk \
+    sed \
+    findutils \
+    coreutils \
+    procps \
+    jq \
+    less \
+    tree \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

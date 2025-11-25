@@ -6,10 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, Key, Check, X, Plus } from 'lucide-react'
-import { providerCredentialsApi } from '@/api/providers'
+import { providerCredentialsApi, getProviders, type Provider } from '@/api/providers'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AddProviderDialog } from './AddProviderDialog'
-import { getProviders } from '@/api/providers'
 
 export function ProviderSettings() {
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
@@ -18,7 +17,7 @@ export function ProviderSettings() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const queryClient = useQueryClient()
 
-  const { data: providers, isLoading: providersLoading } = useQuery({
+  const { data: providers, isLoading: providersLoading } = useQuery<Provider[]>({
     queryKey: ['providers'],
     queryFn: () => getProviders(),
     staleTime: 300000,
@@ -119,8 +118,8 @@ export function ProviderSettings() {
                         )}
                       </CardTitle>
                       <CardDescription className="mt-1">
-                        {provider.npm && <span className="text-xs">Package: {provider.npm}</span>}
-                        {provider.options?.baseURL && (
+                        {provider.npm ? <span className="text-xs">Package: {provider.npm}</span> : null}
+                        {typeof provider.options?.baseURL === 'string' && (
                           <span className="text-xs block">{provider.options.baseURL}</span>
                         )}
                         {modelCount > 0 && (
