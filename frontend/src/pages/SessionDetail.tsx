@@ -10,7 +10,7 @@ import { SessionList } from "@/components/session/SessionList";
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useSession, useMessages, useAbortSession } from "@/hooks/useOpenCode";
-import { OPENCODE_API_ENDPOINT } from "@/constants/api";
+import { OPENCODE_API_ENDPOINT } from "@/config";
 import { useSSE } from "@/hooks/useSSE";
 import { useSettings } from "@/hooks/useSettings";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";

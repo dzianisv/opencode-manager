@@ -15,8 +15,10 @@
     "./config/client": "./src/config/client.ts"
   },
   "dependencies": {
-    "dotenv": "^17.2.3",
     "zod": "^4.1.12"
+  },
+  "optionalDependencies": {
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "typescript": "^5"

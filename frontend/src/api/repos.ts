@@ -1,5 +1,5 @@
 import type { Repo } from './types'
-import { API_BASE_URL } from '@/constants/api'
+import { API_BASE_URL } from '@/config'
 
 const API_BASE = API_BASE_URL
 

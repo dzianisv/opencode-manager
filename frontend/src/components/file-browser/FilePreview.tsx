@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Download, Copy, X, Edit3, Save, X as XIcon } from 'lucide-react'
 import type { FileInfo } from '@/types/files'
-import { API_BASE_URL } from '@/constants/api'
+import { API_BASE_URL } from '@/config'
 
 const API_BASE = API_BASE_URL
 

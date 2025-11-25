@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import path from 'path'
-import { getAuthPath } from '../config'
+import { getAuthPath } from '@opencode-webui/shared'
 import { logger } from '../utils/logger'
 import { AuthCredentialsSchema } from '../../../shared/src/schemas/auth'
 import type { z } from 'zod'

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FolderOpen, Upload, RefreshCw } from 'lucide-react'
 import type { FileInfo } from '@/types/files'
-import { API_BASE_URL } from '@/constants/api'
+import { API_BASE_URL } from '@/config'
 import { useMobile } from '@/hooks/useMobile'
 import { useFile } from '@/api/files'
 

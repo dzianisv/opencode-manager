@@ -8,7 +8,7 @@ import { BranchSwitcher } from "@/components/repo/BranchSwitcher";
 import { SwitchConfigDialog } from "@/components/repo/SwitchConfigDialog";
 import { BackButton } from "@/components/ui/back-button";
 import { useCreateSession } from "@/hooks/useOpenCode";
-import { OPENCODE_API_ENDPOINT } from "@/constants/api";
+import { OPENCODE_API_ENDPOINT } from "@/config";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

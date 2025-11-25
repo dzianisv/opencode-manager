@@ -11,7 +11,7 @@ import {
   getFileStats, 
   listDirectory 
 } from './file-operations'
-import { FILE_LIMITS, ALLOWED_MIME_TYPES, getReposPath } from '../config'
+import { FILE_LIMITS, ALLOWED_MIME_TYPES, getReposPath } from '@opencode-webui/shared'
 
 const SHARED_WORKSPACE_BASE = getReposPath()
 

@@ -1,4 +1,4 @@
-import { ENV } from '../config'
+import { ENV } from '@opencode-webui/shared'
 
 type LogLevel = 'info' | 'warn' | 'error' | 'debug'
 

@@ -1,6 +1,6 @@
 import { settingsApi } from "./settings";
 import axios from "axios";
-import { API_BASE_URL } from "@/constants/api";
+import { API_BASE_URL } from "@/config";
 
 export interface Model {
   id: string;

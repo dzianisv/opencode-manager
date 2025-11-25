@@ -7,7 +7,7 @@ import type {
   CreateOpenCodeConfigRequest,
   UpdateOpenCodeConfigRequest
 } from './types/settings'
-import { API_BASE_URL } from '@/constants/api'
+import { API_BASE_URL } from '@/config'
 
 export const settingsApi = {
   getSettings: async (userId = 'default'): Promise<SettingsResponse> => {

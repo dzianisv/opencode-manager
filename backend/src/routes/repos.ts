@@ -7,7 +7,7 @@ import { writeFileContent } from '../services/file-operations'
 import { opencodeServerManager } from '../services/opencode-single-server'
 import { logger } from '../utils/logger'
 import { withTransactionAsync } from '../db/transactions'
-import { getOpenCodeConfigFilePath } from '../config'
+import { getOpenCodeConfigFilePath } from '@opencode-webui/shared'
 
 export function createRepoRoutes(database: Database) {
   const app = new Hono()

@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger'
-import { ENV } from '../config'
+import { ENV } from '@opencode-webui/shared'
 
 const OPENCODE_SERVER_URL = `http://127.0.0.1:${ENV.OPENCODE.PORT}`
 

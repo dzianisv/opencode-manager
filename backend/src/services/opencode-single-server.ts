@@ -1,7 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { logger } from '../utils/logger'
-import { getWorkspacePath, getOpenCodeConfigFilePath, ENV } from '../config'
+import { getWorkspacePath, getOpenCodeConfigFilePath, ENV } from '@opencode-webui/shared'
 
 const OPENCODE_SERVER_PORT = ENV.OPENCODE.PORT
 const OPENCODE_SERVER_DIRECTORY = getWorkspacePath()

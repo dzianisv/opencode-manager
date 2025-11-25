@@ -2,7 +2,7 @@
 
 ## Commands
 
-- `npm run dev` - Start both backend (8080) and frontend (5173)
+- `npm run dev` - Start both backend (5001) and frontend (5173)
 - `npm run dev:backend` - Backend only: `bun --watch backend/src/index.ts`
 - `npm run dev:frontend` - Frontend only: `cd frontend && vite`
 - `npm run build` - Build both backend and frontend
@@ -38,4 +38,4 @@
 - DRY principles, follow existing patterns
 - ./opencode-src/ is reference only, never commit
 - Use shared types from workspace package
-- OpenCode server runs on port 5551, backend API on port 8080
+- OpenCode server runs on port 5551, backend API on port 5001
