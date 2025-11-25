@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
-import { useSendPrompt, useAbortSession, useMessages, useSendShell } from '@/hooks/useOpenCode'
+import { useSendPrompt, useAbortSession, useMessages, useSendShell, useConfig } from '@/hooks/useOpenCode'
 import { useSettings } from '@/hooks/useSettings'
 import { useCommands } from '@/hooks/useCommands'
 import { useCommandHandler } from '@/hooks/useCommandHandler'
@@ -58,6 +58,7 @@ export function PromptInput({
   const sendShell = useSendShell(opcodeUrl, directory)
   const abortSession = useAbortSession(opcodeUrl, directory)
   const { data: messages } = useMessages(opcodeUrl, sessionID, directory)
+  const { data: config } = useConfig(opcodeUrl)
   const { preferences, updateSettings } = useSettings()
   const { filterCommands } = useCommands(opcodeUrl)
   const { executeCommand } = useCommandHandler({
@@ -370,9 +371,14 @@ export function PromptInput({
   const hasActiveStream = messages?.some(msg => isMessageStreaming(msg)) || false
 
   const currentMode = preferences?.mode || 'build'
-  const currentModel = preferences?.defaultModel || ''
   const modeColor = currentMode === 'plan' ? 'text-yellow-600 dark:text-yellow-500' : 'text-green-600 dark:text-green-500'
   const modeBg = currentMode === 'plan' ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-green-500/10 border-green-500/30'
+
+  const lastAssistantMessage = messages?.filter(msg => msg.info.role === 'assistant').pop()
+  const sessionModel = lastAssistantMessage?.info.role === 'assistant' 
+    ? `${lastAssistantMessage.info.providerID}/${lastAssistantMessage.info.modelID}`
+    : null
+  const currentModel = sessionModel || config?.model || ''
 
   useEffect(() => {
     const loadModelName = async () => {
@@ -495,9 +501,9 @@ export function PromptInput({
             <div className="flex gap-2 items-end">
               <button
                 onClick={handleModeToggle}
-                className={`px-2 py-1 rounded-md text-xs font-medium border ${modeBg} ${modeColor} hover:opacity-80 transition-opacity cursor-pointer`}
+                className={`w-16 px-2 py-1 rounded-md text-xs font-medium border ${modeBg} ${modeColor} hover:opacity-80 transition-opacity cursor-pointer`}
               >
-                {currentMode.toUpperCase()} MODE
+                {currentMode.toUpperCase()} 
               </button>
               {isBashMode && (
                 <div className="px-2 py-1 rounded-md text-xs font-medium border bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400">
