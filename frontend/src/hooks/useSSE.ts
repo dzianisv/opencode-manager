@@ -8,6 +8,7 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
   const queryClient = useQueryClient()
   const eventSourceRef = useRef<EventSource | null>(null)
   const urlRef = useRef<string | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -35,6 +36,16 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
     urlRef.current = eventSourceUrl
     
     const connectSSE = () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
+
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+
       try {
         const eventSource = new EventSource(eventSourceUrl)
         eventSourceRef.current = eventSource
@@ -42,6 +53,8 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
         eventSource.onopen = () => {
           setIsConnected(true)
           setError(null)
+          queryClient.invalidateQueries({ queryKey: ['opencode', 'sessions', opcodeUrl, directory] })
+          queryClient.invalidateQueries({ queryKey: ['opencode', 'messages', opcodeUrl] })
         }
 
         eventSource.onerror = (e) => {
@@ -66,6 +79,12 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to connect')
         setIsConnected(false)
+      }
+    }
+
+    const handleReconnect = () => {
+      if (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED) {
+        connectSSE()
       }
     }
 
@@ -230,7 +249,16 @@ case 'message.updated':
 
     connectSSE()
 
+    window.addEventListener('focus', handleReconnect)
+    window.addEventListener('online', handleReconnect)
+
     return () => {
+      window.removeEventListener('focus', handleReconnect)
+      window.removeEventListener('online', handleReconnect)
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
