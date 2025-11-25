@@ -31,7 +31,6 @@ export function RepoCard({
   const [addBranchOpen, setAddBranchOpen] = useState(false);
   const repoName = repo.repoUrl.split("/").slice(-1)[0].replace(".git", "");
   const branchToDisplay = repo.currentBranch || repo.branch;
-  const displayName = branchToDisplay ? `${repoName} (${branchToDisplay})` : repoName;
   const isReady = repo.cloneStatus === "ready";
 
   return (
@@ -71,7 +70,7 @@ export function RepoCard({
                   isReady ? "cursor-pointer" : "cursor-not-allowed opacity-60"
                 }`}
               >
-                {displayName}
+                {repoName}
               </h3>
              {repo.isWorktree && (
               <Badge
@@ -80,21 +79,18 @@ export function RepoCard({
                 worktree
               </Badge>
             )}
-            {repo.cloneStatus && (
+            {repo.cloneStatus === "cloning" && (
               <Badge
-                className={`text-xs px-2.5 py-0.5 ${
-                  isReady
-                    ? "bg-green-600/20 text-green-400 border-green-600/40"
-                    : repo.cloneStatus === "cloning"
-                    ? "bg-blue-600/20 text-blue-400 border-blue-600/40"
-                    : "bg-red-600/20 text-red-400 border-red-600/40"
-                }`}
+                className="text-xs px-2.5 py-0.5 bg-blue-600/20 text-blue-400 border-blue-600/40"
               >
-                {repo.cloneStatus}
+                cloning
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground truncate">{repo.repoUrl}</p>
+          <p className="text-sm text-muted-foreground truncate flex items-center gap-1">
+              <GitBranch className="w-3 h-3" />
+              {branchToDisplay}
+            </p>
         </div>
 
         
