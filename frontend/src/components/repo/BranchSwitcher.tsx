@@ -7,21 +7,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GitBranch, Check, Plus } from "lucide-react";
+import { GitBranch, Check, Plus, GitCommit } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listBranches, switchBranch } from "@/api/repos";
+import { useGitStatus } from "@/api/git";
 import { AddBranchWorkspaceDialog } from "@/components/repo/AddBranchWorkspaceDialog";
+import { GitChangesSheet } from "@/components/file-browser/GitChangesSheet";
 
 interface BranchSwitcherProps {
   repoId: number;
   currentBranch: string;
   isWorktree?: boolean;
   repoUrl: string;
+  repoLocalPath?: string;
 }
 
-export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl }: BranchSwitcherProps) {
+export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl, repoLocalPath }: BranchSwitcherProps) {
   const [addBranchOpen, setAddBranchOpen] = useState(false);
+  const [gitChangesOpen, setGitChangesOpen] = useState(false);
   const queryClient = useQueryClient();
+  const { data: gitStatus } = useGitStatus(repoId);
 
   const { data: branches } = useQuery({
     queryKey: ["branches", repoId],
@@ -75,6 +80,21 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl }: B
               Loading branches...
             </DropdownMenuItem>
           )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => setGitChangesOpen(true)}
+            className="text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+          >
+            <div className="flex items-center gap-2 w-full">
+              <GitCommit className="w-3 h-3" />
+              <span className="flex-1">View Changes</span>
+              {gitStatus?.hasChanges && (
+                <span className="text-xs text-yellow-500">
+                  {gitStatus.files.length}
+                </span>
+              )}
+            </div>
+          </DropdownMenuItem>
           {!isWorktree && (
             <>
               <DropdownMenuSeparator />
@@ -96,6 +116,14 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl }: B
         open={addBranchOpen}
         onOpenChange={setAddBranchOpen}
         repoUrl={repoUrl}
+      />
+
+      <GitChangesSheet
+        isOpen={gitChangesOpen}
+        onClose={() => setGitChangesOpen(false)}
+        repoId={repoId}
+        currentBranch={currentBranch}
+        repoLocalPath={repoLocalPath}
       />
     </>
   );

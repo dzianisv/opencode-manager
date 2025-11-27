@@ -123,6 +123,7 @@ export function SessionDetailHeader({
                 currentBranch={currentBranch}
                 isWorktree={repo.isWorktree}
                 repoUrl={repo.repoUrl}
+                repoLocalPath={repo.localPath}
               />
             </div>
           </div>
