@@ -2,24 +2,31 @@ import { useState, useEffect } from 'react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { GitChangesPanel } from './GitChangesPanel'
 import { FileDiffView } from './FileDiffView'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { Button } from '@/components/ui/button'
 import { X, GitBranch } from 'lucide-react'
 import { useMobile } from '@/hooks/useMobile'
+import { useQueryClient } from '@tanstack/react-query'
 
 interface GitChangesSheetProps {
   isOpen: boolean
   onClose: () => void
   repoId: number
   currentBranch: string
+  repoLocalPath?: string
 }
 
-export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch }: GitChangesSheetProps) {
+export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch, repoLocalPath }: GitChangesSheetProps) {
   const [selectedFile, setSelectedFile] = useState<string | undefined>()
+  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null)
+  const [previewLineNumber, setPreviewLineNumber] = useState<number | undefined>()
   const isMobile = useMobile()
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!isOpen) {
       setSelectedFile(undefined)
+      setPreviewFilePath(null)
     }
   }, [isOpen])
 
@@ -29,6 +36,21 @@ export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch }: GitC
 
   const handleBack = () => {
     setSelectedFile(undefined)
+  }
+
+  const handleOpenFile = (path: string, lineNumber?: number) => {
+    setPreviewFilePath(path)
+    setPreviewLineNumber(lineNumber)
+  }
+
+  const handleClosePreview = () => {
+    setPreviewFilePath(null)
+    setPreviewLineNumber(undefined)
+  }
+
+  const handleFileSaved = () => {
+    queryClient.invalidateQueries({ queryKey: ['gitStatus'] })
+    queryClient.invalidateQueries({ queryKey: ['fileDiff'] })
   }
 
   const handleOpenChange = (open: boolean) => {
@@ -68,6 +90,7 @@ export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch }: GitC
                 repoId={repoId}
                 filePath={selectedFile}
                 onBack={handleBack}
+                onOpenFile={handleOpenFile}
                 isMobile={true}
               />
             ) : (
@@ -91,6 +114,7 @@ export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch }: GitC
                   <FileDiffView
                     repoId={repoId}
                     filePath={selectedFile}
+                    onOpenFile={handleOpenFile}
                     isMobile={false}
                   />
                 ) : (
@@ -102,6 +126,15 @@ export function GitChangesSheet({ isOpen, onClose, repoId, currentBranch }: GitC
             </div>
           )}
         </div>
+
+        <FilePreviewDialog
+          isOpen={!!previewFilePath}
+          onClose={handleClosePreview}
+          filePath={previewFilePath || ''}
+          repoBasePath={repoLocalPath}
+          onFileSaved={handleFileSaved}
+          initialLineNumber={previewLineNumber}
+        />
       </DialogContent>
     </Dialog>
   )

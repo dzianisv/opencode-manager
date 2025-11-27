@@ -19,9 +19,10 @@ interface BranchSwitcherProps {
   currentBranch: string;
   isWorktree?: boolean;
   repoUrl: string;
+  repoLocalPath?: string;
 }
 
-export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl }: BranchSwitcherProps) {
+export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl, repoLocalPath }: BranchSwitcherProps) {
   const [addBranchOpen, setAddBranchOpen] = useState(false);
   const [gitChangesOpen, setGitChangesOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -122,6 +123,7 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl }: B
         onClose={() => setGitChangesOpen(false)}
         repoId={repoId}
         currentBranch={currentBranch}
+        repoLocalPath={repoLocalPath}
       />
     </>
   );

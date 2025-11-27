@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState, useMemo } from 'react'
+import { useRef, useCallback, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react'
 import { useVirtualizedContent } from '@/hooks/useVirtualizedContent'
 
 interface VirtualizedTextViewProps {
@@ -9,12 +9,17 @@ interface VirtualizedTextViewProps {
   onSaveStateChange?: (hasUnsavedChanges: boolean) => void
   onSave?: () => void
   className?: string
+  initialLineNumber?: number
+}
+
+export interface VirtualizedTextViewHandle {
+  save: () => Promise<void>
 }
 
 const LINE_HEIGHT = 20
 const GUTTER_WIDTH = 60
 
-export function VirtualizedTextView({
+export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, VirtualizedTextViewProps>(function VirtualizedTextView({
   filePath,
   totalLines: initialTotalLines = 0,
   lineHeight = LINE_HEIGHT,
@@ -22,10 +27,12 @@ export function VirtualizedTextView({
   onSaveStateChange,
   onSave,
   className = '',
-}: VirtualizedTextViewProps) {
+  initialLineNumber,
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(600)
+  const [highlightedLine, setHighlightedLine] = useState<number | undefined>(initialLineNumber)
   
   const {
     lines,
@@ -75,6 +82,19 @@ export function VirtualizedTextView({
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (initialLineNumber && containerRef.current) {
+      const scrollPosition = (initialLineNumber - 1) * lineHeight
+      setHighlightedLine(initialLineNumber)
+      setTimeout(() => {
+        containerRef.current?.scrollTo({ top: scrollPosition, behavior: 'smooth' })
+      }, 100)
+      setTimeout(() => {
+        setHighlightedLine(undefined)
+      }, 3000)
+    }
+  }, [initialLineNumber, lineHeight])
   
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop)
@@ -92,6 +112,10 @@ export function VirtualizedTextView({
       console.error('Failed to save:', err)
     }
   }, [saveEdits, onSave])
+  
+  useImperativeHandle(ref, () => ({
+    save: handleSave,
+  }), [handleSave])
   
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -138,10 +162,12 @@ export function VirtualizedTextView({
       style={{ height: '100%' }}
     >
       <div style={{ height: totalHeight, position: 'relative' }}>
-        {visibleLines.map(({ lineNum, content, isEdited }) => (
+        {visibleLines.map(({ lineNum, content, isEdited }) => {
+          const isHighlighted = highlightedLine === lineNum + 1
+          return (
           <div
             key={lineNum}
-            className="absolute flex"
+            className={`absolute flex transition-colors duration-300 ${isHighlighted ? 'bg-yellow-500/30' : ''}`}
             style={{
               top: lineNum * lineHeight,
               height: lineHeight,
@@ -175,7 +201,7 @@ export function VirtualizedTextView({
               </div>
             )}
           </div>
-        ))}
+        )})}
         
         {isLoading && visibleLines.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
@@ -197,4 +223,4 @@ export function VirtualizedTextView({
       )}
     </div>
   )
-}
+})

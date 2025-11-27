@@ -1,5 +1,5 @@
 import { useFileDiff } from '@/api/git'
-import { Loader2, FileText, FilePlus, FileX, FileEdit, File, Plus, Minus, ArrowLeft } from 'lucide-react'
+import { Loader2, FileText, FilePlus, FileX, FileEdit, File, Plus, Minus, ArrowLeft, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { GitFileStatusType } from '@/types/git'
@@ -8,6 +8,7 @@ interface FileDiffViewProps {
   repoId: number
   filePath: string
   onBack?: () => void
+  onOpenFile?: (path: string, lineNumber?: number) => void
   isMobile?: boolean
 }
 
@@ -59,7 +60,7 @@ const statusConfig: Record<GitFileStatusType, { icon: typeof FileText; color: st
   copied: { icon: FileText, color: 'text-purple-500', bgColor: 'bg-purple-500/10', label: 'Copied' },
 }
 
-function DiffLineComponent({ line, showLineNumbers }: { line: DiffLine; showLineNumbers: boolean }) {
+function DiffLineComponent({ line, showLineNumbers, onLineClick }: { line: DiffLine; showLineNumbers: boolean; onLineClick?: (lineNumber: number) => void }) {
   if (line.type === 'header') {
     return (
       <div className="px-4 py-1 bg-muted/50 text-muted-foreground text-xs font-mono truncate">
@@ -88,8 +89,18 @@ function DiffLineComponent({ line, showLineNumbers }: { line: DiffLine; showLine
       ? 'text-red-400'
       : 'text-foreground'
 
+  const lineNumber = line.newLineNumber ?? line.oldLineNumber
+  const isClickable = onLineClick && lineNumber !== undefined
+
   return (
-    <div className={cn('flex font-mono text-sm', bgClass)}>
+    <div 
+      className={cn(
+        'flex font-mono text-sm',
+        bgClass,
+        isClickable && 'cursor-pointer hover:bg-accent/50 transition-colors'
+      )}
+      onClick={() => isClickable && lineNumber !== undefined && onLineClick(lineNumber)}
+    >
       {showLineNumbers && (
         <div className="flex-shrink-0 w-20 flex text-xs text-muted-foreground select-none">
           <span className="w-10 px-2 text-right border-r border-border/50">
@@ -111,7 +122,7 @@ function DiffLineComponent({ line, showLineNumbers }: { line: DiffLine; showLine
   )
 }
 
-export function FileDiffView({ repoId, filePath, onBack, isMobile = false }: FileDiffViewProps) {
+export function FileDiffView({ repoId, filePath, onBack, onOpenFile, isMobile = false }: FileDiffViewProps) {
   const { data: diffData, isLoading, error } = useFileDiff(repoId, filePath)
 
   const fileName = filePath.split('/').pop() || filePath
@@ -159,8 +170,23 @@ export function FileDiffView({ repoId, filePath, onBack, isMobile = false }: Fil
         )}
         <Icon className={cn('w-4 h-4 flex-shrink-0', config.color)} />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-foreground truncate">{fileName}</div>
-          {dirPath && <div className="text-xs text-muted-foreground truncate">{dirPath}</div>}
+          {onOpenFile ? (
+            <button
+              onClick={() => onOpenFile(filePath)}
+              className="text-left group"
+            >
+              <div className="text-sm font-medium text-foreground truncate group-hover:text-primary group-hover:underline flex items-center gap-1">
+                {fileName}
+                <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              {dirPath && <div className="text-xs text-muted-foreground truncate">{dirPath}</div>}
+            </button>
+          ) : (
+            <>
+              <div className="text-sm font-medium text-foreground truncate">{fileName}</div>
+              {dirPath && <div className="text-xs text-muted-foreground truncate">{dirPath}</div>}
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2 text-xs flex-shrink-0">
           <span className={cn('px-1.5 py-0.5 rounded', config.bgColor, config.color)}>
@@ -191,6 +217,7 @@ export function FileDiffView({ repoId, filePath, onBack, isMobile = false }: Fil
                 key={index} 
                 line={line} 
                 showLineNumbers={!isMobile}
+                onLineClick={onOpenFile ? (lineNum) => onOpenFile(filePath, lineNum) : undefined}
               />
             ))}
           </div>

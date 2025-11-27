@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { Download, Copy, X, Edit3, Save, X as XIcon } from 'lucide-react'
+import { Download, X, Edit3, Save, X as XIcon } from 'lucide-react'
 import type { FileInfo } from '@/types/files'
 import { API_BASE_URL } from '@/config'
-import { VirtualizedTextView } from '@/components/ui/virtualized-text-view'
+import { VirtualizedTextView, type VirtualizedTextViewHandle } from '@/components/ui/virtualized-text-view'
 
 const API_BASE = API_BASE_URL
 
@@ -14,15 +14,34 @@ interface FilePreviewProps {
   hideHeader?: boolean
   isMobileModal?: boolean
   onCloseModal?: () => void
+  onFileSaved?: () => void
+  initialLineNumber?: number
 }
 
-export function FilePreview({ file, hideHeader = false, isMobileModal = false, onCloseModal }: FilePreviewProps) {
+export function FilePreview({ file, hideHeader = false, isMobileModal = false, onCloseModal, onFileSaved, initialLineNumber }: FilePreviewProps) {
   const [viewMode, setViewMode] = useState<'preview' | 'edit'>('preview')
   const [editContent, setEditContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [hasVirtualizedChanges, setHasVirtualizedChanges] = useState(false)
+  const [highlightedLine, setHighlightedLine] = useState<number | undefined>(initialLineNumber)
+  const virtualizedRef = useRef<VirtualizedTextViewHandle>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   
   const shouldVirtualize = file.size > VIRTUALIZATION_THRESHOLD_BYTES && !file.mimeType?.startsWith('image/')
+
+  useEffect(() => {
+    if (initialLineNumber && contentRef.current && !shouldVirtualize) {
+      const lineHeight = 20
+      const scrollPosition = (initialLineNumber - 1) * lineHeight
+      setHighlightedLine(initialLineNumber)
+      setTimeout(() => {
+        contentRef.current?.scrollTo({ top: scrollPosition, behavior: 'smooth' })
+      }, 100)
+      setTimeout(() => {
+        setHighlightedLine(undefined)
+      }, 3000)
+    }
+  }, [initialLineNumber, shouldVirtualize, file.content])
   
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
@@ -58,17 +77,6 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
     }
   }
 
-  const handleCopyContent = async () => {
-    if (file.content) {
-      try {
-        const content = decodeBase64(file.content)
-        await navigator.clipboard.writeText(content)
-      } catch (error) {
-        console.error('Failed to copy content:', error)
-      }
-    }
-  }
-
   const handleEdit = () => {
     if (shouldVirtualize) {
       setViewMode('edit')
@@ -77,16 +85,14 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
       return
     }
     
-    if (file.content) {
-      try {
-        const content = decodeBase64(file.content)
-        setEditContent(content)
-        setViewMode('edit')
-        const event = new CustomEvent('editModeChange', { detail: { isEditing: true } })
-        window.dispatchEvent(event)
-      } catch (err) {
-        console.error('Failed to load content for editing:', err)
-      }
+    try {
+      const content = file.content ? decodeBase64(file.content) : ''
+      setEditContent(content)
+      setViewMode('edit')
+      const event = new CustomEvent('editModeChange', { detail: { isEditing: true } })
+      window.dispatchEvent(event)
+    } catch (err) {
+      console.error('Failed to load content for editing:', err)
     }
   }
 
@@ -108,6 +114,7 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
       window.dispatchEvent(editEvent)
       const event = new CustomEvent('fileSaved', { detail: { path: file.path, content: editContent } })
       window.dispatchEvent(event)
+      onFileSaved?.()
     } catch (err) {
       console.error('Failed to save file:', err)
     } finally {
@@ -133,7 +140,8 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
     window.dispatchEvent(editEvent)
     const event = new CustomEvent('fileSaved', { detail: { path: file.path } })
     window.dispatchEvent(event)
-  }, [file.path])
+    onFileSaved?.()
+  }, [file.path, onFileSaved])
 
   const isTextFile = file.mimeType?.startsWith('text/') || 
     ['application/json', 'application/xml', 'text/javascript', 'text/typescript'].includes(file.mimeType || '')
@@ -154,12 +162,14 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
     if (shouldVirtualize && isTextFile) {
       return (
         <VirtualizedTextView
+          ref={virtualizedRef}
           filePath={file.path}
           totalLines={file.totalLines}
           editable={viewMode === 'edit'}
           onSaveStateChange={handleVirtualizedSaveStateChange}
           onSave={handleVirtualizedSave}
           className="h-full"
+          initialLineNumber={initialLineNumber}
         />
       )
     }
@@ -183,10 +193,28 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
       
       try {
         const textContent = decodeBase64(file.content)
+        const lines = textContent.split('\n')
         return (
-          <pre className="pb-[200px] text-sm bg-muted text-foreground rounded whitespace-pre-wrap font-mono break-words overflow-x-hidden">
-            <code>{textContent}</code>
-          </pre>
+          <div className="pb-[200px] text-sm bg-muted text-foreground rounded font-mono overflow-x-hidden">
+            {lines.map((line, index) => {
+              const lineNum = index + 1
+              const isHighlighted = highlightedLine === lineNum
+              return (
+                <div 
+                  key={index}
+                  className={`flex transition-colors duration-300 ${isHighlighted ? 'bg-yellow-500/30' : ''}`}
+                  style={{ minHeight: '20px', lineHeight: '20px' }}
+                >
+                  <span className="w-12 flex-shrink-0 text-right pr-3 text-muted-foreground select-none border-r border-border/50 text-xs">
+                    {lineNum}
+                  </span>
+                  <pre className="flex-1 pl-3 whitespace-pre-wrap break-all">
+                    {line || ' '}
+                  </pre>
+                </div>
+              )
+            })}
+          </div>
         )
       } catch {
         return (
@@ -204,7 +232,18 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
     )
   }
 
-  const showSaveButton = viewMode === 'edit' && !shouldVirtualize
+  const handleVirtualizedSaveClick = async () => {
+    if (virtualizedRef.current) {
+      setIsSaving(true)
+      try {
+        await virtualizedRef.current.save()
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  }
+
+  const showSaveButton = viewMode === 'edit'
   const showCancelButton = viewMode === 'edit'
 
   return (
@@ -231,37 +270,31 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
             
             <div className="flex items-center gap-1 flex-shrink-0 mt-1">
               {isTextFile && viewMode !== 'edit' && (
-                <Button variant="outline" size="sm" onClick={handleEdit} className="h-7 w-7 p-0">
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleEdit() }} className="h-7 w-7 p-0">
                   <Edit3 className="w-3 h-3" />
                 </Button>
               )}
               
               {showSaveButton && (
-                <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving} className="border-green-600 bg-green-600/10 text-green-600 hover:bg-green-600/20 h-7 w-7 p-0">
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); e.preventDefault(); shouldVirtualize ? handleVirtualizedSaveClick() : handleSave() }} disabled={isSaving || (shouldVirtualize && !hasVirtualizedChanges)} className="border-green-600 bg-green-600/10 text-green-600 hover:bg-green-600/20 h-7 w-7 p-0">
                   <Save className="w-3 h-3" />
                 </Button>
               )}
               
               {showCancelButton && (
-                <Button variant="outline" size="sm" onClick={handleCancel} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleCancel() }} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
                   <XIcon className="w-3 h-3" />
                 </Button>
               )}
               
-              {isTextFile && viewMode !== 'edit' && !shouldVirtualize && (
-                <Button variant="outline" size="sm" onClick={handleCopyContent} className="h-7 w-7 p-0">
-                  <Copy className="w-3 h-3" />
-                </Button>
-              )}
-              
               {viewMode !== 'edit' && (
-                <Button variant="outline" size="sm" onClick={handleDownload} className="h-7 w-7 p-0">
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleDownload() }} className="h-7 w-7 p-0">
                   <Download className="w-3 h-3" />
                 </Button>
               )}
               
               {viewMode !== 'edit' && isMobileModal && onCloseModal && (
-                <Button variant="outline" size="sm" onClick={onCloseModal} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); e.preventDefault(); onCloseModal() }} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
                   <X className="w-3 h-3" />
                 </Button>
               )}
@@ -270,7 +303,10 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
         </>
       )}
       
-      <div className={`flex-1 ${viewMode === 'edit' && !shouldVirtualize ? 'overflow-hidden' : shouldVirtualize ? '' : 'overflow-y-auto overscroll-contain'} min-h-0 overflow-x-hidden`}>
+      <div 
+        ref={contentRef}
+        className={`flex-1 ${viewMode === 'edit' && !shouldVirtualize ? 'overflow-hidden' : shouldVirtualize ? '' : 'overflow-y-auto overscroll-contain'} min-h-0 overflow-x-hidden`}
+      >
         <div className={`${shouldVirtualize ? 'h-full' : 'p-2'} min-w-0`}>
           {renderContent()}
         </div>
