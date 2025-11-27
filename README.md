@@ -92,19 +92,23 @@ The Docker setup automatically:
 
 **Docker Commands:**
 ```bash
-# Production mode (single container)
-npm run docker:up          # Start container
-npm run docker:down        # Stop and remove container
-npm run docker:build       # Rebuild image
-npm run docker:logs        # View logs
-npm run docker:restart     # Restart container
+# Start container
+docker-compose up -d
 
-# Development mode (separate backend + frontend with hot reload)
-npm run docker:dev         # Start in dev mode
-npm run docker:dev:down    # Stop dev containers
+# Stop and remove container
+docker-compose down
+
+# Rebuild image
+docker-compose build
+
+# View logs
+docker-compose logs -f
+
+# Restart container
+docker-compose restart
 
 # Access container shell
-docker exec -it opencode-webui sh
+docker exec -it opencode-web sh
 ```
 
 ### Option 2: Local Development
