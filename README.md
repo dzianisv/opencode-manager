@@ -57,7 +57,7 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 ## Demo Videos
 
 ### Demo
-![Demo](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/demo1.gif)
+![Demo](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.3.0/Chat.gif)
 
 ### File Editing
 ![File Editing](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/edit-file.gif)
