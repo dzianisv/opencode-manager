@@ -182,8 +182,8 @@ export function SessionDetail() {
         onSettingsOpen={openSettings}
       />
 
-      <div className="flex-1 overflow-hidden">
-        <div ref={messageContainerRef} className="h-full overflow-y-auto">
+      <div className="flex-1 overflow-hidden relative">
+        <div ref={messageContainerRef} className="h-full overflow-y-auto pb-32">
           {opcodeUrl && repoDirectory && (
             <MessageThread 
               opcodeUrl={opcodeUrl} 
@@ -193,22 +193,22 @@ export function SessionDetail() {
             />
           )}
         </div>
-      </div>
-
-      <div className="sticky bottom-0 z-10 border-t border-border bg-gradient-to-t from-background via-background to-background backdrop-blur-sm">
         {opcodeUrl && repoDirectory && (
-          <PromptInput
-            opcodeUrl={opcodeUrl}
-            directory={repoDirectory}
-            sessionID={sessionId}
-            disabled={!isConnected}
-            onShowModelsDialog={() => setModelDialogOpen(true)}
-            onShowSessionsDialog={() => setSessionsDialogOpen(true)}
-            onShowHelpDialog={() => {
-              // For now, just open the settings dialog where help might be available
-              openSettings()
-            }}
-          />
+          <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
+            <div className="pointer-events-auto">
+              <PromptInput
+                opcodeUrl={opcodeUrl}
+                directory={repoDirectory}
+                sessionID={sessionId}
+                disabled={!isConnected}
+                onShowModelsDialog={() => setModelDialogOpen(true)}
+                onShowSessionsDialog={() => setSessionsDialogOpen(true)}
+                onShowHelpDialog={() => {
+                  openSettings()
+                }}
+              />
+            </div>
+          </div>
         )}
       </div>
 

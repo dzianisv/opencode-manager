@@ -4,7 +4,7 @@ import { useSettings } from '@/hooks/useSettings'
 import { useCommands } from '@/hooks/useCommands'
 import { useCommandHandler } from '@/hooks/useCommandHandler'
 import { useFileSearch } from '@/hooks/useFileSearch'
-import { useMobile } from '@/hooks/useMobile'
+
 import { CommandSuggestions } from '@/components/command/CommandSuggestions'
 import { FileSuggestions } from './FileSuggestions'
 import { detectMentionTrigger, parsePromptToParts, getFilename } from '@/lib/promptParser'
@@ -52,7 +52,7 @@ export function PromptInput({
   const [mentionRange, setMentionRange] = useState<{ start: number, end: number } | null>(null)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
-  const isMobile = useMobile()
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const sendPrompt = useSendPrompt(opcodeUrl, directory)
   const sendShell = useSendShell(opcodeUrl, directory)
@@ -415,170 +415,88 @@ export function PromptInput({
   
 
   return (
-    <div className="border-t border-border bg-background p-2 sm:p-3">
-      {isMobile ? (
-        <>
-          <div className="">
-            <textarea
-              ref={textareaRef}
-              value={prompt}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                isBashMode 
-                  ? "Enter bash command... (Esc to exit)" 
-                  : "Message..."
-              }
-              disabled={disabled || hasActiveStream}
-              className="w-full bg-background border rounded-lg px-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 resize-none min-h-[36px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed"
-              rows={1}
-            />
-          </div>
-          <div className="flex gap-2 items-center mx-2">
-            <div className="flex gap-2 items-center">
-              <button
-                onClick={handleModeToggle}
-                className={`px-2 py-1 rounded-md text-xs font-medium border ${modeBg} ${modeColor} hover:opacity-80 transition-opacity cursor-pointer`}
-              >
-                {currentMode.toUpperCase()} 
-              </button>
-              {isBashMode && (
-                <div className="px-2 py-1 rounded-md text-xs font-medium border bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400">
-                  BASH MODE
-                </div>
-              )}
-              {modelName && (
-                <button
-                  onClick={onShowModelsDialog}
-                  className="px-2 py-1 rounded-md text-xs font-medium border bg-muted border-border text-muted-foreground hover:bg-muted-foreground/10 transition-colors cursor-pointer"
-                >
-                  {modelName.length > 20 ? `${modelName.slice(0, 20)}...` : modelName}
-                </button>
-              )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className="w-6 h-6 rounded-full border-2 border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors flex items-center justify-center text-sm font-medium"
-                    title="Help"
-                  >
-                    ?
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64">
-                  <DropdownMenuItem disabled className="text-xs text-muted-foreground font-medium">
-                    Keyboard Shortcuts
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                    <span className="font-mono">Cmd/Ctrl+Enter</span> - Send message
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                    <span className="font-mono">@</span> - Mention files
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                    <span className="font-mono">!</span> - Bash command mode
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+    <div className="backdrop-blur-md bg-background/90 border border-border rounded-lg p-3 mx-2 mb-2 md:mx-4 md:mb-4 max-w-4xl md:mx-auto">
+      
+      
+      <textarea
+        ref={textareaRef}
+        value={prompt}
+        onChange={handleInput}
+        onKeyDown={handleKeyDown}
+        placeholder={
+          isBashMode 
+            ? "Enter bash command... (Esc to exit)" 
+            : "Send a message... (Cmd/Ctrl+Enter)"
+        }
+        disabled={disabled || hasActiveStream}
+        className={`w-full bg-background px-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none resize-none min-h-[36px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm rounded-lg ${
+          isBashMode 
+            ? 'border-purple-500/50 bg-purple-500/5' 
+            : ''
+        }`}
+        rows={1}
+      />
+      
+      <div className="flex gap-2 items-center justify-between">
+        <div className="flex gap-2 items-center">
+          <button
+            onClick={handleModeToggle}
+            className={`px-2 py-1 rounded-md text-xs font-medium border ${modeBg} ${modeColor} hover:opacity-80 transition-opacity cursor-pointer`}
+          >
+            {currentMode.toUpperCase()} 
+          </button>
+          {isBashMode && (
+            <div className="px-2 py-1 rounded-md text-xs font-medium border bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400">
+              BASH MODE
             </div>
+          )}
+          {modelName && (
             <button
-              data-submit-prompt
-              onClick={hasActiveStream ? handleStop : handleSubmit}
-              disabled={(!prompt.trim() && !hasActiveStream) || disabled}
-              className={`px-6 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                hasActiveStream
-                  ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' 
-                  : 'bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground'
-              }`}
-              title={hasActiveStream ? 'Stop' : 'Send'}
+              onClick={onShowModelsDialog}
+              className="px-2 py-1 rounded-md text-xs font-medium border bg-muted border-border text-muted-foreground hover:bg-muted-foreground/10 transition-colors cursor-pointer"
             >
-              {hasActiveStream ? 'Stop' : 'Send'}
+              {modelName.length > 20 ? `${modelName.slice(0, 20)}...` : modelName}
             </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="flex gap-2 items-end mb-2 justify-between">
-            <div className="flex gap-2 items-end">
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
-                onClick={handleModeToggle}
-                className={`w-16 px-2 py-1 rounded-md text-xs font-medium border ${modeBg} ${modeColor} hover:opacity-80 transition-opacity cursor-pointer`}
+                className="w-6 h-6 rounded-full border-2 border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors flex items-center justify-center text-sm font-medium"
+                title="Help"
               >
-                {currentMode.toUpperCase()} 
+                ?
               </button>
-              {isBashMode && (
-                <div className="px-2 py-1 rounded-md text-xs font-medium border bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400">
-                  BASH MODE
-                </div>
-              )}
-              {modelName && (
-                <button
-                  onClick={onShowModelsDialog}
-                  className="px-2 py-1 rounded-md text-xs font-medium border bg-muted border-border text-muted-foreground hover:bg-muted-foreground/10 transition-colors cursor-pointer"
-                >
-                  {modelName.length > 20 ? `${modelName.slice(0, 20)}...` : modelName}
-                </button>
-              )}
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="w-6 h-6 rounded-full border-2 border-foreground text-foreground hover:bg-foreground hover:text-background transition-colors flex items-center justify-center text-sm font-medium"
-                  title="Help"
-                >
-                  ?
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuItem disabled className="text-xs text-muted-foreground font-medium">
-                  Keyboard Shortcuts
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                  <span className="font-mono">Cmd/Ctrl+Enter</span> - Send message
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                  <span className="font-mono">@</span> - Mention files
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                  <span className="font-mono">!</span> - Bash command mode
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <div className="flex gap-2 items-end">
-            <textarea
-              ref={textareaRef}
-              value={prompt}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                isBashMode 
-                  ? "Enter bash command... (Esc to exit)" 
-                  : "Send a message... (Cmd/Ctrl+Enter)"
-              }
-              disabled={disabled || hasActiveStream}
-              className={`flex-1 bg-background border rounded-lg px-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 resize-none min-h-[36px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm ${
-                isBashMode 
-                  ? 'border-purple-500/50 focus:ring-purple-500/50 bg-purple-500/5' 
-                  : 'border-border focus:ring-primary/50'
-              }`}
-              rows={1}
-            />
-            <button
-              data-submit-prompt
-              onClick={hasActiveStream ? handleStop : handleSubmit}
-              disabled={(!prompt.trim() && !hasActiveStream) || disabled}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                hasActiveStream
-                  ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' 
-                  : 'bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground'
-              }`}
-              title={hasActiveStream ? 'Stop' : 'Send'}
-            >
-              {hasActiveStream ? '■' : '↑'}
-            </button>
-          </div>
-        </>
-      )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem disabled className="text-xs text-muted-foreground font-medium">
+                Keyboard Shortcuts
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                <span className="font-mono">Cmd/Ctrl+Enter</span> - Send message
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                <span className="font-mono">@</span> - Mention files
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                <span className="font-mono">!</span> - Bash command mode
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <button
+          data-submit-prompt
+          onClick={hasActiveStream ? handleStop : handleSubmit}
+          disabled={(!prompt.trim() && !hasActiveStream) || disabled}
+          className={`px-6 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            hasActiveStream
+              ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' 
+              : 'bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground'
+          }`}
+          title={hasActiveStream ? 'Stop' : 'Send'}
+        >
+          {hasActiveStream ? 'Stop' : 'Send'}
+        </button>
+      </div>
       
       <CommandSuggestions
         isOpen={showSuggestions}
