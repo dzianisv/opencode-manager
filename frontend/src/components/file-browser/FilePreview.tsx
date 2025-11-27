@@ -182,12 +182,6 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
             </div>
             
             <div className="flex items-center gap-1 flex-shrink-0 mt-1">
-              {isMobileModal && onCloseModal && (
-                <Button variant="outline" size="sm" onClick={onCloseModal} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
-                  <X className="w-3 h-3" />
-                </Button>
-              )}
-              
               {isTextFile && viewMode !== 'edit' && (
                 <Button variant="outline" size="sm" onClick={handleEdit} className="h-7 w-7 p-0">
                   <Edit3 className="w-3 h-3" />
@@ -216,6 +210,12 @@ export function FilePreview({ file, hideHeader = false, isMobileModal = false, o
                    <Download className="w-3 h-3" />
                  </Button>
                )}
+              
+              {viewMode !== 'edit' && isMobileModal && onCloseModal && (
+                <Button variant="outline" size="sm" onClick={onCloseModal} className="border-destructive bg-destructive/10 text-destructive hover:bg-destructive/20 h-7 w-7 p-0">
+                  <X className="w-3 h-3" />
+                </Button>
+              )}
             </div>
           </div>
         </>

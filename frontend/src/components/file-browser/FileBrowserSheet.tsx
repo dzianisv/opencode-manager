@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileBrowser } from './FileBrowser'
 import { Button } from '@/components/ui/button'
+import { PathDisplay } from '@/components/ui/path-display'
 import { X } from 'lucide-react'
 
 interface FileBrowserSheetProps {
@@ -12,7 +13,29 @@ interface FileBrowserSheetProps {
 }
 
 export function FileBrowserSheet({ isOpen, onClose, basePath = '', repoName, initialSelectedFile }: FileBrowserSheetProps) {
+  const normalizedBasePath = basePath || '.'
   const [isEditing, setIsEditing] = useState(false)
+  const [displayPath, setDisplayPath] = useState<string>('/')
+  const handleDirectoryLoad = (info: { workspaceRoot?: string; currentPath: string }) => {
+    if (!info.currentPath || info.currentPath === '.' || info.currentPath === '') {
+      setDisplayPath('/')
+      return
+    }
+    
+    const pathParts = info.currentPath.split('/').filter(Boolean)
+    
+    if (repoName) {
+      const repoIndex = pathParts.findIndex(p => p === repoName || p.startsWith(repoName + '-'))
+      if (repoIndex >= 0) {
+        const subPath = pathParts.slice(repoIndex + 1)
+        setDisplayPath(subPath.length > 0 ? '/' + subPath.join('/') : '/')
+      } else {
+        setDisplayPath('/' + pathParts.join('/'))
+      }
+    } else {
+      setDisplayPath('/' + pathParts.join('/'))
+    }
+  }
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -44,17 +67,15 @@ export function FileBrowserSheet({ isOpen, onClose, basePath = '', repoName, ini
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm">
       <div className="absolute inset-0 bg-background">
         {/* Header */}
-        <div className="sticky top-0 z-10 border-b border-border bg-background backdrop-blur-sm px-4 py-3">
+        <div className="sticky top-0 z-10 border-b border-border bg-background backdrop-blur-sm px-4 py-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h1 className="text-lg font-semibold text-foreground">
-                {repoName ? `${repoName} - Files` : 'Workspace Files'}
-              </h1>
-              {basePath && (
-                <span className="text-sm text-muted-foreground bg-muted px-2 py-1 rounded">
-                  {basePath}
-                </span>
+              {(displayPath === '/' || !repoName) && (
+                <h1 className="text-sm font-semibold text-foreground">
+                  {repoName || 'Workspace Files'}
+                </h1>
               )}
+              <PathDisplay path={displayPath} maxSegments={3} />
             </div>
             {!isEditing && (
               <Button
@@ -72,9 +93,10 @@ export function FileBrowserSheet({ isOpen, onClose, basePath = '', repoName, ini
         {/* File Browser Content */}
         <div className="h-[calc(100vh-73px)] overflow-hidden">
           <FileBrowser 
-            basePath={basePath}
+            basePath={normalizedBasePath}
             embedded={true}
             initialSelectedFile={initialSelectedFile}
+            onDirectoryLoad={handleDirectoryLoad}
           />
         </div>
       </div>

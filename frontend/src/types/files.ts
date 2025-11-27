@@ -7,4 +7,5 @@ export interface FileInfo {
   content?: string
   children?: FileInfo[]
   lastModified: Date
+  workspaceRoot?: string
 }

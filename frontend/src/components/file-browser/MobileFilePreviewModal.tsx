@@ -15,14 +15,6 @@ export function MobileFilePreviewModal({
   file,
   showFilePreviewHeader = false,
 }: MobileFilePreviewModalProps) {
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault();
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    e.preventDefault();
-  };
-
   if (!file || file.isDirectory) {
     return null;
   }
@@ -31,8 +23,6 @@ export function MobileFilePreviewModal({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         className="w-screen h-screen max-w-none max-h-none p-0 bg-background border-0 flex flex-col"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
         hideCloseButton
       >
         <div
@@ -49,4 +39,3 @@ export function MobileFilePreviewModal({
     </Dialog>
   );
 }
-

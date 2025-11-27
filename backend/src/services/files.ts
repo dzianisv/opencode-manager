@@ -24,6 +24,7 @@ interface FileInfo {
   content?: string
   children?: FileInfo[]
   lastModified: Date
+  workspaceRoot?: string
 }
 
 interface FileUploadResult {
@@ -96,6 +97,7 @@ export async function getFile(userPath: string): Promise<FileInfo> {
           return a.name.localeCompare(b.name)
         }),
         lastModified: stats.lastModified,
+        workspaceRoot: SHARED_WORKSPACE_BASE,
       }
     } else {
       // It's a file - get content

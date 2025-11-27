@@ -20,9 +20,10 @@ interface FileBrowserProps {
   onFileSelect?: (file: FileInfo) => void
   embedded?: boolean
   initialSelectedFile?: string
+  onDirectoryLoad?: (info: { workspaceRoot?: string; currentPath: string }) => void
 }
 
-export function FileBrowser({ basePath = '', onFileSelect, embedded = false, initialSelectedFile }: FileBrowserProps) {
+export function FileBrowser({ basePath = '', onFileSelect, embedded = false, initialSelectedFile, onDirectoryLoad }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState(basePath)
   const [files, setFiles] = useState<FileInfo | null>(null)
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null)
@@ -65,6 +66,7 @@ useEffect(() => {
       const data = await response.json()
       setFiles(data)
       setCurrentPath(path)
+      onDirectoryLoad?.({ workspaceRoot: data.workspaceRoot, currentPath: path })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load files')
     } finally {
