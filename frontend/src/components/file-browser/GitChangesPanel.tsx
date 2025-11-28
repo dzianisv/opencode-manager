@@ -140,7 +140,7 @@ export function GitChangesPanel({ repoId, onFileSelect, selectedFile }: GitChang
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
-        <div className="space-y-1">
+        <div className="space-y-1 pb-8">
           {filteredFiles.map((file) => (
             <FileStatusItem
               key={`${file.path}-${file.staged}`}

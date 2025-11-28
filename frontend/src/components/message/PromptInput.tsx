@@ -4,7 +4,7 @@ import { useSettings } from '@/hooks/useSettings'
 import { useCommands } from '@/hooks/useCommands'
 import { useCommandHandler } from '@/hooks/useCommandHandler'
 import { useFileSearch } from '@/hooks/useFileSearch'
-import { useStandalone } from '@/hooks/useStandalone'
+
 import { useUserBash } from '@/stores/userBashStore'
 import { ChevronDown } from 'lucide-react'
 
@@ -84,7 +84,7 @@ export function PromptInput({
     directory
   )
   
-  const isStandalone = useStandalone()
+
   const { addUserBashCommand } = useUserBash()
 
   const handleSubmit = () => {
@@ -426,7 +426,7 @@ export function PromptInput({
   
 
   return (
-    <div className={`backdrop-blur-md bg-background opacity-95 border border-border rounded-lg p-2 md:p-3 mx-2 md:mx-4 md:mb-4 w-full max-w-4xl pb-safe ${isStandalone ? 'mb-6' : 'mb-2'}`}>
+    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-lg p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-4 w-full max-w-4xl pb-safe">
       
       
       <textarea
