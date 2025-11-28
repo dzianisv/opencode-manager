@@ -426,7 +426,7 @@ export function PromptInput({
   
 
   return (
-    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-lg p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-4 w-full max-w-4xl">
+    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-xl p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-5 w-[90%] md:max-w-4xl">
       
       
       <textarea
@@ -495,10 +495,10 @@ export function PromptInput({
           {showScrollButton && (
             <button
               onClick={onScrollToBottom}
-              className="p-1.5 md:p-2 rounded-lg bg-muted hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
+              className="p-1.5 md:p-2 rounded-lg bg-muted hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors border border-foreground/30"
               title="Scroll to bottom"
             >
-              <ChevronDown className="w-4 h-4" />
+              <ChevronDown className="w-5 h-5" />
             </button>
           )}
           <button

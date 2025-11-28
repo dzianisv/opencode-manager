@@ -59,7 +59,7 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl, rep
             <span className="hidden sm:inline">{currentBranch}</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="bg-card border-border min-w-[200px]">
+        <DropdownMenuContent sideOffset={0} align="end" className="bg-card border-border min-w-[200px]">
           {branchesLoading ? (
             <DropdownMenuItem disabled className="text-muted-foreground">
               Loading branches...
