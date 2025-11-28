@@ -25,10 +25,14 @@ export function runMigrations(db: Database): void {
             is_local BOOLEAN DEFAULT FALSE
           )
         `)
-        db.run(`
-          INSERT INTO repos_new (id, repo_url, local_path, branch, default_branch, clone_status, cloned_at, last_pulled, opencode_config_name, is_worktree, is_local)
-          SELECT id, repo_url, local_path, branch, default_branch, clone_status, cloned_at, last_pulled, opencode_config_name, is_worktree, is_local FROM repos
-        `)
+        
+        const existingColumns = tableInfo.map((col: any) => col.name)
+        const columnsToCopy = ['id', 'repo_url', 'local_path', 'branch', 'default_branch', 'clone_status', 'cloned_at', 'last_pulled', 'opencode_config_name', 'is_worktree', 'is_local']
+          .filter(col => existingColumns.includes(col))
+        
+        const columnsStr = columnsToCopy.join(', ')
+        db.run(`INSERT INTO repos_new (${columnsStr}) SELECT ${columnsStr} FROM repos`)
+        
         db.run('DROP TABLE repos')
         db.run('ALTER TABLE repos_new RENAME TO repos')
         db.run('COMMIT')
