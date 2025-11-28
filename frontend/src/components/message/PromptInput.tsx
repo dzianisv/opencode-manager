@@ -426,7 +426,7 @@ export function PromptInput({
   
 
   return (
-    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-lg p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-4 w-full max-w-4xl pb-safe">
+    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-lg p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-4 w-full max-w-4xl">
       
       
       <textarea
@@ -448,7 +448,7 @@ export function PromptInput({
         rows={1}
       />
       
-      <div className="flex gap-1.5 md:gap-2 items-center justify-between mb-1">
+      <div className="flex gap-1.5 md:gap-2 items-center justify-between">
         <div className="flex gap-1.5 md:gap-2 items-center">
           <button
             onClick={handleModeToggle}
