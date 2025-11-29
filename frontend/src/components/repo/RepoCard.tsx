@@ -46,7 +46,7 @@ export function RepoCard({
           : "border-border hover:border-border hover:shadow-blue-900/20"
       }`}
     >
-      <div className="p-4 sm:p-6">
+      <div className="p-2 sm:p-6">
          <div className="mb-4">
            <div className="flex items-center gap-2 mb-2">
 {onSelect && (
@@ -63,18 +63,18 @@ export function RepoCard({
                 />
               )}
 <h3 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (isReady) {
-                    navigate(`/repos/${repo.id}`);
-                  }
-                }}
-                className={`font-semibold text-lg text-foreground truncate group-hover:text-blue-400 transition-colors ${
-                  isReady ? "cursor-pointer" : "cursor-not-allowed opacity-60"
-                }`}
-              >
-                {repoName}
-              </h3>
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   if (onSelect) {
+                     onSelect(repo.id, !isSelected);
+                   }
+                 }}
+                 className={`font-semibold text-lg text-foreground truncate group-hover:text-blue-400 transition-colors ${
+                   onSelect ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+                 }`}
+               >
+                 {repoName}
+               </h3>
              {repo.isWorktree && (
               <Badge
                 className="text-xs px-2.5 py-0.5 bg-purple-600/20 text-purple-400 border-purple-600/40"
@@ -105,7 +105,7 @@ export function RepoCard({
               <span>Cloning repository...</span>
             </div>
           )}
-          <div className="flex justify-between">
+          <div className="flex gap-2 flex-wrap">
 					            <Button
               size="sm"
               onClick={(e) => {
@@ -113,28 +113,26 @@ export function RepoCard({
                 navigate(`/repos/${repo.id}`);
               }}
               disabled={!isReady}
-              className="cursor-pointer w-[150px] h-10 sm:h-9 px-3"
+              className="cursor-pointer flex-1 h-10 sm:h-9 px-3"
             >
               <ExternalLink className="w-4 h-4 mr-2" />
               Open
             </Button>
 	    
-	<div className="flex gap-2">
 
-            {repo.repoUrl && (
               <Button
                 size="sm"
+									
                 variant="outline"
                 onClick={(e) => {
                   e.stopPropagation();
                   setAddBranchOpen(true);
                 }}
-                disabled={!isReady}
+                disabled={!isReady || !repo.repoUrl}
                 className="h-10 sm:h-9 w-10 p-0"
               >
                 <GitBranch className="w-4 h-4" />
               </Button>
-            )}
 
             <Button
               size="sm"
@@ -151,8 +149,7 @@ export function RepoCard({
               ) : (
                 <Trash2 className="w-4 h-4" />
               )}
-            </Button></div>
-          </div>
+            </Button>          </div>
         </div>
       </div>
 
