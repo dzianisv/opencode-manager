@@ -4,6 +4,7 @@ import { API_BASE_URL } from '@/config'
 
 const TTS_CACHE_NAME = 'tts-audio-cache'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const PUNCTUATION_REGEX = /(?<=[.!?;])\s+/
 
 function generateCacheKey(text: string, voice: string, model: string, speed: number): string {
   const data = `${text}|${voice}|${model}|${speed}`
@@ -59,6 +60,11 @@ async function cacheAudio(cacheKey: string, blob: Blob): Promise<void> {
 
 export type TTSState = 'idle' | 'loading' | 'playing' | 'paused' | 'error'
 
+function splitTextByPunctuation(text: string): string[] {
+  const chunks = text.split(PUNCTUATION_REGEX).filter(chunk => chunk.trim().length > 0)
+  return chunks.length > 0 ? chunks : [text]
+}
+
 export function useTTS() {
   const { preferences } = useSettings()
   const [state, setState] = useState<TTSState>('idle')
@@ -66,6 +72,9 @@ export function useTTS() {
   const [currentText, setCurrentText] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const chunkQueueRef = useRef<string[]>([])
+  const isPlayingChunksRef = useRef<boolean>(false)
+  const fullTextRef = useRef<string | null>(null)
 
   const ttsConfig = preferences?.tts
   const isEnabled = ttsConfig?.enabled && ttsConfig?.apiKey
@@ -80,11 +89,115 @@ export function useTTS() {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
     }
+    chunkQueueRef.current = []
+    isPlayingChunksRef.current = false
   }, [])
 
   useEffect(() => {
     return () => cleanup()
   }, [cleanup])
+
+  const synthesizeChunk = useCallback(async (text: string): Promise<Blob | null> => {
+    if (!isPlayingChunksRef.current) return null
+    
+    const { voice, model, speed } = ttsConfig!
+    const cacheKey = generateCacheKey(text, voice, model, speed ?? 1)
+    
+    const cachedBlob = await getCachedAudio(cacheKey)
+    if (!isPlayingChunksRef.current) return null
+    if (cachedBlob) return cachedBlob
+    
+    abortControllerRef.current = new AbortController()
+    
+    const response = await fetch(`${API_BASE_URL}/api/tts/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: abortControllerRef.current.signal,
+    })
+    
+    if (!isPlayingChunksRef.current) return null
+    
+    if (!response.ok) {
+      let errorMessage = 'TTS request failed'
+      try {
+        const errorData = await response.json()
+        errorMessage = errorData.error || errorData.details || errorMessage
+      } catch {
+        if (response.status === 401) errorMessage = 'Invalid TTS API key'
+        else if (response.status === 429) errorMessage = 'TTS rate limit exceeded'
+        else if (response.status >= 500) errorMessage = 'TTS service unavailable'
+      }
+      throw new Error(errorMessage)
+    }
+    
+    const contentType = response.headers.get('content-type')
+    if (!contentType?.includes('audio')) throw new Error('Invalid response from TTS service')
+    
+    const audioBlob = await response.blob()
+    if (!isPlayingChunksRef.current) return null
+    if (audioBlob.size === 0) throw new Error('Empty audio response from TTS service')
+    
+    await cacheAudio(cacheKey, audioBlob)
+    return audioBlob
+  }, [ttsConfig])
+
+  const playNextChunk = useCallback(async () => {
+    if (!isPlayingChunksRef.current || chunkQueueRef.current.length === 0) {
+      isPlayingChunksRef.current = false
+      fullTextRef.current = null
+      setState('idle')
+      setCurrentText(null)
+      return
+    }
+    
+    const chunk = chunkQueueRef.current.shift()!
+    
+    try {
+      const audioBlob = await synthesizeChunk(chunk)
+      
+      if (!audioBlob || !isPlayingChunksRef.current) return
+      
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      audioRef.current = audio
+      
+      audio.onplay = () => setState('playing')
+      audio.onpause = () => {
+        if (audio.currentTime < audio.duration) setState('paused')
+      }
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl)
+        playNextChunk()
+      }
+      audio.onerror = () => {
+        const mediaError = audio.error
+        let errorMessage = 'Audio playback failed'
+        if (mediaError) {
+          switch (mediaError.code) {
+            case MediaError.MEDIA_ERR_ABORTED: errorMessage = 'Audio playback was aborted'; break
+            case MediaError.MEDIA_ERR_NETWORK: errorMessage = 'Network error during audio playback'; break
+            case MediaError.MEDIA_ERR_DECODE: errorMessage = 'Audio decoding failed'; break
+            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED: errorMessage = 'Audio format not supported'; break
+          }
+        }
+        setError(errorMessage)
+        setState('error')
+        isPlayingChunksRef.current = false
+        URL.revokeObjectURL(audioUrl)
+      }
+      
+      await audio.play()
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        setState('idle')
+        return
+      }
+      setError(err instanceof Error ? err.message : 'TTS failed')
+      setState('error')
+      isPlayingChunksRef.current = false
+    }
+  }, [synthesizeChunk])
 
   const speak = useCallback(async (text: string) => {
     if (!ttsConfig?.enabled) {
@@ -105,125 +218,28 @@ export function useTTS() {
       return
     }
 
+    if (!ttsConfig.voice || !ttsConfig.model) {
+      setError('TTS voice or model not configured')
+      setState('error')
+      return
+    }
+
     cleanup()
     setError(null)
-    setCurrentText(text)
     setState('loading')
+    setCurrentText(text)
+    fullTextRef.current = text
 
-    try {
-      const { voice, model, speed } = ttsConfig
-      
-      if (!voice || !model) {
-        throw new Error('TTS voice or model not configured')
-      }
-      
-      const cacheKey = generateCacheKey(text, voice, model, speed ?? 1)
-      
-      let audioBlob = await getCachedAudio(cacheKey)
-      
-      if (!audioBlob) {
-        abortControllerRef.current = new AbortController()
-        
-        let response: Response
-        try {
-          response = await fetch(`${API_BASE_URL}/api/tts/synthesize`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ text }),
-            signal: abortControllerRef.current.signal,
-          })
-        } catch (fetchError) {
-          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-            throw fetchError
-          }
-          throw new Error('Failed to connect to TTS service')
-        }
-
-        if (!response.ok) {
-          let errorMessage = 'TTS request failed'
-          try {
-            const errorData = await response.json()
-            errorMessage = errorData.error || errorData.details || errorMessage
-          } catch {
-            if (response.status === 401) {
-              errorMessage = 'Invalid TTS API key'
-            } else if (response.status === 429) {
-              errorMessage = 'TTS rate limit exceeded'
-            } else if (response.status >= 500) {
-              errorMessage = 'TTS service unavailable'
-            }
-          }
-          throw new Error(errorMessage)
-        }
-
-        const contentType = response.headers.get('content-type')
-        if (!contentType?.includes('audio')) {
-          throw new Error('Invalid response from TTS service')
-        }
-
-        audioBlob = await response.blob()
-        
-        if (audioBlob.size === 0) {
-          throw new Error('Empty audio response from TTS service')
-        }
-        
-        await cacheAudio(cacheKey, audioBlob)
-      }
-
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      audioRef.current = audio
-
-      audio.onplay = () => setState('playing')
-      audio.onpause = () => {
-        if (audio.currentTime < audio.duration) {
-          setState('paused')
-        }
-      }
-      audio.onended = () => {
-        setState('idle')
-        setCurrentText(null)
-        URL.revokeObjectURL(audioUrl)
-      }
-      audio.onerror = () => {
-        const mediaError = audio.error
-        let errorMessage = 'Audio playback failed'
-        if (mediaError) {
-          switch (mediaError.code) {
-            case MediaError.MEDIA_ERR_ABORTED:
-              errorMessage = 'Audio playback was aborted'
-              break
-            case MediaError.MEDIA_ERR_NETWORK:
-              errorMessage = 'Network error during audio playback'
-              break
-            case MediaError.MEDIA_ERR_DECODE:
-              errorMessage = 'Audio decoding failed'
-              break
-            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-              errorMessage = 'Audio format not supported'
-              break
-          }
-        }
-        setError(errorMessage)
-        setState('error')
-        URL.revokeObjectURL(audioUrl)
-      }
-
-      await audio.play()
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        setState('idle')
-        return
-      }
-      setError(err instanceof Error ? err.message : 'TTS failed')
-      setState('error')
-    }
-  }, [ttsConfig, cleanup])
+    const chunks = splitTextByPunctuation(text)
+    chunkQueueRef.current = chunks
+    isPlayingChunksRef.current = true
+    
+    await playNextChunk()
+  }, [ttsConfig, cleanup, playNextChunk])
 
   const stop = useCallback(() => {
     cleanup()
+    fullTextRef.current = null
     setState('idle')
     setCurrentText(null)
     setError(null)
