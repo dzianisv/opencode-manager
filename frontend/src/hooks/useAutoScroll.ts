@@ -1,5 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react'
 
+const SCROLL_LOCK_MS = 300
+
 interface MessageInfo {
   role: string
 }
@@ -27,22 +29,23 @@ export function useAutoScroll<T extends Message>({
 }: UseAutoScrollOptions<T>): UseAutoScrollReturn {
   const lastMessageCountRef = useRef(0)
   const hasInitialScrolledRef = useRef(false)
+  const userScrolledAtRef = useRef(0)
   const userDisengagedRef = useRef(false)
-  const lastScrollTopRef = useRef(0)
+  const pointerStartYRef = useRef<number | null>(null)
 
   const scrollToBottom = useCallback(() => {
     if (!containerRef?.current) return
+    userScrolledAtRef.current = 0
     userDisengagedRef.current = false
     containerRef.current.scrollTop = containerRef.current.scrollHeight
-    lastScrollTopRef.current = containerRef.current.scrollTop
     onScrollStateChange?.(false)
   }, [containerRef, onScrollStateChange])
 
   useEffect(() => {
     lastMessageCountRef.current = 0
     hasInitialScrolledRef.current = false
+    userScrolledAtRef.current = 0
     userDisengagedRef.current = false
-    lastScrollTopRef.current = 0
   }, [sessionId])
 
   useEffect(() => {
@@ -50,27 +53,53 @@ export function useAutoScroll<T extends Message>({
     
     const container = containerRef.current
     
-    const handleWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        userDisengagedRef.current = true
-        onScrollStateChange?.(true)
+    const markDisengaged = () => {
+      userScrolledAtRef.current = Date.now()
+      userDisengagedRef.current = true
+      onScrollStateChange?.(true)
+    }
+
+    const handlePointerDown = (e: PointerEvent) => {
+      pointerStartYRef.current = e.clientY
+    }
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (pointerStartYRef.current === null) return
+      if (e.clientY > pointerStartYRef.current) {
+        markDisengaged()
       }
     }
 
-    const handleTouchMove = () => {
-      const currentScrollTop = container.scrollTop
-      if (currentScrollTop < lastScrollTopRef.current) {
-        userDisengagedRef.current = true
-        onScrollStateChange?.(true)
+    const handlePointerUp = () => {
+      pointerStartYRef.current = null
+    }
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        markDisengaged()
       }
-      lastScrollTopRef.current = currentScrollTop
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['PageUp', 'ArrowUp', 'Home'].includes(e.key)) {
+        markDisengaged()
+      }
     }
     
+    container.addEventListener('pointerdown', handlePointerDown, { passive: true })
+    container.addEventListener('pointermove', handlePointerMove, { passive: true })
+    container.addEventListener('pointerup', handlePointerUp, { passive: true })
+    container.addEventListener('pointercancel', handlePointerUp, { passive: true })
     container.addEventListener('wheel', handleWheel, { passive: true })
-    container.addEventListener('touchmove', handleTouchMove, { passive: true })
+    container.addEventListener('keydown', handleKeyDown)
+    
     return () => {
+      container.removeEventListener('pointerdown', handlePointerDown)
+      container.removeEventListener('pointermove', handlePointerMove)
+      container.removeEventListener('pointerup', handlePointerUp)
+      container.removeEventListener('pointercancel', handlePointerUp)
       container.removeEventListener('wheel', handleWheel)
-      container.removeEventListener('touchmove', handleTouchMove)
+      container.removeEventListener('keydown', handleKeyDown)
     }
   }, [containerRef, onScrollStateChange])
 
@@ -95,9 +124,14 @@ export function useAutoScroll<T extends Message>({
       }
     }
 
-    if (!userDisengagedRef.current) {
-      scrollToBottom()
+    const timeSinceUserScroll = Date.now() - userScrolledAtRef.current
+    const recentlyScrolled = timeSinceUserScroll < SCROLL_LOCK_MS
+    
+    if (recentlyScrolled || userDisengagedRef.current) {
+      return
     }
+
+    scrollToBottom()
   }, [messages, containerRef, scrollToBottom])
 
   return { scrollToBottom }
