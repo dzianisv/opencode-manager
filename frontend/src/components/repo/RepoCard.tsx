@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Trash2, GitBranch, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
@@ -48,21 +49,19 @@ export function RepoCard({
       <div className="p-4 sm:p-6">
          <div className="mb-4">
            <div className="flex items-center gap-2 mb-2">
-             {onSelect && (
-               <input
-                 type="checkbox"
-		id="select-repo" 
-                 checked={isSelected}
-                 onChange={(e) => {
-                   e.stopPropagation();
-                   onSelect(repo.id, e.target.checked);
-                 }}
-                 onClick={(e) => {
-                   e.stopPropagation();
-                 }}
-                 className="w-5 h-5 rounded border-gray-600 accent-blue-500 cursor-pointer"
-               />
-             )}
+{onSelect && (
+                <Checkbox
+                  id="select-repo"
+                  checked={isSelected}
+                  onCheckedChange={(checked) => {
+                    onSelect(repo.id, checked === true);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="w-5 h-5"
+                />
+              )}
 <h3 
                 onClick={(e) => {
                   e.stopPropagation();
@@ -106,19 +105,22 @@ export function RepoCard({
               <span>Cloning repository...</span>
             </div>
           )}
-          <div className="flex gap-2">
-            <Button
+          <div className="flex justify-between">
+					            <Button
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
                 navigate(`/repos/${repo.id}`);
               }}
               disabled={!isReady}
-              className="cursor-pointer flex-1 h-10 sm:h-9 px-3"
+              className="cursor-pointer w-[150px] h-10 sm:h-9 px-3"
             >
               <ExternalLink className="w-4 h-4 mr-2" />
               Open
             </Button>
+	    
+	<div className="flex gap-2">
+
             {repo.repoUrl && (
               <Button
                 size="sm"
@@ -149,7 +151,7 @@ export function RepoCard({
               ) : (
                 <Trash2 className="w-4 h-4" />
               )}
-            </Button>
+            </Button></div>
           </div>
         </div>
       </div>
