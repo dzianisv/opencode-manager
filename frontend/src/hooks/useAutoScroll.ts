@@ -54,6 +54,8 @@ export function useAutoScroll({
       
       if (isScrolledUp) {
         isFollowingRef.current = false
+      } else {
+        isFollowingRef.current = true
       }
       
       if (userScrolledUpRef.current !== isScrolledUp) {
