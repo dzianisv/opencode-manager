@@ -10,7 +10,7 @@ import { SessionList } from "@/components/session/SessionList";
 import { PermissionRequestDialog } from "@/components/session/PermissionRequestDialog";
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useSession, useAbortSession, useUpdateSession, useOpenCodeClient } from "@/hooks/useOpenCode";
+import { useSession, useAbortSession, useUpdateSession, useOpenCodeClient, useMessages } from "@/hooks/useOpenCode";
 import { OPENCODE_API_ENDPOINT } from "@/config";
 import { useSSE } from "@/hooks/useSSE";
 import { useSettings } from "@/hooks/useSettings";
@@ -34,24 +34,27 @@ export function SessionDetail() {
   const [selectedFilePath, setSelectedFilePath] = useState<string | undefined>();
   const [showScrollButton, setShowScrollButton] = useState(false);
 
-  const { scrollToBottom, setFollowing, isFollowing } = useAutoScroll({
-    containerRef: messageContainerRef,
-    dependency: sessionId,
-    onScrollStateChange: setShowScrollButton
-  });
-
   const { data: repo, isLoading: repoLoading } = useQuery({
     queryKey: ["repo", repoId],
     queryFn: () => getRepo(repoId),
     enabled: !!repoId,
   });
 
-const { currentPermission, pendingCount, dismissPermission } = usePermissionRequests();
+  const { currentPermission, pendingCount, dismissPermission } = usePermissionRequests();
   
   const opcodeUrl = OPENCODE_API_ENDPOINT;
   const openCodeClient = useOpenCodeClient(opcodeUrl, repo?.fullPath);
   
   const repoDirectory = repo?.fullPath;
+
+  const { data: messages } = useMessages(opcodeUrl, sessionId, repoDirectory);
+
+  const { scrollToBottom } = useAutoScroll({
+    containerRef: messageContainerRef,
+    messages,
+    sessionId,
+    onScrollStateChange: setShowScrollButton
+  });
 
   const { data: session, isLoading: sessionLoading } = useSession(
     opcodeUrl,
@@ -176,10 +179,8 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
               opcodeUrl={opcodeUrl} 
               sessionID={sessionId} 
               directory={repoDirectory}
+              messages={messages}
               onFileClick={handleFileClick}
-              scrollToBottom={scrollToBottom}
-              setFollowing={setFollowing}
-              isFollowing={isFollowing}
             />
           )}
         </div>

@@ -1,5 +1,4 @@
-import { memo, useRef, useEffect } from 'react'
-import { useMessages } from '@/hooks/useOpenCode'
+import { memo } from 'react'
 import { MessagePart } from './MessagePart'
 import type { MessageWithParts } from '@/api/types'
 
@@ -15,10 +14,8 @@ interface MessageThreadProps {
   opcodeUrl: string
   sessionID: string
   directory?: string
+  messages?: MessageWithParts[]
   onFileClick?: (filePath: string, lineNumber?: number) => void
-  scrollToBottom: () => void
-  setFollowing: (following: boolean) => void
-  isFollowing: () => boolean
 }
 
 const isMessageStreaming = (msg: MessageWithParts): boolean => {
@@ -31,59 +28,7 @@ const isMessageThinking = (msg: MessageWithParts): boolean => {
   return msg.parts.length === 0 && isMessageStreaming(msg)
 }
 
-export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID, directory, onFileClick, scrollToBottom, setFollowing, isFollowing }: MessageThreadProps) {
-  const { data: messages, isLoading, error } = useMessages(opcodeUrl, sessionID, directory)
-  const hasInitialScrolledRef = useRef(false)
-  const lastMessageCountRef = useRef(0)
-
-  useEffect(() => {
-    hasInitialScrolledRef.current = false
-    lastMessageCountRef.current = 0
-  }, [sessionID])
-
-  useEffect(() => {
-    if (!messages) return
-
-    const currentCount = messages.length
-    const prevCount = lastMessageCountRef.current
-    lastMessageCountRef.current = currentCount
-
-    if (!hasInitialScrolledRef.current && currentCount > 0) {
-      hasInitialScrolledRef.current = true
-      scrollToBottom()
-      return
-    }
-
-    if (currentCount > prevCount) {
-      const newMessage = messages[currentCount - 1]
-      if (newMessage?.info.role === 'user') {
-        setFollowing(true)
-        scrollToBottom()
-        return
-      }
-    }
-
-    if (isFollowing()) {
-      scrollToBottom()
-    }
-  }, [messages, scrollToBottom, setFollowing, isFollowing])
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full text-zinc-500">
-        Loading messages...
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full text-red-400">
-        Error loading messages: {error instanceof Error ? error.message : 'Unknown error'}
-      </div>
-    )
-  }
-
+export const MessageThread = memo(function MessageThread({ messages, onFileClick }: MessageThreadProps) {
   if (!messages || messages.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-600">
