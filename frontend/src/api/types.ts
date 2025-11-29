@@ -102,6 +102,20 @@ export interface SSEPermissionRepliedEvent {
   }
 }
 
+export interface SSEInstallationUpdatedEvent {
+  type: 'installation.updated'
+  properties: {
+    version: string
+  }
+}
+
+export interface SSEInstallationUpdateAvailableEvent {
+  type: 'installation.update-available'
+  properties: {
+    version: string
+  }
+}
+
 export type SSEEvent =
   | SSEMessagePartUpdatedEvent
   | SSEMessageUpdatedEvent
@@ -113,6 +127,8 @@ export type SSEEvent =
   | SSETodoUpdatedEvent
   | SSEPermissionUpdatedEvent
   | SSEPermissionRepliedEvent
+  | SSEInstallationUpdatedEvent
+  | SSEInstallationUpdateAvailableEvent
 
 export type ContentPart = 
   | { type: 'text', content: string }
