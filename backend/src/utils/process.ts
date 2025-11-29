@@ -1,15 +1,24 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { logger } from './logger'
 
+interface ExecuteCommandOptions {
+  cwd?: string
+  silent?: boolean
+}
+
 export async function executeCommand(
   args: string[],
-  cwd?: string
+  cwdOrOptions?: string | ExecuteCommandOptions
 ): Promise<string> {
+  const options: ExecuteCommandOptions = typeof cwdOrOptions === 'string' 
+    ? { cwd: cwdOrOptions } 
+    : cwdOrOptions || {}
+  
   return new Promise((resolve, reject) => {
     const [command, ...cmdArgs] = args
     
     const proc: ChildProcess = spawn(command || '', cmdArgs, {
-      cwd,
+      cwd: options.cwd,
       shell: false
     })
 
@@ -25,7 +34,9 @@ export async function executeCommand(
     })
 
     proc.on('error', (error: Error) => {
-      logger.error(`Command failed: ${args.join(' ')}`, error)
+      if (!options.silent) {
+        logger.error(`Command failed: ${args.join(' ')}`, error)
+      }
       reject(error)
     })
 
@@ -34,7 +45,9 @@ export async function executeCommand(
         resolve(stdout)
       } else {
         const error = new Error(`Command failed with code ${code}: ${stderr || stdout}`)
-        logger.error(`Command failed: ${args.join(' ')}`, error)
+        if (!options.silent) {
+          logger.error(`Command failed: ${args.join(' ')}`, error)
+        }
         reject(error)
       }
     })
