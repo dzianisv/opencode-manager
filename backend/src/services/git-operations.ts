@@ -4,7 +4,7 @@ import path from 'path'
 
 async function hasCommits(repoPath: string): Promise<boolean> {
   try {
-    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'])
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'], { silent: true })
     return true
   } catch {
     return false

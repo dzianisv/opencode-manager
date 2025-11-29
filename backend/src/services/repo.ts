@@ -10,7 +10,7 @@ import path from 'path'
 
 async function hasCommits(repoPath: string): Promise<boolean> {
   try {
-    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'])
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'], { silent: true })
     return true
   } catch {
     return false
@@ -22,13 +22,13 @@ async function safeGetCurrentBranch(repoPath: string): Promise<string | null> {
     const repoHasCommits = await hasCommits(repoPath)
     if (!repoHasCommits) {
       try {
-        const symbolicRef = await executeCommand(['git', '-C', repoPath, 'symbolic-ref', '--short', 'HEAD'])
+        const symbolicRef = await executeCommand(['git', '-C', repoPath, 'symbolic-ref', '--short', 'HEAD'], { silent: true })
         return symbolicRef.trim()
       } catch {
         return null
       }
     }
-    const currentBranch = await executeCommand(['git', '-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'])
+    const currentBranch = await executeCommand(['git', '-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { silent: true })
     return currentBranch.trim()
   } catch {
     return null
