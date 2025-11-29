@@ -54,6 +54,12 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 - **PWA Support** - Installable as Progressive Web App
 - **iOS Keyboard Support** - Proper keyboard handling on iOS
 
+### Text-to-Speech (TTS)
+- **AI Message Playback** - Listen to assistant responses with TTS
+- **OpenAI-Compatible** - Works with any OpenAI-compatible TTS endpoint
+- **Voice & Speed Controls** - Configurable voice selection and playback speed
+- **Custom Endpoints** - Connect to local or self-hosted TTS services
+
 ## Demo Videos
 
 ### Demo
