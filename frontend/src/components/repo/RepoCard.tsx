@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Trash2, GitBranch, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
@@ -45,37 +46,35 @@ export function RepoCard({
           : "border-border hover:border-border hover:shadow-blue-900/20"
       }`}
     >
-      <div className="p-4 sm:p-6">
+      <div className="p-2 sm:p-6">
          <div className="mb-4">
            <div className="flex items-center gap-2 mb-2">
-             {onSelect && (
-               <input
-                 type="checkbox"
-		id="select-repo" 
-                 checked={isSelected}
-                 onChange={(e) => {
-                   e.stopPropagation();
-                   onSelect(repo.id, e.target.checked);
-                 }}
+{onSelect && (
+                <Checkbox
+                  id="select-repo"
+                  checked={isSelected}
+                  onCheckedChange={(checked) => {
+                    onSelect(repo.id, checked === true);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="w-5 h-5"
+                />
+              )}
+<h3 
                  onClick={(e) => {
                    e.stopPropagation();
+                   if (onSelect) {
+                     onSelect(repo.id, !isSelected);
+                   }
                  }}
-                 className="w-5 h-5 rounded border-gray-600 accent-blue-500 cursor-pointer"
-               />
-             )}
-<h3 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (isReady) {
-                    navigate(`/repos/${repo.id}`);
-                  }
-                }}
-                className={`font-semibold text-lg text-foreground truncate group-hover:text-blue-400 transition-colors ${
-                  isReady ? "cursor-pointer" : "cursor-not-allowed opacity-60"
-                }`}
-              >
-                {repoName}
-              </h3>
+                 className={`font-semibold text-lg text-foreground truncate group-hover:text-blue-400 transition-colors ${
+                   onSelect ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+                 }`}
+               >
+                 {repoName}
+               </h3>
              {repo.isWorktree && (
               <Badge
                 className="text-xs px-2.5 py-0.5 bg-purple-600/20 text-purple-400 border-purple-600/40"
@@ -106,8 +105,8 @@ export function RepoCard({
               <span>Cloning repository...</span>
             </div>
           )}
-          <div className="flex gap-2">
-            <Button
+          <div className="flex gap-2 flex-wrap">
+					            <Button
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
@@ -119,20 +118,21 @@ export function RepoCard({
               <ExternalLink className="w-4 h-4 mr-2" />
               Open
             </Button>
-            {repo.repoUrl && (
+	    
+
               <Button
                 size="sm"
+									
                 variant="outline"
                 onClick={(e) => {
                   e.stopPropagation();
                   setAddBranchOpen(true);
                 }}
-                disabled={!isReady}
+                disabled={!isReady || !repo.repoUrl}
                 className="h-10 sm:h-9 w-10 p-0"
               >
                 <GitBranch className="w-4 h-4" />
               </Button>
-            )}
 
             <Button
               size="sm"
@@ -149,8 +149,7 @@ export function RepoCard({
               ) : (
                 <Trash2 className="w-4 h-4" />
               )}
-            </Button>
-          </div>
+            </Button>          </div>
         </div>
       </div>
 

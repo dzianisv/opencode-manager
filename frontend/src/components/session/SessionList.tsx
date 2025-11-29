@@ -3,8 +3,10 @@ import { useSessions, useDeleteSession } from "@/hooks/useOpenCode";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
-import { Trash2, GitBranch, Clock, Search } from "lucide-react";
+import { Trash2, GitBranch, Clock, Search, MoreHorizontal } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SessionListProps {
@@ -126,7 +128,7 @@ export const SessionList = ({
             <Button
               onClick={toggleSelectAll}
               variant={selectedSessions.size > 0 ? "default" : "outline"}
-              className="whitespace-nowrap"
+              className="whitespace-nowrap hidden md:flex"
             >
               {filteredSessions.every((session) =>
                 selectedSessions.has(session.id),
@@ -144,15 +146,37 @@ export const SessionList = ({
             <Trash2 className="w-4 h-4 mr-2" />
             Delete ({selectedSessions.size})
           </Button>
-          <Button
-            onClick={handleBulkDelete}
-            variant="destructive"
-            disabled={selectedSessions.size === 0}
-            size="icon"
-            className="md:hidden"
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="md:hidden"
+                disabled={filteredSessions.length === 0}
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {filteredSessions.length > 0 && (
+                <DropdownMenuItem onClick={toggleSelectAll}>
+                  {filteredSessions.every((session) =>
+                    selectedSessions.has(session.id),
+                  )
+                    ? "Deselect All"
+                    : "Select All"}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem 
+                onClick={handleBulkDelete}
+                disabled={selectedSessions.size === 0}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete ({selectedSessions.size})
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -177,17 +201,15 @@ export const SessionList = ({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selectedSessions.has(session.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleSessionSelection(session.id, e.target.checked);
+                      onCheckedChange={(checked) => {
+                        toggleSessionSelection(session.id, checked === true);
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
                       }}
-                      className="w-5 h-5 rounded border-gray-600 accent-blue-500 cursor-pointer flex-shrink-0 mt-0.5"
+                      className="w-5 h-5 flex-shrink-0 mt-0.5"
                     />
                     <div className="flex-1 min-w-0">
                       <h3 className="text-sm font-medium text-white truncate">
