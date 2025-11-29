@@ -5,16 +5,24 @@ import { API_BASE_URL } from '@/config'
 const TTS_CACHE_NAME = 'tts-audio-cache'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
-async function generateCacheKey(text: string, voice: string, model: string, speed: number): Promise<string> {
+function generateCacheKey(text: string, voice: string, model: string, speed: number): string {
   const data = `${text}|${voice}|${model}|${speed}`
-  const encoder = new TextEncoder()
-  const dataBuffer = encoder.encode(data)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  let hash = 0
+  for (let i = 0; i < data.length; i++) {
+    const char = data.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0')
+}
+
+function isCacheApiAvailable(): boolean {
+  return typeof caches !== 'undefined'
 }
 
 async function getCachedAudio(cacheKey: string): Promise<Blob | null> {
+  if (!isCacheApiAvailable()) return null
+  
   try {
     const cache = await caches.open(TTS_CACHE_NAME)
     const response = await cache.match(cacheKey)
@@ -34,6 +42,8 @@ async function getCachedAudio(cacheKey: string): Promise<Blob | null> {
 }
 
 async function cacheAudio(cacheKey: string, blob: Blob): Promise<void> {
+  if (!isCacheApiAvailable()) return
+  
   try {
     const cache = await caches.open(TTS_CACHE_NAME)
     const headers = new Headers({
@@ -43,7 +53,7 @@ async function cacheAudio(cacheKey: string, blob: Blob): Promise<void> {
     const response = new Response(blob, { headers })
     await cache.put(cacheKey, response)
   } catch {
-    // Cache API not available, continue without caching
+    // Cache API not available or storage full, continue without caching
   }
 }
 
@@ -77,8 +87,20 @@ export function useTTS() {
   }, [cleanup])
 
   const speak = useCallback(async (text: string) => {
-    if (!isEnabled || !ttsConfig) {
-      setError('TTS is not configured')
+    if (!ttsConfig?.enabled) {
+      setError('TTS is not enabled in settings')
+      setState('error')
+      return
+    }
+
+    if (!ttsConfig?.apiKey) {
+      setError('TTS API key is not configured')
+      setState('error')
+      return
+    }
+
+    if (!text?.trim()) {
+      setError('No text provided for speech')
       setState('error')
       return
     }
@@ -90,28 +112,63 @@ export function useTTS() {
 
     try {
       const { voice, model, speed } = ttsConfig
-      const cacheKey = await generateCacheKey(text, voice, model, speed)
+      
+      if (!voice || !model) {
+        throw new Error('TTS voice or model not configured')
+      }
+      
+      const cacheKey = generateCacheKey(text, voice, model, speed ?? 1)
       
       let audioBlob = await getCachedAudio(cacheKey)
       
       if (!audioBlob) {
         abortControllerRef.current = new AbortController()
         
-        const response = await fetch(`${API_BASE_URL}/api/tts/synthesize`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ text }),
-          signal: abortControllerRef.current.signal,
-        })
+        let response: Response
+        try {
+          response = await fetch(`${API_BASE_URL}/api/tts/synthesize`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text }),
+            signal: abortControllerRef.current.signal,
+          })
+        } catch (fetchError) {
+          if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+            throw fetchError
+          }
+          throw new Error('Failed to connect to TTS service')
+        }
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.error || 'TTS request failed')
+          let errorMessage = 'TTS request failed'
+          try {
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorData.details || errorMessage
+          } catch {
+            if (response.status === 401) {
+              errorMessage = 'Invalid TTS API key'
+            } else if (response.status === 429) {
+              errorMessage = 'TTS rate limit exceeded'
+            } else if (response.status >= 500) {
+              errorMessage = 'TTS service unavailable'
+            }
+          }
+          throw new Error(errorMessage)
+        }
+
+        const contentType = response.headers.get('content-type')
+        if (!contentType?.includes('audio')) {
+          throw new Error('Invalid response from TTS service')
         }
 
         audioBlob = await response.blob()
+        
+        if (audioBlob.size === 0) {
+          throw new Error('Empty audio response from TTS service')
+        }
+        
         await cacheAudio(cacheKey, audioBlob)
       }
 
@@ -131,7 +188,25 @@ export function useTTS() {
         URL.revokeObjectURL(audioUrl)
       }
       audio.onerror = () => {
-        setError('Audio playback failed')
+        const mediaError = audio.error
+        let errorMessage = 'Audio playback failed'
+        if (mediaError) {
+          switch (mediaError.code) {
+            case MediaError.MEDIA_ERR_ABORTED:
+              errorMessage = 'Audio playback was aborted'
+              break
+            case MediaError.MEDIA_ERR_NETWORK:
+              errorMessage = 'Network error during audio playback'
+              break
+            case MediaError.MEDIA_ERR_DECODE:
+              errorMessage = 'Audio decoding failed'
+              break
+            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+              errorMessage = 'Audio format not supported'
+              break
+          }
+        }
+        setError(errorMessage)
         setState('error')
         URL.revokeObjectURL(audioUrl)
       }
@@ -145,7 +220,7 @@ export function useTTS() {
       setError(err instanceof Error ? err.message : 'TTS failed')
       setState('error')
     }
-  }, [isEnabled, ttsConfig, cleanup])
+  }, [ttsConfig, cleanup])
 
   const stop = useCallback(() => {
     cleanup()
