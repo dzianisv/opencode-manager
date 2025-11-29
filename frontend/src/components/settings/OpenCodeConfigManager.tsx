@@ -1,15 +1,13 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Loader2, Plus, Trash2, Edit, Star, StarOff, Download, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+import { DialogTrigger } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { DeleteDialog } from '@/components/ui/delete-dialog'
+import { CreateConfigDialog } from './CreateConfigDialog'
 import { OpenCodeConfigEditor } from './OpenCodeConfigEditor'
 import { CommandsEditor } from './CommandsEditor'
 import { AgentsEditor } from './AgentsEditor'
@@ -37,16 +35,9 @@ export function OpenCodeConfigManager() {
     agents: false,
     mcp: false,
   })
-  const [newConfigName, setNewConfigName] = useState('')
-  const [newConfigContent, setNewConfigContent] = useState('')
-  const [newConfigIsDefault, setNewConfigIsDefault] = useState(false)
-  
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [deleteConfirmConfig, setDeleteConfirmConfig] = useState<OpenCodeConfig | null>(null)
-  const [createError, setCreateError] = useState('')
-  const [createErrorLine, setCreateErrorLine] = useState<number | null>(null)
-  const createTextareaRef = useRef<HTMLTextAreaElement>(null)
   
   const restartServerMutation = useMutation({
     mutationFn: async () => {
@@ -106,48 +97,28 @@ export function OpenCodeConfigManager() {
     }
   }, [configs, selectedConfig])
 
-  const createConfig = async () => {
-    if (!newConfigName.trim() || !newConfigContent.trim()) return
-
+  const createConfig = async (name: string, content: string, isDefault: boolean) => {
     try {
       setIsUpdating(true)
-      setCreateError('')
-      const content = JSON.parse(newConfigContent)
+      const parsedContent = JSON.parse(content)
       
       const forbiddenFields = ['id', 'createdAt', 'updatedAt']
-      const foundForbidden = forbiddenFields.filter(field => field in content)
+      const foundForbidden = forbiddenFields.filter(field => field in parsedContent)
       if (foundForbidden.length > 0) {
         throw new Error(`Invalid fields found: ${foundForbidden.join(', ')}. These fields are managed automatically.`)
       }
       
       await settingsApi.createOpenCodeConfig({
-        name: newConfigName.trim(),
-        content,
-        isDefault: newConfigIsDefault,
+        name: name.trim(),
+        content: parsedContent,
+        isDefault,
       })
       
-      setNewConfigName('')
-      setNewConfigContent('')
-      setNewConfigIsDefault(false)
       setIsCreateDialogOpen(false)
       fetchConfigs()
     } catch (error) {
-      if (error instanceof SyntaxError) {
-        const match = error.message.match(/line (\d+)/i)
-        const line = match ? parseInt(match[1]) : null
-        setCreateErrorLine(line)
-        setCreateError(`JSON Error: ${error.message}`)
-        if (line && createTextareaRef.current) {
-          highlightErrorLine(createTextareaRef.current, line)
-        }
-      } else if (error instanceof Error) {
-        setCreateError(error.message)
-        setCreateErrorLine(null)
-      } else {
-        setCreateError('Failed to create configuration')
-        setCreateErrorLine(null)
-      }
       console.error('Failed to create config:', error)
+      throw error
     } finally {
       setIsUpdating(false)
     }
@@ -180,23 +151,7 @@ export function OpenCodeConfigManager() {
     }
   }
 
-  const uploadConfig = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const content = e.target?.result as string
-      try {
-        JSON.parse(content)
-        setNewConfigContent(content)
-        setNewConfigName(file.name.replace('.json', '').replace('.jsonc', ''))
-      } catch {
-        window.alert('Invalid JSON file')
-      }
-    }
-    reader.readAsText(file)
-  }
+  
 
   const downloadConfig = (config: OpenCodeConfig) => {
     const blob = new Blob([JSON.stringify(config.content, null, 2)], { type: 'application/json' })
@@ -208,18 +163,7 @@ export function OpenCodeConfigManager() {
     URL.revokeObjectURL(url)
   }
 
-  const highlightErrorLine = (textarea: HTMLTextAreaElement, line: number) => {
-    const lines = textarea.value.split('\n')
-    if (line > lines.length) return
-    
-    let charIndex = 0
-    for (let i = 0; i < line - 1; i++) {
-      charIndex += lines[i].length + 1
-    }
-    
-    textarea.focus()
-    textarea.setSelectionRange(charIndex, charIndex + lines[line - 1].length)
-  }
+  
 
   const startEdit = (config: OpenCodeConfig) => {
     setEditingConfig(config)
@@ -237,8 +181,7 @@ export function OpenCodeConfigManager() {
   return (
     <div className="space-y-6 overflow-y-auto">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-foreground">OpenCode Configurations</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 ">
           <Button
             variant="outline"
             onClick={() => restartServerMutation.mutate()}
@@ -251,84 +194,19 @@ export function OpenCodeConfigManager() {
             )}
             Restart Server
           </Button>
-<Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+<CreateConfigDialog
+            isOpen={isCreateDialogOpen}
+            onOpenChange={setIsCreateDialogOpen}
+            onCreate={createConfig}
+            isUpdating={isUpdating}
+          >
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
                 New Config
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Create OpenCode Config</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="config-name">Config Name</Label>
-                <Input
-                  id="config-name"
-                  value={newConfigName}
-                  onChange={(e) => setNewConfigName(e.target.value)}
-                  placeholder="my-config"
-                />
-              </div>
-              
-              <div>
-                <Label htmlFor="config-upload">Upload JSON File</Label>
-                <Input
-                  id="config-upload"
-                  type="file"
-                  accept=".json,.jsonc"
-                  onChange={uploadConfig}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="config-content">Config Content (JSON)</Label>
-                <Textarea
-                  id="config-content"
-                  ref={createTextareaRef}
-                  value={newConfigContent}
-                  onChange={(e) => {
-                    setNewConfigContent(e.target.value)
-                    setCreateError('')
-                    setCreateErrorLine(null)
-                  }}
-                  placeholder='{"$schema": "https://opencode.ai/config.json", "theme": "dark"}'
-                  rows={20}
-                  className="font-mono text-sm"
-                />
-                {createError && (
-                  <p className="text-sm text-red-500 mt-2">
-                    {createError}
-                    {createErrorLine && (
-                      <span className="ml-2 text-xs">(Line {createErrorLine})</span>
-                    )}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="config-default"
-                  checked={newConfigIsDefault}
-                  onCheckedChange={setNewConfigIsDefault}
-                />
-                <Label htmlFor="config-default">Set as default configuration</Label>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={createConfig} disabled={isUpdating || !newConfigName.trim() || !newConfigContent.trim()}>
-                  {isUpdating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Create
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+          </CreateConfigDialog>
         </div>
       </div>
 
@@ -339,7 +217,7 @@ export function OpenCodeConfigManager() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
+        <div className="flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols">
           {configs.map((config) => (
             <Card key={config.id}>
               <CardHeader className="pb-3">
@@ -392,9 +270,9 @@ export function OpenCodeConfigManager() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-sm text-muted-foreground">
-                  <p>Updated: {new Date(config.updatedAt).toLocaleString()}</p>
-                  <p>Created: {new Date(config.createdAt).toLocaleString()}</p>
+                <div className="text-sm text-muted-foreground break-words">
+                  <p className="truncate">Updated: {new Date(config.updatedAt).toLocaleString()}</p>
+                  <p className="truncate">Created: {new Date(config.createdAt).toLocaleString()}</p>
                 </div>
               </CardContent>
             </Card>
@@ -447,16 +325,16 @@ export function OpenCodeConfigManager() {
                 </Select>
               </div>
               
-              <div className="flex flex-col gap-4 pb-20">
+              <div className="flex flex-col gap-4 pb-20 min-w-0">
                 {selectedConfig ? (
                   <>
-                    <div className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="bg-card border border-border rounded-lg overflow-hidden min-w-0">
                       <button
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors"
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors min-w-0"
                         onClick={() => setExpandedSections(prev => ({ ...prev, commands: !prev.commands }))}
                       >
-                        <div className="flex items-center gap-3">
-                          <h4 className="text-sm font-medium">Commands</h4>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <h4 className="text-sm font-medium truncate">Commands</h4>
                           <span className="text-xs text-muted-foreground">
                             {Object.keys(selectedConfig.content.command as Record<string, any> || {}).length} configured
                           </span>
@@ -464,7 +342,7 @@ export function OpenCodeConfigManager() {
                         <Edit className={`h-4 w-4 transition-transform ${expandedSections.commands ? 'rotate-90' : ''}`} />
                       </button>
                       <div className={`${expandedSections.commands ? 'block' : 'hidden'} border-t border-border`}>
-                        <div className="p-4 max-h-[50vh] overflow-y-auto">
+                        <div className="p-1 sm:p-4 max-h-[50vh] overflow-y-auto">
                           <CommandsEditor
                             commands={(selectedConfig.content.command as Record<string, any>) || {}}
                             onChange={(commands) => {
@@ -479,13 +357,13 @@ export function OpenCodeConfigManager() {
                       </div>
                     </div>
                     
-                    <div className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="bg-card border border-border rounded-lg overflow-hidden min-w-0">
                       <button
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors"
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors min-w-0"
                         onClick={() => setExpandedSections(prev => ({ ...prev, agents: !prev.agents }))}
                       >
-                        <div className="flex items-center gap-3">
-                          <h4 className="text-sm font-medium">Agents</h4>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <h4 className="text-sm font-medium truncate">Agents</h4>
                           <span className="text-xs text-muted-foreground">
                             {Object.keys(selectedConfig.content.agent as Record<string, any> || {}).length} configured
                           </span>
@@ -508,13 +386,13 @@ export function OpenCodeConfigManager() {
                       </div>
                     </div>
 
-                    <div className="bg-card border border-border rounded-lg overflow-hidden">
+                    <div className="bg-card border border-border rounded-lg overflow-hidden min-w-0">
                       <button
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors"
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors min-w-0"
                         onClick={() => setExpandedSections(prev => ({ ...prev, mcp: !prev.mcp }))}
                       >
-                        <div className="flex items-center gap-3">
-                          <h4 className="text-sm font-medium">MCP Servers</h4>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <h4 className="text-sm font-medium truncate">MCP Servers</h4>
                           <span className="text-xs text-muted-foreground">
                             {Object.keys((selectedConfig.content.mcp as Record<string, any>) || {}).length} configured
                           </span>

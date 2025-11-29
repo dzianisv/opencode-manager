@@ -38,37 +38,6 @@ const handleRestartServer = async () => {
   }
 }
 
-// Debug function to emulate toasts - remove in production
-if (typeof window !== 'undefined') {
-  (window as any).testToasts = {
-    updateAvailable: () => {
-      showToast.info(`OpenCode v1.2.3 is available`, {
-        description: 'A new version is ready to install.',
-        action: {
-          label: 'Restart to Update',
-          onClick: handleRestartServer
-        },
-        duration: 10000,
-      })
-    },
-    updated: () => {
-      showToast.success(`OpenCode updated to v1.2.3`, {
-        description: 'The server has been successfully upgraded.',
-        duration: 5000,
-      })
-    },
-    restartTest: () => {
-      handleRestartServer()
-    },
-    basic: () => {
-      showToast.info('This is a basic info toast')
-      showToast.success('This is a success toast')
-      showToast.warning('This is a warning toast')
-      showToast.error('This is an error toast')
-    }
-  }
-  console.log('🍞 Toast test functions available: window.testToasts.updateAvailable(), window.testToasts.updated(), window.testToasts.restartTest(), window.testToasts.basic()')
-}
 
 export const useSSE = (opcodeUrl: string | null | undefined, directory?: string) => {
   const client = useOpenCodeClient(opcodeUrl, directory)

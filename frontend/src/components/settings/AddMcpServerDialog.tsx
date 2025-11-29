@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { settingsApi } from '@/api/settings'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
@@ -126,7 +127,7 @@ onSuccess: async () => {
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl bg-card border-border">
+      <DialogContent className="w-full max-w-3xl bg-card border-border">
         <DialogHeader>
           <DialogTitle>Add MCP Server</DialogTitle>
           <DialogDescription>
@@ -134,8 +135,8 @@ onSuccess: async () => {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
+        <div className="space-y-4">
+          <div>
             <Label htmlFor="serverId">Server ID</Label>
             <Input
               id="serverId"
@@ -149,7 +150,7 @@ onSuccess: async () => {
             </p>
           </div>
 
-          <div className="space-y-2">
+          <div>
             <Label htmlFor="serverType">Server Type</Label>
             <Select value={serverType} onValueChange={(value: 'local' | 'remote') => setServerType(value)}>
               <SelectTrigger className="bg-background border-border">
@@ -163,7 +164,7 @@ onSuccess: async () => {
           </div>
 
           {serverType === 'local' ? (
-            <div className="space-y-2">
+            <div>
               <Label htmlFor="command">Command</Label>
               <Input
                 id="command"
@@ -177,7 +178,7 @@ onSuccess: async () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div>
               <Label htmlFor="url">Server URL</Label>
               <Input
                 id="url"
@@ -193,16 +194,17 @@ onSuccess: async () => {
           )}
 
           {serverType === 'local' && (
-            <div className="space-y-2">
+            <div>
               <div className="flex items-center justify-between">
                 <Label>Environment Variables</Label>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  className='h-6'
                   onClick={handleAddEnvironmentVar}
                 >
-                  Add Variable
+                  +
                 </Button>
               </div>
               {environment.map((env, index) => (
@@ -237,7 +239,7 @@ onSuccess: async () => {
             </div>
           )}
 
-          <div className="space-y-2">
+          <div>
             <Label htmlFor="timeout">Timeout (ms)</Label>
             <Input
               id="timeout"
@@ -252,12 +254,10 @@ onSuccess: async () => {
           </div>
 
           <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
+            <Switch
               id="enabled"
               checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="rounded"
+              onCheckedChange={setEnabled}
             />
             <Label htmlFor="enabled">Enable server on startup</Label>
           </div>

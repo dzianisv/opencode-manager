@@ -157,9 +157,9 @@ export function McpManager({ config, onUpdate, onConfigUpdate }: McpManagerProps
         </div>
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Server
+            <Button className='mr-1 h-6'>
+              <Plus className="h-4 w-4" />
+             
             </Button>
           </DialogTrigger>
           <AddMcpServerDialog 
@@ -172,16 +172,16 @@ export function McpManager({ config, onUpdate, onConfigUpdate }: McpManagerProps
 
       {Object.keys(mcpServers).length === 0 ? (
         <Card>
-          <CardContent className="p-8 text-center">
+          <CardContent className="p-2 sm:p-8 text-center">
             <p className="text-muted-foreground">No MCP servers configured. Add your first server to get started.</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Object.entries(mcpServers).map(([serverId, serverConfig]) => (
             <Card key={serverId}>
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                       {serverConfig.type === 'local' ? (
@@ -217,7 +217,7 @@ export function McpManager({ config, onUpdate, onConfigUpdate }: McpManagerProps
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className='p-2'>
                 <div className="text-sm text-muted-foreground space-y-1">
                   <p>{getServerDescription(serverConfig)}</p>
                   {serverConfig.timeout && (
