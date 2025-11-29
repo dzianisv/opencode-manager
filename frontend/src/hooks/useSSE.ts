@@ -3,9 +3,72 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useOpenCodeClient } from './useOpenCode'
 import type { SSEEvent, MessageListResponse } from '@/api/types'
 import { permissionEvents } from './usePermissionRequests'
+import { showToast } from '@/lib/toast'
+import { settingsApi } from '@/api/settings'
 
 const MAX_RECONNECT_DELAY = 30000
 const INITIAL_RECONNECT_DELAY = 1000
+
+const handleRestartServer = async () => {
+  showToast.loading('Restarting OpenCode server...', {
+    id: 'restart-server',
+  })
+  
+  try {
+    const result = await settingsApi.restartOpenCodeServer()
+    if (result.success) {
+      showToast.success(result.message || 'OpenCode server restarted successfully', {
+        id: 'restart-server',
+        duration: 3000,
+      })
+      setTimeout(() => {
+        window.location.reload()
+      }, 2000)
+    } else {
+      showToast.error(result.message || 'Failed to restart OpenCode server', {
+        id: 'restart-server',
+        duration: 5000,
+      })
+    }
+  } catch (error) {
+    showToast.error(error instanceof Error ? error.message : 'Failed to restart OpenCode server', {
+      id: 'restart-server',
+      duration: 5000,
+    })
+  }
+}
+
+// Debug function to emulate toasts - remove in production
+if (typeof window !== 'undefined') {
+  (window as any).testToasts = {
+    updateAvailable: () => {
+      showToast.info(`OpenCode v1.2.3 is available`, {
+        description: 'A new version is ready to install.',
+        action: {
+          label: 'Restart to Update',
+          onClick: handleRestartServer
+        },
+        duration: 10000,
+      })
+    },
+    updated: () => {
+      showToast.success(`OpenCode updated to v1.2.3`, {
+        description: 'The server has been successfully upgraded.',
+        duration: 5000,
+      })
+    },
+    restartTest: () => {
+      handleRestartServer()
+    },
+    basic: () => {
+      showToast.info('This is a basic info toast')
+      showToast.success('This is a success toast')
+      showToast.warning('This is a warning toast')
+      showToast.error('This is an error toast')
+    }
+  }
+  console.log('🍞 Toast test functions available: window.testToasts.updateAvailable(), window.testToasts.updated(), window.testToasts.restartTest(), window.testToasts.basic()')
+}
 
 export const useSSE = (opcodeUrl: string | null | undefined, directory?: string) => {
   const client = useOpenCodeClient(opcodeUrl, directory)
@@ -224,6 +287,28 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
           if ('sessionID' in event.properties) {
             queryClient.invalidateQueries({ 
               queryKey: ['opencode', 'todos', opcodeUrl, event.properties.sessionID, directory] 
+            })
+          }
+          break
+
+        case 'installation.updated':
+          if ('version' in event.properties) {
+            showToast.success(`OpenCode updated to v${event.properties.version}`, {
+              description: 'The server has been successfully upgraded.',
+              duration: 5000,
+            })
+          }
+          break
+
+        case 'installation.update-available':
+          if ('version' in event.properties) {
+            showToast.info(`OpenCode v${event.properties.version} is available`, {
+              description: 'A new version is ready to install.',
+              action: {
+                label: 'Restart to Update',
+                onClick: handleRestartServer
+              },
+              duration: 10000,
             })
           }
           break
