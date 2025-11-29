@@ -19,13 +19,13 @@ export function useAutoScroll({
   dependency,
   onScrollStateChange
 }: UseAutoScrollOptions): UseAutoScrollReturn {
-  const userScrolledUpRef = useRef(false)
   const isFollowingRef = useRef(true)
+  const isProgrammaticScrollRef = useRef(false)
 
   const scrollToBottom = useCallback(() => {
     if (!containerRef?.current) return
+    isProgrammaticScrollRef.current = true
     containerRef.current.scrollTop = containerRef.current.scrollHeight
-    userScrolledUpRef.current = false
     isFollowingRef.current = true
     onScrollStateChange?.(false)
   }, [containerRef, onScrollStateChange])
@@ -39,7 +39,6 @@ export function useAutoScroll({
   }, [])
 
   useEffect(() => {
-    userScrolledUpRef.current = false
     isFollowingRef.current = true
   }, [dependency])
 
@@ -49,19 +48,19 @@ export function useAutoScroll({
     const container = containerRef.current
     
     const handleScroll = () => {
+      if (isProgrammaticScrollRef.current) {
+        isProgrammaticScrollRef.current = false
+        return
+      }
+      
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
       const isScrolledUp = distanceFromBottom > SCROLL_THRESHOLD
       
       if (isScrolledUp) {
         isFollowingRef.current = false
-      } else {
-        isFollowingRef.current = true
       }
       
-      if (userScrolledUpRef.current !== isScrolledUp) {
-        userScrolledUpRef.current = isScrolledUp
-        onScrollStateChange?.(isScrolledUp)
-      }
+      onScrollStateChange?.(isScrolledUp)
     }
     
     container.addEventListener('scroll', handleScroll, { passive: true })
