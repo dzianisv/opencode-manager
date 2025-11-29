@@ -1,5 +1,4 @@
-import { memo, useRef, useEffect, useCallback } from 'react'
-import { useMessages } from '@/hooks/useOpenCode'
+import { memo } from 'react'
 import { MessagePart } from './MessagePart'
 import type { MessageWithParts } from '@/api/types'
 
@@ -15,9 +14,8 @@ interface MessageThreadProps {
   opcodeUrl: string
   sessionID: string
   directory?: string
+  messages?: MessageWithParts[]
   onFileClick?: (filePath: string, lineNumber?: number) => void
-  containerRef?: React.RefObject<HTMLDivElement | null>
-  onScrollStateChange?: (isScrolledUp: boolean) => void
 }
 
 const isMessageStreaming = (msg: MessageWithParts): boolean => {
@@ -30,68 +28,7 @@ const isMessageThinking = (msg: MessageWithParts): boolean => {
   return msg.parts.length === 0 && isMessageStreaming(msg)
 }
 
-const SCROLL_THRESHOLD = 100
-
-export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID, directory, onFileClick, containerRef, onScrollStateChange }: MessageThreadProps) {
-  const { data: messages, isLoading, error } = useMessages(opcodeUrl, sessionID, directory)
-  const userScrolledUpRef = useRef(false)
-  const hasInitialScrolledRef = useRef(false)
-
-  useEffect(() => {
-    hasInitialScrolledRef.current = false
-    userScrolledUpRef.current = false
-  }, [sessionID])
-  
-  const scrollToBottom = useCallback(() => {
-    if (!containerRef?.current) return
-    containerRef.current.scrollTop = containerRef.current.scrollHeight
-    userScrolledUpRef.current = false
-    onScrollStateChange?.(false)
-  }, [containerRef, onScrollStateChange])
-
-  useEffect(() => {
-    if (!containerRef?.current) return
-    
-    const container = containerRef.current
-    
-    const handleScroll = () => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      const isScrolledUp = distanceFromBottom > SCROLL_THRESHOLD
-      if (userScrolledUpRef.current !== isScrolledUp) {
-        userScrolledUpRef.current = isScrolledUp
-        onScrollStateChange?.(isScrolledUp)
-      }
-    }
-    
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    return () => container.removeEventListener('scroll', handleScroll)
-  }, [containerRef, onScrollStateChange])
-  
-  useEffect(() => {
-    if (!containerRef?.current || !messages) return
-
-    if (!hasInitialScrolledRef.current && messages.length > 0) {
-      hasInitialScrolledRef.current = true
-      scrollToBottom()
-    }
-  }, [messages, containerRef, scrollToBottom])
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full text-zinc-500">
-        Loading messages...
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full text-red-400">
-        Error loading messages: {error instanceof Error ? error.message : 'Unknown error'}
-      </div>
-    )
-  }
-
+export const MessageThread = memo(function MessageThread({ messages, onFileClick }: MessageThreadProps) {
   if (!messages || messages.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-600">
