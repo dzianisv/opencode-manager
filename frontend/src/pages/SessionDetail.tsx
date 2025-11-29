@@ -17,6 +17,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useSettingsDialog } from "@/hooks/useSettingsDialog";
 import { usePermissionRequests } from "@/hooks/usePermissionRequests";
+import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useEffect, useRef, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import type { PermissionResponse } from "@/api/types";
@@ -32,6 +33,12 @@ export function SessionDetail() {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | undefined>();
   const [showScrollButton, setShowScrollButton] = useState(false);
+
+  const { scrollToBottom, setFollowing, isFollowing } = useAutoScroll({
+    containerRef: messageContainerRef,
+    dependency: sessionId,
+    onScrollStateChange: setShowScrollButton
+  });
 
   const { data: repo, isLoading: repoLoading } = useQuery({
     queryKey: ["repo", repoId],
@@ -112,13 +119,6 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
     setSelectedFilePath(undefined)
   }, []);
 
-  const handleScrollToBottom = useCallback(() => {
-    if (messageContainerRef.current) {
-      messageContainerRef.current.scrollTop = messageContainerRef.current.scrollHeight;
-      setShowScrollButton(false);
-    }
-  }, []);
-
   const handlePermissionResponse = useCallback(async (
     permissionID: string, 
     permissionSessionID: string, 
@@ -177,8 +177,9 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
               sessionID={sessionId} 
               directory={repoDirectory}
               onFileClick={handleFileClick}
-              containerRef={messageContainerRef}
-              onScrollStateChange={setShowScrollButton}
+              scrollToBottom={scrollToBottom}
+              setFollowing={setFollowing}
+              isFollowing={isFollowing}
             />
           )}
         </div>
@@ -190,7 +191,7 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
               sessionID={sessionId}
               disabled={!isConnected}
               showScrollButton={showScrollButton}
-              onScrollToBottom={handleScrollToBottom}
+              onScrollToBottom={scrollToBottom}
               onShowModelsDialog={() => setModelDialogOpen(true)}
               onShowSessionsDialog={() => setSessionsDialogOpen(true)}
               onShowHelpDialog={() => {

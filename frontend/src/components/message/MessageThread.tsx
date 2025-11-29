@@ -1,6 +1,5 @@
 import { memo, useRef, useEffect } from 'react'
 import { useMessages } from '@/hooks/useOpenCode'
-import { useAutoScroll } from '@/hooks/useAutoScroll'
 import { MessagePart } from './MessagePart'
 import type { MessageWithParts } from '@/api/types'
 
@@ -17,8 +16,9 @@ interface MessageThreadProps {
   sessionID: string
   directory?: string
   onFileClick?: (filePath: string, lineNumber?: number) => void
-  containerRef?: React.RefObject<HTMLDivElement | null>
-  onScrollStateChange?: (isScrolledUp: boolean) => void
+  scrollToBottom: () => void
+  setFollowing: (following: boolean) => void
+  isFollowing: () => boolean
 }
 
 const isMessageStreaming = (msg: MessageWithParts): boolean => {
@@ -31,16 +31,10 @@ const isMessageThinking = (msg: MessageWithParts): boolean => {
   return msg.parts.length === 0 && isMessageStreaming(msg)
 }
 
-export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID, directory, onFileClick, containerRef, onScrollStateChange }: MessageThreadProps) {
+export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID, directory, onFileClick, scrollToBottom, setFollowing, isFollowing }: MessageThreadProps) {
   const { data: messages, isLoading, error } = useMessages(opcodeUrl, sessionID, directory)
   const hasInitialScrolledRef = useRef(false)
   const lastMessageCountRef = useRef(0)
-
-  const { scrollToBottom, setFollowing, isFollowing } = useAutoScroll({
-    containerRef,
-    dependency: sessionID,
-    onScrollStateChange
-  })
 
   useEffect(() => {
     hasInitialScrolledRef.current = false
@@ -48,7 +42,7 @@ export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID,
   }, [sessionID])
 
   useEffect(() => {
-    if (!containerRef?.current || !messages) return
+    if (!messages) return
 
     const currentCount = messages.length
     const prevCount = lastMessageCountRef.current
@@ -72,7 +66,7 @@ export const MessageThread = memo(function MessageThread({ opcodeUrl, sessionID,
     if (isFollowing()) {
       scrollToBottom()
     }
-  }, [messages, containerRef, scrollToBottom, setFollowing, isFollowing])
+  }, [messages, scrollToBottom, setFollowing, isFollowing])
 
   if (isLoading) {
     return (
