@@ -10,13 +10,14 @@ import { SessionList } from "@/components/session/SessionList";
 import { PermissionRequestDialog } from "@/components/session/PermissionRequestDialog";
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useSession, useAbortSession, useUpdateSession, useOpenCodeClient } from "@/hooks/useOpenCode";
+import { useSession, useAbortSession, useUpdateSession, useOpenCodeClient, useMessages } from "@/hooks/useOpenCode";
 import { OPENCODE_API_ENDPOINT } from "@/config";
 import { useSSE } from "@/hooks/useSSE";
 import { useSettings } from "@/hooks/useSettings";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useSettingsDialog } from "@/hooks/useSettingsDialog";
 import { usePermissionRequests } from "@/hooks/usePermissionRequests";
+import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useEffect, useRef, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import type { PermissionResponse } from "@/api/types";
@@ -39,12 +40,21 @@ export function SessionDetail() {
     enabled: !!repoId,
   });
 
-const { currentPermission, pendingCount, dismissPermission } = usePermissionRequests();
+  const { currentPermission, pendingCount, dismissPermission } = usePermissionRequests();
   
   const opcodeUrl = OPENCODE_API_ENDPOINT;
   const openCodeClient = useOpenCodeClient(opcodeUrl, repo?.fullPath);
   
   const repoDirectory = repo?.fullPath;
+
+  const { data: messages } = useMessages(opcodeUrl, sessionId, repoDirectory);
+
+  const { scrollToBottom } = useAutoScroll({
+    containerRef: messageContainerRef,
+    messages,
+    sessionId,
+    onScrollStateChange: setShowScrollButton
+  });
 
   const { data: session, isLoading: sessionLoading } = useSession(
     opcodeUrl,
@@ -112,13 +122,6 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
     setSelectedFilePath(undefined)
   }, []);
 
-  const handleScrollToBottom = useCallback(() => {
-    if (messageContainerRef.current) {
-      messageContainerRef.current.scrollTop = messageContainerRef.current.scrollHeight;
-      setShowScrollButton(false);
-    }
-  }, []);
-
   const handlePermissionResponse = useCallback(async (
     permissionID: string, 
     permissionSessionID: string, 
@@ -176,9 +179,8 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
               opcodeUrl={opcodeUrl} 
               sessionID={sessionId} 
               directory={repoDirectory}
+              messages={messages}
               onFileClick={handleFileClick}
-              containerRef={messageContainerRef}
-              onScrollStateChange={setShowScrollButton}
             />
           )}
         </div>
@@ -190,7 +192,7 @@ const { currentPermission, pendingCount, dismissPermission } = usePermissionRequ
               sessionID={sessionId}
               disabled={!isConnected}
               showScrollButton={showScrollButton}
-              onScrollToBottom={handleScrollToBottom}
+              onScrollToBottom={scrollToBottom}
               onShowModelsDialog={() => setModelDialogOpen(true)}
               onShowSessionsDialog={() => setSessionsDialogOpen(true)}
               onShowHelpDialog={() => {
