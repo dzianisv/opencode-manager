@@ -10,7 +10,6 @@ interface CommandSuggestionsProps {
   commands: CommandType[]
   onSelect: (command: CommandType) => void
   onClose: () => void
-  position: { bottom: number; left: number; width: number }
   selectedIndex?: number
 }
 
@@ -19,7 +18,6 @@ export function CommandSuggestions({
   query,
   commands,
   onSelect,
-  position,
   selectedIndex = 0
 }: CommandSuggestionsProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -50,12 +48,7 @@ export function CommandSuggestions({
   return (
     <div
       ref={containerRef}
-      className="fixed z-50 bg-[#1a1a1a] border border-[#333] rounded-lg shadow-lg max-h-64 overflow-y-auto"
-      style={{
-        bottom: `${position.bottom}px`, // Position from bottom
-        left: `${position.left}px`,
-        width: `${position.width}px`
-      }}
+      className="absolute bottom-full left-0 right-0 mb-2 z-50 bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto"
     >
       <div className="p-1">
         {filteredCommands.map((command, index) => {
@@ -68,17 +61,17 @@ export function CommandSuggestions({
               data-selected={isSelected}
               className={`px-3 py-2 cursor-pointer rounded-md transition-colors flex items-center gap-2 ${
                 isSelected 
-                  ? 'bg-blue-600/20 text-white' 
-                  : 'hover:bg-[#2a2a2a] text-zinc-300'
+                  ? 'bg-primary/20 text-foreground' 
+                  : 'hover:bg-muted text-muted-foreground'
               }`}
               onClick={() => onSelect(command)}
               
             >
-              <Command className="h-4 w-4 text-zinc-400 flex-shrink-0" />
+              <Command className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate">{displayName}</div>
                 {command.description && (
-                  <div className="text-xs text-zinc-500 truncate">{command.description}</div>
+                  <div className="text-xs text-muted-foreground truncate">{command.description}</div>
                 )}
               </div>
             </div>
@@ -86,7 +79,7 @@ export function CommandSuggestions({
         })}
       </div>
       
-      <div className="px-3 py-2 border-t border-[#333] text-xs text-zinc-500">
+      <div className="px-3 py-2 border-t border-border text-xs text-muted-foreground">
         <div className="flex items-center gap-4">
           <span>↑↓ Navigate</span>
           <span>↵ Select</span>

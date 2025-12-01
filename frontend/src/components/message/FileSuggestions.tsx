@@ -2,11 +2,9 @@ import { useEffect, useRef } from 'react'
 
 interface FileSuggestionsProps {
   isOpen: boolean
-  query: string
   files: string[]
   onSelect: (file: string) => void
   onClose: () => void
-  position: { bottom: number, left: number, width: number }
   selectedIndex?: number
 }
 
@@ -15,7 +13,6 @@ export function FileSuggestions({
   files,
   onSelect,
   onClose,
-  position,
   selectedIndex = 0
 }: FileSuggestionsProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -53,12 +50,7 @@ export function FileSuggestions({
   return (
     <div
       ref={listRef}
-      className="fixed bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto"
-      style={{
-        bottom: `${position.bottom}px`,
-        left: `${position.left}px`,
-        width: `${position.width}px`
-      }}
+      className="absolute bottom-full left-0 right-0 mb-2 z-50 bg-background border border-border rounded-lg shadow-xl max-h-64 overflow-y-auto"
     >
       {files.map((file, idx) => (
         <button
@@ -66,8 +58,8 @@ export function FileSuggestions({
           onClick={() => onSelect(file)}
           className={`w-full px-3 py-2 text-left transition-colors ${
             idx === selectedIndex
-              ? 'bg-blue-600 text-white'
-              : 'hover:bg-zinc-800 text-zinc-100'
+              ? 'bg-primary text-primary-foreground'
+              : 'hover:bg-muted text-foreground'
           }`}
         >
           <div className="font-mono text-sm font-medium">

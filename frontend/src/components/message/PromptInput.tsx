@@ -51,11 +51,9 @@ export function PromptInput({
   const [isBashMode, setIsBashMode] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionQuery, setSuggestionQuery] = useState('')
-  const [suggestionPosition, setSuggestionPosition] = useState({ bottom: 0, left: 0, width: 0 })
   const [attachedFiles, setAttachedFiles] = useState(new Map<string, FileInfo>())
   const [showFileSuggestions, setShowFileSuggestions] = useState(false)
   const [fileQuery, setFileQuery] = useState('')
-  const [fileSuggestionPosition, setFileSuggestionPosition] = useState({ bottom: 0, left: 0, width: 0 })
   const [mentionRange, setMentionRange] = useState<{ start: number, end: number } | null>(null)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -335,15 +333,6 @@ export function PromptInput({
       setMentionRange({ start: mentionTrigger.start, end: mentionTrigger.end })
       setShowFileSuggestions(true)
       setSelectedFileIndex(0)
-      
-      if (textareaRef.current) {
-        const rect = textareaRef.current.getBoundingClientRect()
-        setFileSuggestionPosition({
-          bottom: window.innerHeight - rect.top + window.scrollY + 4,
-          left: rect.left + window.scrollX,
-          width: rect.width
-        })
-      }
     } else {
       const commandMatch = value.slice(0, cursorPosition).match(/(^|\s)\/([a-zA-Z0-9_-]*)$/)
       
@@ -352,15 +341,6 @@ export function PromptInput({
         setSuggestionQuery(query)
         setShowSuggestions(true)
         setSelectedCommandIndex(0)
-        
-        if (textareaRef.current) {
-          const rect = textareaRef.current.getBoundingClientRect()
-          setSuggestionPosition({
-            bottom: window.innerHeight - rect.top + window.scrollY + 4,
-            left: rect.left + window.scrollX,
-            width: rect.width
-          })
-        }
       } else {
         setShowSuggestions(false)
         setSuggestionQuery('')
@@ -426,7 +406,7 @@ export function PromptInput({
   
 
   return (
-    <div className="backdrop-blur-md bg-background opacity-95 border border-border rounded-xl p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-5 w-[90%] md:max-w-4xl">
+    <div className="relative backdrop-blur-md bg-background opacity-95 border border-border rounded-xl p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-5 w-[90%] md:max-w-4xl">
       
       
       <textarea
@@ -526,13 +506,11 @@ export function PromptInput({
           setShowSuggestions(false)
           setSuggestionQuery('')
         }}
-        position={suggestionPosition}
         selectedIndex={selectedCommandIndex}
       />
       
       <FileSuggestions
         isOpen={showFileSuggestions}
-        query={fileQuery}
         files={searchResults}
         onSelect={handleFileSelect}
         onClose={() => {
@@ -540,7 +518,6 @@ export function PromptInput({
           setFileQuery('')
           setMentionRange(null)
         }}
-        position={fileSuggestionPosition}
         selectedIndex={selectedFileIndex}
       />
     </div>
