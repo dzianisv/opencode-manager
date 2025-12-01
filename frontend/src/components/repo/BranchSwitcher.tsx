@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,11 +28,18 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl, rep
   const queryClient = useQueryClient();
   const { data: gitStatus } = useGitStatus(repoId);
 
-  const { data: branches, isLoading: branchesLoading } = useQuery({
+  const { data: branches, isLoading: branchesLoading, refetch: refetchBranches } = useQuery({
     queryKey: ["branches", repoId],
     queryFn: () => listBranches(repoId),
     enabled: !!repoId,
+    staleTime: 1000 * 30,
   });
+
+  const handleDropdownOpenChange = useCallback((open: boolean) => {
+    if (open && repoId) {
+      refetchBranches();
+    }
+  }, [repoId, refetchBranches]);
 
   const switchBranchMutation = useMutation({
     mutationFn: (branch: string) => switchBranch(repoId, branch),
@@ -48,7 +55,7 @@ export function BranchSwitcher({ repoId, currentBranch, isWorktree, repoUrl, rep
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleDropdownOpenChange}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
