@@ -20,24 +20,17 @@ RUN apt-get update && apt-get install -y \
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-USER node
-
-RUN mkdir -p /home/node/.local/bin && \
-    curl -fsSL https://bun.sh/install | bash && \
-    ln -s /home/node/.bun/bin/bun /home/node/.local/bin/bun
-
-USER root
-
-ENV PATH="/home/node/.local/bin:/home/node/.bun/bin:${PATH}"
+RUN curl -fsSL https://bun.sh/install | bash && \
+    ln -s $HOME/.bun/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 
 FROM base AS deps
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY shared/package.json ./shared/
-COPY backend/package.json ./backend/
-COPY frontend/package.json ./frontend/
+COPY --chown=node:node package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY --chown=node:node shared/package.json ./shared/
+COPY --chown=node:node backend/package.json ./backend/
+COPY --chown=node:node frontend/package.json ./frontend/
 
 RUN pnpm install --frozen-lockfile
 
@@ -54,13 +47,10 @@ RUN pnpm --filter frontend build
 
 FROM base AS runner
 
-USER node
-
-RUN mkdir -p /home/node/.local/bin && \
-    curl -fsSL https://opencode.ai/install | bash && \
-    ln -s /home/node/.opencode/bin/opencode /home/node/.local/bin/opencode
-
-USER root
+RUN curl -fsSL https://opencode.ai/install | bash && \
+    mv /root/.opencode /opt/opencode && \
+    chmod -R 755 /opt/opencode && \
+    ln -s /opt/opencode/bin/opencode /usr/local/bin/opencode
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
@@ -69,7 +59,7 @@ ENV OPENCODE_SERVER_PORT=5551
 ENV DATABASE_PATH=/app/data/opencode.db
 ENV WORKSPACE_PATH=/workspace
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/backend ./backend
 COPY --from=builder /app/frontend/dist ./frontend/dist
@@ -82,14 +72,15 @@ COPY scripts/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 RUN mkdir -p /workspace /app/data && \
-    chown -R node:node /workspace /app/data /app
-
-USER node
+    chown -R node:node /workspace /app/data
 
 EXPOSE 5003
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:5003/api/health || exit 1
 
+USER node
+
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["bun", "backend/src/index.ts"]
+
