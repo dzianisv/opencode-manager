@@ -99,7 +99,7 @@ class OpenCodeServerManager {
           XDG_DATA_HOME: path.join(OPENCODE_SERVER_DIRECTORY, '.opencode/state'),
           OPENCODE_CONFIG: OPENCODE_CONFIG_PATH,
           GITHUB_TOKEN: gitToken,
-          GIT_ASKPASS: 'echo',
+          GIT_ASKPASS: gitToken ? 'echo $GITHUB_TOKEN' : 'echo',
           GIT_TERMINAL_PROMPT: '0'
         }
       }

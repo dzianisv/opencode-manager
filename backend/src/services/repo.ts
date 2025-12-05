@@ -17,12 +17,7 @@ async function hasCommits(repoPath: string): Promise<boolean> {
   }
 }
 
-function getAuthenticatedUrl(repoUrl: string, gitToken: string): string {
-  if (gitToken && repoUrl.startsWith('https://github.com')) {
-    return repoUrl.replace('https://', `https://${gitToken}@`)
-  }
-  return repoUrl
-}
+
 
 async function safeGetCurrentBranch(repoPath: string): Promise<string | null> {
   try {
@@ -88,7 +83,7 @@ export async function initLocalRepo(
     const env: Record<string, string> = gitToken ? 
     { 
       GITHUB_TOKEN: gitToken, 
-      GIT_ASKPASS: 'echo', 
+      GIT_ASKPASS: 'echo $GITHUB_TOKEN', 
       GIT_TERMINAL_PROMPT: '0'
     } : 
     { GIT_ASKPASS: 'echo', GIT_TERMINAL_PROMPT: '0' }
@@ -176,7 +171,7 @@ export async function cloneRepo(
     const settings = settingsService.getSettings('default')
     const gitToken = settings.preferences.gitToken
     
-    const cloneUrl = getAuthenticatedUrl(repoUrl, gitToken || '')
+    const cloneUrl = repoUrl
     
     if (shouldUseWorktree) {
       logger.info(`Creating worktree for branch: ${branch}`)

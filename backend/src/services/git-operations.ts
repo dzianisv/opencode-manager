@@ -22,7 +22,7 @@ function getGitEnvironment(database: Database): Record<string, string> {
     if (gitToken) {
       return {
         GITHUB_TOKEN: gitToken,
-        GIT_ASKPASS: 'echo',
+        GIT_ASKPASS: 'echo $GITHUB_TOKEN',
         GIT_TERMINAL_PROMPT: '0'
       }
     }
