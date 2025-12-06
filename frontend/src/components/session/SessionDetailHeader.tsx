@@ -2,7 +2,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { ContextUsageIndicator } from "@/components/session/ContextUsageIndicator";
 import { BranchSwitcher } from "@/components/repo/BranchSwitcher";
 import { Button } from "@/components/ui/button";
-import { Loader2, Settings, FolderOpen } from "lucide-react";
+import { Loader2, Settings, FolderOpen, CornerUpLeft } from "lucide-react";
 import { useState } from "react";
 
 interface Repo {
@@ -25,9 +25,11 @@ interface SessionDetailHeaderProps {
   isReconnecting?: boolean;
   opcodeUrl: string | null;
   repoDirectory: string | undefined;
+  parentSessionId?: string;
   onFileBrowserOpen: () => void;
   onSettingsOpen: () => void;
   onSessionTitleUpdate: (newTitle: string) => void;
+  onParentSessionClick?: () => void;
 }
 
 export function SessionDetailHeader({
@@ -39,9 +41,11 @@ export function SessionDetailHeader({
   isReconnecting,
   opcodeUrl,
   repoDirectory,
+  parentSessionId,
   onFileBrowserOpen,
   onSettingsOpen,
   onSessionTitleUpdate,
+  onParentSessionClick,
 }: SessionDetailHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(sessionTitle);
@@ -95,7 +99,25 @@ export function SessionDetailHeader({
     <div className="sticky top-0 z-10 border-b border-border bg-gradient-to-b from-background via-background to-background backdrop-blur-sm px-2 sm:px-4 py-1.5 sm:py-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
-          <BackButton to={`/repos/${repoId}`} className="text-xs sm:text-sm" />
+          {parentSessionId ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onParentSessionClick}
+                className="text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/20 h-7 px-2 gap-1"
+                title="Back to parent session"
+              >
+                <CornerUpLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-xs">Parent</span>
+              </Button>
+              <div className="hidden sm:block">
+                <BackButton to={`/repos/${repoId}`} className="text-xs sm:text-sm" />
+              </div>
+            </>
+          ) : (
+            <BackButton to={`/repos/${repoId}`} className="text-xs sm:text-sm" />
+          )}
           <div className="min-w-0 flex-1">
             {isEditing ? (
               <form onSubmit={handleTitleSubmit} className="min-w-0">

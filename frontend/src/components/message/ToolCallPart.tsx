@@ -3,37 +3,15 @@ import type { components } from '@/api/opencode-types'
 import { useSettings } from '@/hooks/useSettings'
 import { useUserBash } from '@/stores/userBashStore'
 import { detectFileReferences } from '@/lib/fileReferences'
-import { Copy } from 'lucide-react'
-
-function CopyButton({ content, title, className = "" }: { content: string; title: string; className?: string }) {
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(content)
-    } catch (error) {
-      console.error('Failed to copy content:', error)
-    }
-  }
-
-  if (!content.trim()) {
-    return null
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      className={`p-1.5 rounded bg-card hover:bg-card-hover text-muted-foreground hover:text-foreground ${className}`}
-      title={title}
-    >
-      <Copy className="w-4 h-4" />
-    </button>
-  )
-}
+import { ExternalLink } from 'lucide-react'
+import { CopyButton } from '@/components/ui/copy-button'
 
 type ToolPart = components['schemas']['ToolPart']
 
 interface ToolCallPartProps {
   part: ToolPart
   onFileClick?: (filePath: string, lineNumber?: number) => void
+  onChildSessionClick?: (sessionId: string) => void
 }
 
 function ClickableJson({ json, onFileClick }: { json: unknown; onFileClick?: (filePath: string) => void }) {
@@ -76,7 +54,7 @@ function ClickableJson({ json, onFileClick }: { json: unknown; onFileClick?: (fi
   return <pre className="bg-accent p-2 rounded text-xs overflow-x-auto">{parts}</pre>
 }
 
-export function ToolCallPart({ part, onFileClick }: ToolCallPartProps) {
+export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCallPartProps) {
   const { preferences } = useSettings()
   const { userBashCommands } = useUserBash()
   const outputRef = useRef<HTMLDivElement>(null)
@@ -196,6 +174,22 @@ export function ToolCallPart({ part, onFileClick }: ToolCallPartProps) {
         ) : previewText ? (
           <span className="text-muted-foreground text-xs truncate">{previewText}</span>
         ) : null}
+        {part.tool === 'task' && (() => {
+          const sessionId = (part.metadata?.sessionId ?? (part.state.status !== 'pending' && part.state.metadata?.sessionId)) as string | undefined
+          return sessionId ? (
+            <span
+              onClick={(e) => {
+                e.stopPropagation()
+                onChildSessionClick?.(sessionId)
+              }}
+              className="text-purple-600 dark:text-purple-400 text-xs hover:text-purple-700 dark:hover:text-purple-300 cursor-pointer underline decoration-dotted flex items-center gap-1"
+              title="View subagent session"
+            >
+              <ExternalLink className="w-3 h-3" />
+              View Session
+            </span>
+          ) : null
+        })()}
         <span className="text-muted-foreground text-xs ml-auto">({part.state.status})</span>
       </button>
 
