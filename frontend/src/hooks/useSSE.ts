@@ -240,6 +240,30 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
           break
         }
 
+        case 'session.idle': {
+          if (!('sessionID' in event.properties)) break
+          
+          const { sessionID } = event.properties
+          const currentData = queryClient.getQueryData<MessageListResponse>(['opencode', 'messages', opcodeUrl, sessionID, directory])
+          if (!currentData) break
+          
+          const now = Date.now()
+          const updated = currentData.map(msg => {
+            if (msg.info.role !== 'assistant') return msg
+            if ('completed' in msg.info.time && msg.info.time.completed) return msg
+            return {
+              ...msg,
+              info: {
+                ...msg.info,
+                time: { ...msg.info.time, completed: now }
+              }
+            }
+          })
+          
+          queryClient.setQueryData(['opencode', 'messages', opcodeUrl, sessionID, directory], updated)
+          break
+        }
+
         case 'permission.updated':
           if ('id' in event.properties) {
             permissionEvents.emit({ type: 'add', permission: event.properties })

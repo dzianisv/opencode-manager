@@ -116,6 +116,13 @@ export interface SSEInstallationUpdateAvailableEvent {
   }
 }
 
+export interface SSESessionIdleEvent {
+  type: 'session.idle'
+  properties: {
+    sessionID: string
+  }
+}
+
 export type SSEEvent =
   | SSEMessagePartUpdatedEvent
   | SSEMessageUpdatedEvent
@@ -124,6 +131,7 @@ export type SSEEvent =
   | SSESessionUpdatedEvent
   | SSESessionDeletedEvent
   | SSESessionCompactedEvent
+  | SSESessionIdleEvent
   | SSETodoUpdatedEvent
   | SSEPermissionUpdatedEvent
   | SSEPermissionRepliedEvent
