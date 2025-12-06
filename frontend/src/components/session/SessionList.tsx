@@ -99,7 +99,7 @@ export const SessionList = ({
       setSelectedSessions(new Set());
     } else {
       const filteredIds = filteredSessions.map((s) => s.id);
-      setSelectedSessions(new Set([...selectedSessions, ...filteredIds]));
+      setSelectedSessions(new Set(filteredIds));
     }
   };
 
