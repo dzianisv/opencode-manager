@@ -36,7 +36,6 @@ export function ModelSelectDialog({
 }: ModelSelectDialogProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProvider, setSelectedProvider] = useState<string>("");
-  const [viewMode, setViewMode] = useState<'providers' | 'models'>('providers');
   const { preferences, updateSettings } = useSettings();
   const client = useOpenCodeClient(opcodeUrl);
   const { sessionID } = useParams<{ sessionID: string }>();
@@ -53,7 +52,6 @@ export function ModelSelectDialog({
     if (currentModel && providers.length > 0) {
       const [providerId] = currentModel.split("/");
       setSelectedProvider(providerId);
-      setViewMode('models');
     }
   }, [currentModel, providers]);
 
@@ -93,12 +91,6 @@ export function ModelSelectDialog({
 
   const handleProviderSelect = (providerId: string) => {
     setSelectedProvider(providerId);
-    setViewMode('models');
-    setSearchQuery("");
-  };
-
-  const handleBackToProviders = () => {
-    setViewMode('providers');
     setSearchQuery("");
   };
 
@@ -145,23 +137,11 @@ export function ModelSelectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] max-h-[90vh] bg-background border-border text-foreground p-0 flex flex-col">
+      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] max-h-[90vh] bg-background border-border text-foreground p-0 flex flex-col gap-0">
         <DialogHeader className="p-4 sm:p-6 pb-2 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            {viewMode === 'models' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleBackToProviders}
-                className="p-1 h-8 w-8"
-              >
-                ←
-              </Button>
-            )}
-            <DialogTitle className="text-lg sm:text-xl font-semibold">
-              {viewMode === 'providers' ? 'Select Model' : `Select Model - ${selectedProviderData?.name || ''}`}
-            </DialogTitle>
-          </div>
+          <DialogTitle className="text-lg sm:text-xl font-semibold">
+            {selectedProvider && selectedProviderData ? `Select Model - ${selectedProviderData.name}` : 'Select Model'}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-1 overflow-hidden">
@@ -173,7 +153,7 @@ export function ModelSelectDialog({
                 size="sm"
                 onClick={() => {
                   setSelectedProvider("");
-                  handleBackToProviders();
+                  setSearchQuery("");
                 }}
                 className="w-full justify-start text-sm"
               >
