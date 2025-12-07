@@ -28,6 +28,9 @@ export const useSessions = (opcodeUrl: string | null | undefined, directory?: st
     queryKey: ["opencode", "sessions", opcodeUrl, directory],
     queryFn: () => client!.listSessions(),
     enabled: !!client,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 10000,
   });
 };
 
@@ -38,6 +41,9 @@ export const useSession = (opcodeUrl: string | null | undefined, sessionID: stri
     queryKey: ["opencode", "session", opcodeUrl, sessionID, directory],
     queryFn: () => client!.getSession(sessionID!),
     enabled: !!client && !!sessionID,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 15000,
   });
 };
 
@@ -49,8 +55,9 @@ export const useMessages = (opcodeUrl: string | null | undefined, sessionID: str
     queryFn: () => client!.listMessages(sessionID!),
     enabled: !!client && !!sessionID,
     refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 30000,
     gcTime: 10 * 60 * 1000,
     placeholderData: (previousData) => previousData,
   });

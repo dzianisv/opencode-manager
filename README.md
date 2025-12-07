@@ -85,7 +85,7 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/opencode-webui.git
+git clone https://github.com/cstech-dev/opencode-webui.git
 cd opencode-webui
 
 # Start with Docker Compose (single container)
@@ -125,7 +125,7 @@ docker exec -it opencode-web sh
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/opencode-webui.git
+git clone https://github.com/cstech-dev/opencode-webui.git
 cd opencode-webui
 
 # Install dependencies (uses Bun workspaces)

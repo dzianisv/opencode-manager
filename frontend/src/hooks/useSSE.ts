@@ -333,8 +333,6 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
           setIsConnected(true)
           setError(null)
           resetReconnectDelay()
-          queryClient.invalidateQueries({ queryKey: ['opencode', 'sessions', opcodeUrl, directory] })
-          queryClient.invalidateQueries({ queryKey: ['opencode', 'messages', opcodeUrl] })
         }
 
         eventSource.onerror = () => {
