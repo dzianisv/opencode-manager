@@ -8,6 +8,7 @@ import { useModelSelection } from '@/hooks/useModelSelection'
 
 import { useUserBash } from '@/stores/userBashStore'
 import { useMobile } from '@/hooks/useMobile'
+import { useSessionStatusForSession } from '@/stores/sessionStatusStore'
 import { ChevronDown } from 'lucide-react'
 
 import { CommandSuggestions } from '@/components/command/CommandSuggestions'
@@ -451,7 +452,9 @@ export function PromptInput({
   const { model: selectedModel, modelString } = useModelSelection(opcodeUrl, directory)
   const currentModel = modelString || ''
   const isMobile = useMobile()
-  const hideSecondaryButtons = isMobile && (hasActiveStream || showScrollButton)
+  const sessionStatus = useSessionStatusForSession(sessionID)
+  const showStopButton = hasActiveStream && (sessionStatus.type === 'busy' || sessionStatus.type === 'retry')
+  const hideSecondaryButtons = isMobile && hasActiveStream
 
   useEffect(() => {
     const loadModelName = async () => {
@@ -566,7 +569,7 @@ export function PromptInput({
               <ChevronDown className="w-5 h-5" />
             </button>
           )}
-          {hasActiveStream && (
+{showStopButton && (
             <button
               onClick={handleStop}
               disabled={disabled}
