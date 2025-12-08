@@ -6,7 +6,6 @@ import { AuthCredentialsSchema } from '../../../shared/src/schemas/auth'
 import type { z } from 'zod'
 
 type AuthCredentials = z.infer<typeof AuthCredentialsSchema>
-type AuthEntry = AuthCredentials[string]
 
 export class AuthService {
   private authPath = getAuthPath()
@@ -42,7 +41,7 @@ export class AuthService {
     const auth = await this.getAll()
     delete auth[providerId]
     
-    await fs.writeFile(this.authPath, JSON.stringify(auth, null, 2))
+    await fs.writeFile(this.authPath, JSON.stringify(auth, null, 2), { mode: 0o600 })
     logger.info(`Deleted credentials for provider: ${providerId}`)
   }
 
@@ -56,8 +55,4 @@ export class AuthService {
     return !!auth[providerId]
   }
 
-  async get(providerId: string): Promise<AuthEntry | null> {
-    const auth = await this.getAll()
-    return auth[providerId] || null
-  }
 }

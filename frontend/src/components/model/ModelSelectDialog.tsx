@@ -15,9 +15,7 @@ import {
   formatModelName,
   formatProviderName,
 } from "@/api/providers";
-import { useSettings } from "@/hooks/useSettings";
-import { useOpenCodeClient } from "@/hooks/useOpenCode";
-import { useParams } from "react-router-dom";
+import { useModelSelection } from "@/hooks/useModelSelection";
 import { useQuery } from "@tanstack/react-query";
 import type { Model, ProviderWithModels } from "@/api/providers";
 
@@ -25,7 +23,7 @@ interface ModelSelectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   opcodeUrl?: string | null;
-  currentSessionModel?: string | null;
+  directory?: string;
 }
 
 interface FlatModel {
@@ -181,13 +179,17 @@ interface ModelGridProps {
   currentModel: string;
   onSelect: (providerId: string, modelId: string) => void;
   loading: boolean;
+  recentModels?: FlatModel[];
+  showRecent?: boolean;
 }
 
 const ModelGrid = memo(function ModelGrid({ 
   models, 
   currentModel, 
   onSelect, 
-  loading 
+  loading,
+  recentModels = [],
+  showRecent = false,
 }: ModelGridProps) {
   if (loading) {
     return (
@@ -197,7 +199,7 @@ const ModelGrid = memo(function ModelGrid({
     );
   }
 
-  if (models.length === 0) {
+  if (models.length === 0 && recentModels.length === 0) {
     return (
       <div className="text-center py-12 text-zinc-500">
         No models found
@@ -206,17 +208,49 @@ const ModelGrid = memo(function ModelGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-      {models.map(({ model, provider, modelKey }) => (
-        <ModelCard
-          key={modelKey}
-          model={model}
-          provider={provider}
-          modelKey={modelKey}
-          isSelected={currentModel === modelKey}
-          onSelect={onSelect}
-        />
-      ))}
+    <div className="space-y-6">
+      {showRecent && recentModels.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
+            <Star className="h-3.5 w-3.5" />
+            Recent Models
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+            {recentModels.map(({ model, provider, modelKey }) => (
+              <ModelCard
+                key={`recent-${modelKey}`}
+                model={model}
+                provider={provider}
+                modelKey={modelKey}
+                isSelected={currentModel === modelKey}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {models.length > 0 && (
+        <div>
+          {showRecent && recentModels.length > 0 && (
+            <h3 className="text-sm font-semibold text-muted-foreground mb-3">
+              All Models
+            </h3>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+            {models.map(({ model, provider, modelKey }) => (
+              <ModelCard
+                key={modelKey}
+                model={model}
+                provider={provider}
+                modelKey={modelKey}
+                isSelected={currentModel === modelKey}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -322,15 +356,13 @@ export function ModelSelectDialog({
   open,
   onOpenChange,
   opcodeUrl,
-  currentSessionModel,
+  directory,
 }: ModelSelectDialogProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProvider, setSelectedProvider] = useState<string>("");
-  const { preferences, updateSettings } = useSettings();
-  const client = useOpenCodeClient(opcodeUrl);
-  const { sessionID } = useParams<{ sessionID: string }>();
 
-  const currentModel = currentSessionModel || preferences?.defaultModel || "";
+  const { modelString, setModel, recentModels } = useModelSelection(opcodeUrl, directory);
+  const currentModel = modelString || "";
 
   const { data: providers = [], isLoading: loading } = useQuery({
     queryKey: ["providers-with-models"],
@@ -341,21 +373,34 @@ export function ModelSelectDialog({
   });
 
   useEffect(() => {
-    if (currentModel && providers.length > 0) {
-      const [providerId] = currentModel.split("/");
-      setSelectedProvider(providerId);
+    if (open) {
+      setSelectedProvider("");
     }
-  }, [currentModel, providers]);
+  }, [open]);
 
   const flatModels = useMemo((): FlatModel[] => {
-    return providers.flatMap((provider) =>
-      provider.models.map((model) => ({
-        model,
-        provider,
-        modelKey: `${provider.id}/${model.id}`,
-      }))
-    );
+    const sourceOrder = { configured: 0, local: 1, builtin: 2 };
+    return providers
+      .slice()
+      .sort((a, b) => (sourceOrder[a.source] ?? 2) - (sourceOrder[b.source] ?? 2))
+      .flatMap((provider) =>
+        provider.models.map((model) => ({
+          model,
+          provider,
+          modelKey: `${provider.id}/${model.id}`,
+        }))
+      );
   }, [providers]);
+
+  const recentFlatModels = useMemo((): FlatModel[] => {
+    return recentModels
+      .map((recent) => {
+        const modelKey = `${recent.providerID}/${recent.modelID}`;
+        return flatModels.find((fm) => fm.modelKey === modelKey);
+      })
+      .filter((fm): fm is FlatModel => fm !== undefined)
+      .slice(0, 6);
+  }, [recentModels, flatModels]);
 
   const filteredModels = useMemo(() => {
     const search = searchQuery.toLowerCase();
@@ -393,24 +438,10 @@ export function ModelSelectDialog({
     setSearchQuery(query);
   }, []);
 
-  const handleModelSelect = useCallback(async (providerId: string, modelId: string) => {
-    const newModel = `${providerId}/${modelId}`;
-    updateSettings({ defaultModel: newModel });
-
-    if (sessionID && client) {
-      try {
-        await client.sendCommand(sessionID, {
-          command: "model",
-          arguments: newModel,
-          model: newModel,
-        });
-      } catch {
-        // Ignore errors
-      }
-    }
-
+  const handleModelSelect = useCallback((providerId: string, modelId: string) => {
+    setModel({ providerID: providerId, modelID: modelId });
     onOpenChange(false);
-  }, [sessionID, client, updateSettings, onOpenChange]);
+  }, [setModel, onOpenChange]);
 
   const searchResetKey = selectedProvider;
 
@@ -491,6 +522,8 @@ export function ModelSelectDialog({
                 currentModel={currentModel}
                 onSelect={handleModelSelect}
                 loading={loading}
+                recentModels={recentFlatModels}
+                showRecent={!selectedProvider && !searchQuery}
               />
             </div>
 
