@@ -25,14 +25,17 @@ export function OAuthCallbackDialog({
   onSuccess 
 }: OAuthCallbackDialogProps) {
   const [isLoading, setIsLoading] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState('')
   const [authCode, setAuthCode] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const handleAutoCallback = async () => {
     setIsLoading(true)
+    setLoadingMessage('Completing authentication...')
     setError(null)
 
     try {
+      setLoadingMessage('Restarting server with new credentials...')
       await oauthApi.callback(providerId, { method: OAuthMethod.AUTO })
       onSuccess()
     } catch (err) {
@@ -40,6 +43,7 @@ export function OAuthCallbackDialog({
       console.error('OAuth callback error:', err)
     } finally {
       setIsLoading(false)
+      setLoadingMessage('')
     }
   }
 
@@ -50,9 +54,11 @@ export function OAuthCallbackDialog({
     }
 
     setIsLoading(true)
+    setLoadingMessage('Completing authentication...')
     setError(null)
 
     try {
+      setLoadingMessage('Restarting server with new credentials...')
       await oauthApi.callback(providerId, { method: OAuthMethod.CODE, code: authCode.trim() })
       onSuccess()
     } catch (err) {
@@ -60,6 +66,7 @@ export function OAuthCallbackDialog({
       console.error('OAuth callback error:', err)
     } finally {
       setIsLoading(false)
+      setLoadingMessage('')
     }
   }
 
@@ -114,8 +121,17 @@ export function OAuthCallbackDialog({
                 className="w-full"
                 disabled={isLoading}
               >
-                <CheckCircle className="h-4 w-4 mr-2" />
-                {isLoading ? 'Completing...' : 'I Completed Authorization'}
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    {loadingMessage || 'Completing...'}
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    I Completed Authorization
+                  </>
+                )}
               </Button>
             </div>
           ) : (
@@ -153,7 +169,7 @@ export function OAuthCallbackDialog({
                 {isLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Completing...
+                    {loadingMessage || 'Completing...'}
                   </>
                 ) : (
                   <>

@@ -8,6 +8,7 @@ import {
   OAuthAuthorizeResponseSchema,
   OAuthCallbackRequestSchema
 } from '../../../shared/src/schemas/auth'
+import { opencodeServerManager } from '../services/opencode-single-server'
 
 const OPENCODE_SERVER_URL = `http://${ENV.OPENCODE.HOST}:${ENV.OPENCODE.PORT}`
 
@@ -76,6 +77,9 @@ export function createOAuthRoutes() {
       }
 
       const data = await response.json()
+      
+      logger.info(`OAuth callback successful for ${providerId}, restarting OpenCode server`)
+      await opencodeServerManager.restart()
       
       return c.json(data)
     } catch (error) {
