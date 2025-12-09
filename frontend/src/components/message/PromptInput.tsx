@@ -9,7 +9,7 @@ import { useModelSelection } from '@/hooks/useModelSelection'
 import { useUserBash } from '@/stores/userBashStore'
 import { useMobile } from '@/hooks/useMobile'
 import { useSessionStatusForSession } from '@/stores/sessionStatusStore'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Square } from 'lucide-react'
 
 import { CommandSuggestions } from '@/components/command/CommandSuggestions'
 import { MentionSuggestions, type MentionItem } from './MentionSuggestions'
@@ -488,7 +488,7 @@ export function PromptInput({
   return (
     <div className="relative backdrop-blur-md bg-background opacity-95 border border-border rounded-xl p-2 md:p-3 mx-2 md:mx-4 mb-2 md:mb-5 w-[90%] md:max-w-4xl">
       {hasActiveStream && (
-        <div className="mb-2">
+        <div className="">
           <SessionStatusIndicator sessionID={sessionID} />
         </div>
       )}
@@ -573,10 +573,10 @@ export function PromptInput({
             <button
               onClick={handleStop}
               disabled={disabled}
-              className="px-3 md:px-4 py-1.5 rounded-lg text-sm font-medium transition-colors bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              className="p-1.5 px-4 md:p-2 rounded-lg transition-colors bg-destructive hover:bg-destructive/90 text-destructive-foreground"
               title="Stop"
             >
-              Stop
+              <Square className="w-4 h-4" />
             </button>
           )}
           <button
