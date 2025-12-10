@@ -368,8 +368,11 @@ export function PromptInput({
       }
     }
     
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (isMobile && !e.shiftKey))) {
       e.preventDefault()
+      if (isMobile) {
+        textareaRef.current?.blur()
+      }
       handleSubmit()
     } else if (e.key === 'Escape') {
       setShowSuggestions(false)
@@ -486,7 +489,7 @@ export function PromptInput({
   
 
   return (
-    <div className="relative backdrop-blur-md bg-background opacity-95 border border-border dark:border-white/30 rounded-xl p-2 md:p-3 md:mx-4 mb-2 md:mb-1 w-[95%] md:max-w-4xl">
+    <div className="relative backdrop-blur-md bg-background opacity-95 border border-border dark:border-white/30 rounded-xl p-2 md:p-3 md:mx-4 mb-4 md:mb-1 w-[94%] md:max-w-4xl">
       {hasActiveStream && (
         <div className="">
           <SessionStatusIndicator sessionID={sessionID} />
