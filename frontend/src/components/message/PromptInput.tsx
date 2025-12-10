@@ -507,9 +507,9 @@ export function PromptInput({
             : "Send a message..."
         }
         disabled={disabled}
-        className={`w-full bg-background/90 px-2 md:px-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:bg-background resize-none min-h-[40px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm rounded-lg ${
+        className={`w-full bg-muted/50 px-2 md:px-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:bg-muted/70 resize-none min-h-[40px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm rounded-lg ${
           isBashMode 
-            ? 'border-purple-500/50 bg-purple-500/5 focus:bg-background' 
+            ? 'border-purple-500/50 bg-purple-500/5 focus:bg-purple-500/10' 
             : ''
         }`}
         rows={1}
@@ -584,7 +584,7 @@ export function PromptInput({
             data-submit-prompt
             onClick={handleSubmit}
             disabled={!prompt.trim() || disabled}
-            className="px-5 md:px-6 py-1.5 rounded-lg text-sm font-medium transition-colors bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground"
+            className="px-5 md:px-6 py-1.5 md:py-2 rounded-lg text-sm font-medium transition-colors bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground"
             title={hasActiveStream ? 'Queue message' : 'Send'}
           >
             {hasActiveStream ? 'Queue' : 'Send'}
