@@ -86,7 +86,7 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 
 ```bash
 # Clone the repository
-git clone https://github.com/cstech-dev/opencode-manager.git
+git clone https://github.com/chriswritescode-dev/opencode-manager.git
 cd opencode-manager
 
 # Start with Docker Compose (single container)
