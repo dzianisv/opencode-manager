@@ -64,13 +64,13 @@ A full-stack web application for running [OpenCode](https://github.com/sst/openc
 ## Demo Videos
 
 ### Demo
-![Demo](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.3.0/Chat.gif)
+![Demo](https://github.com/chriswritescode-dev/opencode-manager/releases/download/0.4.0/Chat.gif)
 
 ### File Editing
-![File Editing](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.3.0/git-file-edit.gif)
+![File Editing](https://github.com/chriswritescode-dev/opencode-manager/releases/download/0.4.0/git-file-edit.gif)
 
 ### File Context
-![File Context](https://github.com/chriswritescode-dev/opencode-web/releases/download/0.2.5/file-context.gif)
+![File Context](https://github.com/chriswritescode-dev/opencode-manager/releases/download/0.4.0/file-context.gif)
 
 ## Mobile Screenshots
 
@@ -119,7 +119,7 @@ docker-compose logs -f
 docker-compose restart
 
 # Access container shell
-docker exec -it opencode-web sh
+docker exec -it opencode-manager sh
 ```
 
 ### Option 2: Local Development
