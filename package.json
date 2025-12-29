@@ -19,9 +19,14 @@
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down -v",
     "docker:logs": "docker-compose logs -f",
-    "docker:restart": "docker-compose restart"
+    "docker:restart": "docker-compose restart",
+    "deploy": "bun run scripts/deploy.ts",
+    "deploy:status": "bun run scripts/deploy.ts --status",
+    "deploy:destroy": "bun run scripts/deploy.ts --destroy",
+    "deploy:sync-auth": "bun run scripts/deploy.ts --sync-auth"
   },
   "devDependencies": {
+    "bun-types": "latest",
     "concurrently": "^9.1.0"
   },
   "dependencies": {
