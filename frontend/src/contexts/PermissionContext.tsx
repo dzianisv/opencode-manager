@@ -173,6 +173,7 @@ prevPendingCountRef.current = pendingCount
 
   const getClient = useCallback((sessionID: string): OpenCodeClient | null => {
     
+    // First, try to find the exact repo for this session
     for (const repo of activeRepos) {
       if (repo.sessions.some((s) => s.id === sessionID)) {
         const clientKey = `${repo.url}|${repo.directory ?? ''}`
@@ -185,30 +186,45 @@ prevPendingCountRef.current = pendingCount
       }
     }
     
-    if (activeRepos.length === 0) {
-      const cache = queryClient.getQueryCache()
-      const queries = cache.getAll()
+    // Fallback for subagent sessions: when session isn't found in activeRepos
+    // but we have active repos, use the first available repo's client.
+    // This works because all repos proxy to the same OpenCode server with
+    // the ?directory= parameter, and subagent sessions share the parent's directory.
+    if (activeRepos.length > 0) {
+      const fallbackRepo = activeRepos[0]
+      const clientKey = `${fallbackRepo.url}|${fallbackRepo.directory ?? ''}`
+      let client = clientsRef.current.get(clientKey)
+      if (!client) {
+        client = new OpenCodeClient(fallbackRepo.url, fallbackRepo.directory)
+        clientsRef.current.set(clientKey, client)
+      }
+      console.log('[PermissionContext] Using fallback client for subagent session:', sessionID)
+      return client
+    }
+    
+    // Last resort fallback: check query cache directly when activeRepos is empty
+    const cache = queryClient.getQueryCache()
+    const queries = cache.getAll()
+    
+    for (const query of queries) {
+      const key = query.queryKey
       
-      for (const query of queries) {
-        const key = query.queryKey
-        
-        if (key[0] === 'opencode' && key.length >= 5 && key[1] === 'session') {
-          const sessionData = query.state.data as { id: string } | undefined
-          if (sessionData?.id === sessionID) {
-            const url = key[2] as string
-            const directory = key[4] as string | undefined
-            
-            if (!url || typeof url !== 'string') continue
-            
-            const clientKey = `${url}|${directory ?? ''}`
-            let client = clientsRef.current.get(clientKey)
-            if (!client) {
-              client = new OpenCodeClient(url, directory)
-              clientsRef.current.set(clientKey, client)
-            }
-            console.log('[PermissionContext] Created client from query cache for fallback')
-            return client
+      if (key[0] === 'opencode' && key.length >= 5 && key[1] === 'session') {
+        const sessionData = query.state.data as { id: string } | undefined
+        if (sessionData?.id === sessionID) {
+          const url = key[2] as string
+          const directory = key[4] as string | undefined
+          
+          if (!url || typeof url !== 'string') continue
+          
+          const clientKey = `${url}|${directory ?? ''}`
+          let client = clientsRef.current.get(clientKey)
+          if (!client) {
+            client = new OpenCodeClient(url, directory)
+            clientsRef.current.set(clientKey, client)
           }
+          console.log('[PermissionContext] Created client from query cache for fallback')
+          return client
         }
       }
     }
