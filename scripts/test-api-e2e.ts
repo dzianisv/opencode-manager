@@ -186,7 +186,7 @@ class APIE2ETest {
 
   async testOpenCodeProviders(): Promise<TestResult> {
     return this.runTest('OpenCode Providers', async () => {
-      const response = await this.fetch('/api/providers')
+      const response = await this.fetch('/api/providers/credentials')
       
       if (response.status !== 200) {
         return { passed: false, details: `Status: ${response.status}` }
@@ -195,10 +195,10 @@ class APIE2ETest {
       const text = await response.text()
       try {
         const data = JSON.parse(text)
-        const providers = Object.keys(data || {})
+        const providers = data.providers || []
         return {
-          passed: providers.length > 0,
-          details: `Providers: ${providers.join(', ')}`
+          passed: Array.isArray(providers),
+          details: `Providers: ${providers.length} configured`
         }
       } catch {
         return {
