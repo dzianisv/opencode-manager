@@ -102,10 +102,6 @@ jobs:
         run: npm run lint
         working-directory: frontend
 
-      - name: Build shared package
-        run: pnpm build
-        working-directory: shared
-
       - name: Build backend
         run: pnpm build
         working-directory: backend
