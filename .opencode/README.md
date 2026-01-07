@@ -1,42 +1,36 @@
 # OpenCode Manager - QA Testing System
 
-This directory contains the QA testing subagent and related test automation.
+This directory contains the QA testing agent and related test automation for the OpenCode Manager project.
 
 ## Files
 
-- **`subagents/qa-tester.md`** - Full QA testing agent with comprehensive test protocols
+- **`agent/qa-tester.md`** - OpenCode subagent for autonomous QA testing
 - **`commands/qa-test.sh`** - Quick test command for common scenarios
+- **`templates/test-report-template.md`** - Professional test report template
 
-## Using the QA Testing Subagent
+## Using the QA Testing Agent
 
-### Method 1: Via OpenCode Task Tool
+### Method 1: Ask OpenCode Directly (Recommended)
 
-Use the Task tool to launch the QA testing agent:
+The `qa-tester` agent is automatically available in OpenCode. Simply ask:
 
-```typescript
-// In OpenCode
-Task({
-  subagent_type: "general",
-  description: "Run comprehensive QA tests",
-  prompt: `You are the QA Tester agent. Follow the instructions in .opencode/subagents/qa-tester.md.
-
-Test the following:
-1. Backend health checks
-2. API endpoints
-3. Authentication (if enabled)
-4. Frontend accessibility
-
-Report results in the standard format with:
-- Test status (PASS/FAIL)
-- Performance metrics
-- Issues found
-- Recommendations
-
-Target URL: http://localhost:5001`
-})
+```
+"Test the application comprehensively and generate a report"
 ```
 
-### Method 2: Via Slash Command
+or mention the agent explicitly:
+
+```
+"@qa-tester run a full test suite on the development server"
+```
+
+OpenCode will automatically invoke the QA agent, which will:
+1. Run all test protocols systematically
+2. Evaluate results against expected behavior
+3. Generate a professional test report
+4. Provide recommendations for any issues found
+
+### Method 2: Via Quick Test Script
 
 Use the quick test script for common scenarios:
 
@@ -65,13 +59,13 @@ export AUTH_PASSWORD=secret
 .opencode/commands/qa-test.sh full
 ```
 
-### Method 3: Direct Integration
+### Method 3: Manual Testing
 
-Read the subagent instructions and implement custom test flows:
+Follow the test protocols in the agent file:
 
 ```bash
-# Example: Custom test flow
-cat .opencode/subagents/qa-tester.md
+# Read the agent instructions
+cat .opencode/agent/qa-tester.md
 
 # Follow the protocols for your specific test needs
 ```

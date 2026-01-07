@@ -510,8 +510,13 @@ Run tests using the provided command script:
 Ask the OpenCode AI agent to test the application:
 
 ```
-"Read the QA testing agent in .opencode/subagents/qa-tester.md and run a 
-comprehensive test of the application. Generate a report using the template."
+"Test the application and generate a comprehensive report"
+```
+
+Or mention the QA agent directly:
+
+```
+"@qa-tester run a full test suite and report any issues"
 ```
 
 The AI agent will autonomously:

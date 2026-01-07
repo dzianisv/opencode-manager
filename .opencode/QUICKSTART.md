@@ -1,30 +1,51 @@
 # QA Testing System - Quick Start Guide
 
-This guide shows you how to use the OpenCode Manager QA testing system.
+Get started with the OpenCode Manager QA testing system in minutes.
 
 ## What You Get
 
-1. **Comprehensive QA Agent** (`subagents/qa-tester.md`)
-   - Full testing protocols for all features
-   - Detailed evaluation criteria
-   - Common issues and solutions
-   - Test result reporting format
+1. **QA Testing Agent** (`.opencode/agent/qa-tester.md`)
+   - OpenCode subagent for autonomous testing
+   - Comprehensive test protocols
+   - Professional report generation
+   - Actionable recommendations
 
-2. **Quick Test Command** (`commands/qa-test.sh`)
+2. **Quick Test Command** (`.opencode/commands/qa-test.sh`)
    - Fast health checks
    - API endpoint testing
    - Auth validation
-   - Tunnel testing
-   - Docker deployment tests
+   - Tunnel and Docker tests
 
-3. **Test Report Template** (`templates/test-report-template.md`)
-   - Professional test report format
-   - All sections pre-filled
-   - Copy and fill in your results
+3. **Test Report Template** (`.opencode/templates/test-report-template.md`)
+   - Professional format
+   - Pre-structured sections
+   - Ready for stakeholders
 
 ## Quick Start
 
-### 1. Run a Quick Health Check
+### Method 1: Ask OpenCode (Easiest)
+
+Simply ask OpenCode to test the application:
+
+```
+"Test the application and generate a comprehensive report"
+```
+
+Or mention the QA agent directly:
+
+```
+"@qa-tester run a full test suite on the development server"
+```
+
+The QA agent will:
+- ✅ Run all tests automatically
+- ✅ Evaluate results
+- ✅ Generate professional report
+- ✅ Provide recommendations
+
+### Method 2: Quick Command-Line Tests
+
+#### A. Run a Quick Health Check
 
 ```bash
 # From project root
@@ -50,7 +71,7 @@ This guide shows you how to use the OpenCode Manager QA testing system.
 # ✅ Tests completed
 ```
 
-### 2. Test All API Endpoints
+#### B. Test All API Endpoints
 
 ```bash
 .opencode/commands/qa-test.sh api http://localhost:5001
@@ -61,7 +82,7 @@ This guide shows you how to use the OpenCode Manager QA testing system.
 # - /api/settings/opencode-configs
 ```
 
-### 3. Test Authentication
+#### C. Test Authentication
 
 ```bash
 # First, set credentials
