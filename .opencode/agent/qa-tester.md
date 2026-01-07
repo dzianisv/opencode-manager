@@ -1,7 +1,6 @@
 ---
 description: QA testing specialist that autonomously tests OpenCode Manager and generates comprehensive test reports
 mode: subagent
-model: anthropic/claude-sonnet-4-20250514
 temperature: 0.1
 tools:
   write: true
