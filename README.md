@@ -117,7 +117,7 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 - **CI/CD Ready** - Integration-ready for GitHub Actions and other CI/CD pipelines
 - **Comprehensive Coverage** - Tests server startup, API endpoints, authentication, tunnels, Docker deployment, and more
 
-Use `@qa-tester` in OpenCode or run `.opencode/commands/qa-test.sh` for quick tests.
+Use `@qa-tester` in OpenCode or run `scripts/qa-test.sh` for quick tests.
 
 ## Screenshots
 
@@ -480,28 +480,28 @@ Run tests using the provided command script:
 
 ```bash
 # Health check (quick verification)
-.opencode/commands/qa-test.sh health
+scripts/qa-test.sh health
 
 # API endpoint tests
-.opencode/commands/qa-test.sh api
+scripts/qa-test.sh api
 
 # Authentication tests
-.opencode/commands/qa-test.sh auth
+scripts/qa-test.sh auth
 
 # Cloudflare tunnel tests
-.opencode/commands/qa-test.sh tunnel
+scripts/qa-test.sh tunnel
 
 # Docker deployment tests
-.opencode/commands/qa-test.sh docker
+scripts/qa-test.sh docker
 
 # E2E test suite
-.opencode/commands/qa-test.sh e2e
+scripts/qa-test.sh e2e
 
 # Run all tests
-.opencode/commands/qa-test.sh full
+scripts/qa-test.sh full
 
 # Test remote deployment
-.opencode/commands/qa-test.sh health https://your-deployment.com
+scripts/qa-test.sh health https://your-deployment.com
 ```
 
 ### Autonomous AI Testing
@@ -544,7 +544,7 @@ The QA system can be integrated into GitHub Actions:
 ```yaml
 - name: Run QA Tests
   run: |
-    .opencode/commands/qa-test.sh full
+    scripts/qa-test.sh full
 ```
 
 See the QA agent at `.opencode/agent/qa-tester.md` for detailed test protocols.
