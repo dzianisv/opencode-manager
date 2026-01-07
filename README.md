@@ -114,11 +114,10 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 ### QA Testing System
 - **Autonomous AI Testing** - OpenCode AI agent can autonomously test the entire application
 - **Quick Test Commands** - Run health, API, auth, tunnel, Docker, and E2E tests with one command
-- **Test Report Generation** - Professional test report templates with metrics and checklists
 - **CI/CD Ready** - Integration-ready for GitHub Actions and other CI/CD pipelines
 - **Comprehensive Coverage** - Tests server startup, API endpoints, authentication, tunnels, Docker deployment, and more
 
-See [.opencode/README.md](.opencode/README.md) for full testing documentation.
+Use `@qa-tester` in OpenCode or run `.opencode/commands/qa-test.sh` for quick tests.
 
 ## Screenshots
 
@@ -548,7 +547,7 @@ The QA system can be integrated into GitHub Actions:
     .opencode/commands/qa-test.sh full
 ```
 
-For complete testing documentation, see [.opencode/README.md](.opencode/README.md).
+See the QA agent at `.opencode/agent/qa-tester.md` for detailed test protocols.
 
 ## OAuth Provider Setup
 
