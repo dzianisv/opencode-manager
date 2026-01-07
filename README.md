@@ -506,16 +506,18 @@ scripts/qa-test.sh health https://your-deployment.com
 
 ### Autonomous AI Testing
 
-Ask the OpenCode AI agent to test the application:
+Use OpenCode slash commands for quick testing:
 
 ```
-"Test the application and generate a comprehensive report"
+/qa-test       # Run comprehensive QA tests
+/qa-health     # Quick health check
 ```
 
 Or mention the QA agent directly:
 
 ```
 "@qa-tester run a full test suite and report any issues"
+"Test the application and generate a comprehensive report"
 ```
 
 The AI agent will autonomously:
