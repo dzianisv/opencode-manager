@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import puppeteer, { Browser, Page } from 'puppeteer'
-import { spawn } from 'child_process'
-import { existsSync, unlinkSync } from 'fs'
+import { spawn, execSync } from 'child_process'
+import { existsSync, unlinkSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -13,6 +13,15 @@ interface TestConfig {
   testPhrase: string
   headless: boolean
   timeout: number
+  useWebAudioInjection: boolean
+}
+
+interface TestResult {
+  name: string
+  passed: boolean
+  duration: number
+  details?: string
+  error?: string
 }
 
 const DEFAULT_CONFIG: TestConfig = {
@@ -20,13 +29,15 @@ const DEFAULT_CONFIG: TestConfig = {
   username: process.env.OPENCODE_USER || '',
   password: process.env.OPENCODE_PASS || '',
   testPhrase: 'What is two plus two?',
-  headless: true,
+  headless: process.env.CI === 'true',
   timeout: 120000,
+  useWebAudioInjection: false,
 }
 
 function log(message: string, indent = 0) {
   const prefix = '  '.repeat(indent)
-  console.log(`${prefix}${message}`)
+  const timestamp = new Date().toISOString().slice(11, 19)
+  console.log(`[${timestamp}] ${prefix}${message}`)
 }
 
 function success(message: string) {
@@ -38,7 +49,7 @@ function fail(message: string) {
 }
 
 function info(message: string) {
-  log(`INFO  ${message}`)
+  log(`INFO ${message}`)
 }
 
 function execCommand(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
@@ -55,27 +66,49 @@ function execCommand(command: string, args: string[]): Promise<{ stdout: string;
   })
 }
 
-async function generateTestAudio(text: string): Promise<string | null> {
-  const wavPath = join(tmpdir(), `talk-mode-test-${Date.now()}.wav`)
+async function generateTestAudio(phrase: string): Promise<string | null> {
+  const wavPath = join(tmpdir(), `browser-test-${Date.now()}.wav`)
   const aiffPath = wavPath.replace('.wav', '.aiff')
   
-  info(`Generating test audio: "${text}"`)
+  info(`Generating test audio: "${phrase}"`)
   
-  const sayResult = await execCommand('say', ['-o', aiffPath, text])
-  if (sayResult.code !== 0) {
-    fail(`say command failed: ${sayResult.stderr}`)
-    return null
-  }
+  if (process.platform === 'darwin') {
+    const sayResult = await execCommand('say', ['-o', aiffPath, phrase])
+    if (sayResult.code !== 0) {
+      fail(`say command failed: ${sayResult.stderr}`)
+      return null
+    }
 
-  const ffmpegResult = await execCommand('ffmpeg', [
-    '-y', '-i', aiffPath, '-ar', '16000', '-ac', '1', wavPath
-  ])
-  
-  try { unlinkSync(aiffPath) } catch {}
-  
-  if (ffmpegResult.code !== 0) {
-    fail(`ffmpeg conversion failed: ${ffmpegResult.stderr}`)
-    return null
+    const ffmpegResult = await execCommand('ffmpeg', [
+      '-y', '-i', aiffPath, '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', wavPath
+    ])
+    
+    try { unlinkSync(aiffPath) } catch {}
+    
+    if (ffmpegResult.code !== 0) {
+      fail(`ffmpeg conversion failed: ${ffmpegResult.stderr}`)
+      return null
+    }
+  } else {
+    try {
+      const espeakResult = await execCommand('espeak', ['-w', wavPath, phrase])
+      if (espeakResult.code !== 0) throw new Error('espeak failed')
+    } catch {
+      info('espeak not available, trying pico2wave...')
+      try {
+        const picoResult = await execCommand('pico2wave', ['-w', wavPath, phrase])
+        if (picoResult.code !== 0) throw new Error('pico2wave failed')
+      } catch {
+        info('No TTS available, creating silent audio placeholder')
+        const ffmpegResult = await execCommand('ffmpeg', [
+          '-y', '-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '3', wavPath
+        ])
+        if (ffmpegResult.code !== 0) {
+          fail('Failed to create audio file')
+          return null
+        }
+      }
+    }
   }
   
   if (!existsSync(wavPath)) {
@@ -85,6 +118,53 @@ async function generateTestAudio(text: string): Promise<string | null> {
   
   success(`Generated test audio: ${wavPath}`)
   return wavPath
+}
+
+async function injectAudioViaWebAPI(page: Page, audioPath: string): Promise<boolean> {
+  info('Injecting audio via Web Audio API override...')
+  
+  try {
+    const audioBuffer = readFileSync(audioPath)
+    const audioBase64 = audioBuffer.toString('base64')
+    
+    await page.evaluate(async (base64Audio: string) => {
+      const binaryString = atob(base64Audio)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+      
+      const audioContext = new AudioContext({ sampleRate: 16000 })
+      const arrayBuffer = await audioBlob.arrayBuffer()
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+      
+      const source = audioContext.createBufferSource()
+      source.buffer = audioBuffer
+      
+      const destination = audioContext.createMediaStreamDestination()
+      source.connect(destination)
+      
+      const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+      
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        if (constraints?.audio) {
+          console.log('[Test] Returning injected audio stream')
+          source.start()
+          return destination.stream
+        }
+        return originalGetUserMedia(constraints)
+      }
+      
+      console.log('[Test] Audio injection prepared')
+    }, audioBase64)
+    
+    success('Audio injection setup complete')
+    return true
+  } catch (error) {
+    fail(`Audio injection failed: ${error instanceof Error ? error.message : error}`)
+    return false
+  }
 }
 
 async function waitForTalkModeState(page: Page, targetState: string, timeoutMs = 30000): Promise<boolean> {
@@ -108,34 +188,43 @@ async function waitForTalkModeState(page: Page, targetState: string, timeoutMs =
   return false
 }
 
-async function runRealAudioTest(config: TestConfig) {
-  console.log('\nTalk Mode Real Audio E2E Test')
+async function runBrowserTest(config: TestConfig): Promise<boolean> {
+  console.log('\n' + '='.repeat(60))
+  console.log('Browser E2E Test - Full Talk Mode Pipeline')
   console.log('='.repeat(60))
   console.log(`URL: ${config.baseUrl}`)
   console.log(`Test Phrase: "${config.testPhrase}"`)
   console.log(`Headless: ${config.headless}`)
-  console.log('='.repeat(60))
-
-  const audioPath = await generateTestAudio(config.testPhrase)
-  if (!audioPath) {
-    fail('Cannot run test without audio file')
-    return false
-  }
+  console.log(`Audio Mode: ${config.useWebAudioInjection ? 'Web Audio API injection' : 'Chrome fake audio capture'}`)
+  console.log('='.repeat(60) + '\n')
 
   let browser: Browser | null = null
-  
+  let audioPath: string | null = null
+  const results: TestResult[] = []
+
   try {
-    info('Launching browser with fake audio device...')
+    audioPath = await generateTestAudio(config.testPhrase)
+    if (!audioPath) {
+      fail('Cannot run test without audio file')
+      return false
+    }
+
+    info('Launching browser...')
+    const launchArgs = [
+      '--use-fake-ui-for-media-stream',
+      '--use-fake-device-for-media-stream',
+      '--autoplay-policy=no-user-gesture-required',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+    ]
+    
+    if (!config.useWebAudioInjection) {
+      launchArgs.push(`--use-file-for-fake-audio-capture=${audioPath}`)
+    }
+    
     browser = await puppeteer.launch({
       headless: config.headless,
-      args: [
-        '--use-fake-ui-for-media-stream',
-        '--use-fake-device-for-media-stream',
-        `--use-file-for-fake-audio-capture=${audioPath}`,
-        '--autoplay-policy=no-user-gesture-required',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-      ]
+      args: launchArgs
     })
 
     const page = await browser.newPage()
@@ -153,7 +242,8 @@ async function runRealAudioTest(config: TestConfig) {
     page.on('console', msg => {
       const text = msg.text()
       if (text.includes('TalkMode') || text.includes('STT') || text.includes('transcri') ||
-          text.includes('Error') || text.includes('error') || text.includes('speech')) {
+          text.includes('Error') || text.includes('error') || text.includes('speech') ||
+          text.includes('[Test]')) {
         log(`[Browser] ${text}`, 1)
       }
     })
@@ -171,7 +261,7 @@ async function runRealAudioTest(config: TestConfig) {
             const data = JSON.parse(body)
             if (data.text) {
               transcriptionResult = data.text
-              success(`Real STT transcription: "${data.text}"`)
+              success(`STT transcription: "${data.text}"`)
             }
           }
         } catch {
@@ -180,6 +270,14 @@ async function runRealAudioTest(config: TestConfig) {
       }
     })
 
+    if (config.useWebAudioInjection) {
+      const injected = await injectAudioViaWebAPI(page, audioPath)
+      if (!injected) {
+        fail('Failed to setup Web Audio API injection')
+        return false
+      }
+    }
+
     info('Loading page...')
     await page.goto(config.baseUrl, { waitUntil: 'networkidle2', timeout: 60000 })
     success('Page loaded')
@@ -187,7 +285,7 @@ async function runRealAudioTest(config: TestConfig) {
     await page.waitForFunction(() => document.querySelector('button') !== null, { timeout: 15000 })
     success('App rendered')
 
-    info('Navigating to first available repo...')
+    info('Checking repos...')
     const repos = await page.evaluate(async () => {
       try {
         const response = await fetch('/api/repos')
@@ -203,6 +301,7 @@ async function runRealAudioTest(config: TestConfig) {
     }
 
     const repoId = repos[0].id
+    const repoPath = repos[0].fullPath
     success(`Found repo: ${repos[0].repoUrl} (id: ${repoId})`)
 
     info('Getting or creating session...')
@@ -214,7 +313,7 @@ async function runRealAudioTest(config: TestConfig) {
         if (!response.ok) return []
         return await response.json()
       } catch { return [] }
-    }, repos[0].fullPath)
+    }, repoPath)
 
     if (Array.isArray(sessions) && sessions.length > 0) {
       sessionId = sessions[0].id
@@ -227,7 +326,7 @@ async function runRealAudioTest(config: TestConfig) {
           body: JSON.stringify({})
         })
         return response.ok ? await response.json() : null
-      }, repos[0].fullPath)
+      }, repoPath)
 
       if (!createResult) {
         fail('Failed to create session')
@@ -245,7 +344,7 @@ async function runRealAudioTest(config: TestConfig) {
 
     await new Promise(resolve => setTimeout(resolve, 2000))
 
-    info('Verifying STT is working via API...')
+    info('Verifying STT server is running...')
     const sttStatus = await page.evaluate(async () => {
       const response = await fetch('/api/stt/status')
       return response.json()
@@ -255,7 +354,7 @@ async function runRealAudioTest(config: TestConfig) {
       fail(`STT server not running: ${JSON.stringify(sttStatus)}`)
       return false
     }
-    success('STT server is running')
+    success(`STT server is running (model: ${sttStatus.server?.model || 'unknown'})`)
 
     info('Looking for Talk Mode button...')
     const talkModeButton = await page.evaluate(() => {
@@ -283,7 +382,7 @@ async function runRealAudioTest(config: TestConfig) {
     }
     success('Found Talk Mode button')
 
-    info('Starting Talk Mode (will use fake audio capture)...')
+    info('Starting Talk Mode...')
     await page.click(talkModeButton.selector!)
     await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -326,8 +425,8 @@ async function runRealAudioTest(config: TestConfig) {
     }
     success('Talk Mode is listening for audio')
 
-    info('Audio is being captured from fake device...')
-    info('Waiting for STT transcription from real audio pipeline...')
+    info('Audio is being captured...')
+    info('Waiting for STT transcription...')
     
     const startTime = Date.now()
     const maxWait = 30000
@@ -343,35 +442,85 @@ async function runRealAudioTest(config: TestConfig) {
       }
     }
 
+    let agentResponse: string | null = null
+
+    if (transcriptionResult) {
+      success(`Transcribed: "${transcriptionResult}"`)
+      
+      info('Waiting for OpenCode response...')
+      const responseStartTime = Date.now()
+      const responseMaxWait = 60000
+
+      while (Date.now() - responseStartTime < responseMaxWait) {
+        const state = await page.evaluate(() => {
+          const api = (window as Window & typeof globalThis & { 
+            __TALK_MODE_TEST__?: { getState: () => { 
+              state: string
+              agentResponse: string | null 
+            }} 
+          }).__TALK_MODE_TEST__
+          return api?.getState()
+        })
+
+        if (state?.agentResponse) {
+          agentResponse = state.agentResponse
+          break
+        }
+
+        if (state?.state === 'listening') {
+          const messages = await page.evaluate(async (sid: string) => {
+            const res = await fetch(`/api/opencode/session/${sid}/message`)
+            return res.json()
+          }, sessionId!)
+
+          const assistantMsg = messages?.find((m: { info?: { role: string } }) => m.info?.role === 'assistant')
+          if (assistantMsg) {
+            const textPart = assistantMsg.parts?.find((p: { type: string }) => p.type === 'text')
+            if (textPart?.text) {
+              agentResponse = textPart.text
+              break
+            }
+          }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    info('Stopping Talk Mode...')
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'))
+      for (const btn of buttons) {
+        const title = btn.getAttribute('title')?.toLowerCase() || ''
+        if (title.includes('talk') || title.includes('exit') || title.includes('stop')) {
+          (btn as HTMLButtonElement).click()
+          return
+        }
+      }
+    })
+
     console.log('\n' + '='.repeat(60))
     console.log('Test Results')
     console.log('='.repeat(60))
 
+    const transcribedCorrectly = transcriptionResult && (
+      transcriptionResult.toLowerCase().includes('two') || 
+      transcriptionResult.includes('2')
+    ) && transcriptionResult.toLowerCase().includes('plus')
+
     if (transcriptionResult) {
-      success(`Real audio was transcribed by STT: "${transcriptionResult}"`)
-      
-      const expectedWords = config.testPhrase.toLowerCase().split(/\s+/)
-      const transcribedWords = transcriptionResult.toLowerCase().split(/\s+/)
-      const matches = expectedWords.filter(w => transcribedWords.some(tw => tw.includes(w) || w.includes(tw)))
-      const accuracy = Math.round((matches.length / expectedWords.length) * 100)
-      
-      if (accuracy >= 50) {
-        success(`Transcription accuracy: ${accuracy}% (${matches.length}/${expectedWords.length} words matched)`)
-        success('Real audio STT pipeline is working!')
-        return true
+      if (transcribedCorrectly) {
+        success(`Audio transcribed correctly: "${transcriptionResult}"`)
       } else {
-        fail(`Low transcription accuracy: ${accuracy}%`)
-        log(`Expected: "${config.testPhrase}"`, 1)
-        log(`Got: "${transcriptionResult}"`, 1)
-        return false
+        fail(`Transcription mismatch - got: "${transcriptionResult}"`)
       }
     } else {
-      fail('No transcription received from real audio pipeline')
-      log(`Total STT requests made: ${sttRequests.length}`, 1)
+      fail('No transcription received')
+      log(`STT calls made: ${sttRequests.length}`, 1)
       
       if (sttRequests.length === 0) {
-        fail('No STT requests were made - audio capture may not be working')
-        log('This could mean:', 1)
+        fail('No STT API calls made - audio capture may not be working')
+        log('Possible causes:', 1)
         log('- MediaRecorder is not capturing audio from fake device', 2)
         log('- VAD (Voice Activity Detection) is not detecting speech', 2)
         log('- The audio file may be too short or have no speech content', 2)
@@ -381,8 +530,36 @@ async function runRealAudioTest(config: TestConfig) {
           log(`Request ${i + 1}: ${req.status} - ${req.body?.slice(0, 100) || 'no body'}`, 2)
         })
       }
-      return false
     }
+
+    if (agentResponse) {
+      success(`OpenCode responded: "${agentResponse.slice(0, 100)}..."`)
+      if (agentResponse.includes('4') || agentResponse.toLowerCase().includes('four')) {
+        success('Response contains correct answer (4)!')
+      } else {
+        fail('Response does not contain expected answer (4)')
+      }
+    } else if (transcriptionResult) {
+      fail('No response from OpenCode')
+    }
+
+    const responseCorrect = agentResponse && (agentResponse.includes('4') || agentResponse.toLowerCase().includes('four'))
+    const passed = !!transcribedCorrectly && !!responseCorrect
+
+    if (passed) {
+      console.log('\n' + '='.repeat(60))
+      success('FULL E2E TEST PASSED')
+      console.log('  Real audio -> MediaRecorder -> STT -> Transcription -> OpenCode -> Response')
+      console.log('='.repeat(60))
+    } else {
+      console.log('\n' + '='.repeat(60))
+      fail('TEST FAILED')
+      if (!transcribedCorrectly) console.log('  - Transcription failed or incorrect')
+      if (!responseCorrect) console.log('  - OpenCode response missing or incorrect')
+      console.log('='.repeat(60))
+    }
+
+    return passed
 
   } catch (error) {
     fail(`Test error: ${error instanceof Error ? error.message : error}`)
@@ -392,7 +569,7 @@ async function runRealAudioTest(config: TestConfig) {
       await browser.close()
     }
     
-    if (audioPath) {
+    if (audioPath && existsSync(audioPath)) {
       try { unlinkSync(audioPath) } catch {}
     }
   }
@@ -413,29 +590,29 @@ async function main() {
       config.testPhrase = args[++i]
     } else if (args[i] === '--no-headless') {
       config.headless = false
+    } else if (args[i] === '--web-audio') {
+      config.useWebAudioInjection = true
     } else if (args[i] === '--help' || args[i] === '-h') {
       console.log(`
-Talk Mode Real Audio E2E Test
+Browser E2E Test - Full Talk Mode Pipeline
 
-Tests the complete Talk Mode flow with REAL audio capture:
-1. Generates test audio using macOS 'say' command
-2. Launches Chrome with --use-file-for-fake-audio-capture
+Tests the complete Talk Mode flow with real audio capture:
+1. Generates test audio using macOS 'say' command (or espeak/pico2wave on Linux)
+2. Launches Chrome with fake audio device OR Web Audio API injection
 3. Starts Talk Mode which captures audio via getUserMedia()
 4. Audio flows through MediaRecorder -> STT API -> Whisper
-5. Verifies the transcription matches the test phrase
+5. Verifies transcription matches the test phrase
+6. Waits for OpenCode to respond
+7. Verifies the response contains the expected answer
 
-This test verifies the ACTUAL audio pipeline works, not just the
-transcript injection path. It will FAIL if:
-- STT server is not running
-- Audio capture doesn't work
-- Whisper transcription fails
+This test verifies the ACTUAL audio pipeline works end-to-end.
 
 Requirements:
-- macOS with 'say' command
+- macOS with 'say' command OR Linux with espeak/pico2wave
 - ffmpeg installed
 - Whisper server running
 
-Usage: bun run scripts/test-talkmode-browser.ts [options]
+Usage: bun run scripts/test-browser.ts [options]
 
 Options:
   --url <url>       Base URL (default: http://localhost:5001)
@@ -443,13 +620,33 @@ Options:
   --pass <password> Password for basic auth
   --text <phrase>   Test phrase to speak (default: "What is two plus two?")
   --no-headless     Run browser in visible mode for debugging
+  --web-audio       Use Web Audio API injection instead of Chrome fake audio capture
   --help, -h        Show this help
+
+Environment Variables:
+  OPENCODE_URL      Base URL
+  OPENCODE_USER     Username
+  OPENCODE_PASS     Password
+  CI                If "true", enables headless mode
+
+Examples:
+  # Local development
+  bun run scripts/test-browser.ts
+
+  # With visible browser for debugging
+  bun run scripts/test-browser.ts --no-headless
+
+  # Remote deployment with auth
+  bun run scripts/test-browser.ts --url https://example.trycloudflare.com --user admin --pass secret
+
+  # Use Web Audio API injection (alternative to fake audio device)
+  bun run scripts/test-browser.ts --web-audio
 `)
       process.exit(0)
     }
   }
 
-  const passed = await runRealAudioTest(config)
+  const passed = await runBrowserTest(config)
   process.exit(passed ? 0 : 1)
 }
 

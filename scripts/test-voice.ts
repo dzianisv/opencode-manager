@@ -9,7 +9,7 @@ interface TestConfig {
   baseUrl: string
   username: string
   password: string
-  opcodeUrl: string
+  testText: string
 }
 
 interface TestResult {
@@ -24,10 +24,10 @@ const DEFAULT_CONFIG: TestConfig = {
   baseUrl: process.env.OPENCODE_URL || 'http://localhost:5001',
   username: process.env.OPENCODE_USER || '',
   password: process.env.OPENCODE_PASS || '',
-  opcodeUrl: process.env.OPENCODE_SERVER_URL || 'http://localhost:5551'
+  testText: process.env.TEST_TEXT || 'What is two plus two?'
 }
 
-class TalkModeE2ETest {
+class VoiceTest {
   private config: TestConfig
   private results: TestResult[] = []
   private tempFiles: string[] = []
@@ -98,7 +98,7 @@ class TalkModeE2ETest {
     })
   }
 
-  private async generateAudio16kHz(text: string, outputPath: string): Promise<boolean> {
+  private async generateAudio(text: string, outputPath: string): Promise<boolean> {
     const aiffPath = outputPath.replace('.wav', '.aiff')
     
     const sayResult = await this.execCommand('say', ['-o', aiffPath, text])
@@ -124,8 +124,24 @@ class TalkModeE2ETest {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
-  async testTalkModeEnabled(): Promise<TestResult> {
-    return this.runTest('Talk Mode Settings', async () => {
+  async testHealth(): Promise<TestResult> {
+    return this.runTest('Health Endpoint', async () => {
+      const response = await this.fetch('/api/health')
+      const data = await response.json()
+      
+      if (response.status !== 200) {
+        return { passed: false, details: `Status: ${response.status}` }
+      }
+      
+      return {
+        passed: data.status === 'healthy' && data.opencode === 'healthy',
+        details: `OpenCode: ${data.opencodeVersion}, DB: ${data.database}`
+      }
+    })
+  }
+
+  async testSettings(): Promise<TestResult> {
+    return this.runTest('Voice Settings', async () => {
       const response = await this.fetch('/api/settings')
       const data = await response.json()
 
@@ -133,25 +149,56 @@ class TalkModeE2ETest {
         return { passed: false, details: `Status: ${response.status}` }
       }
 
-      const talkMode = data.preferences?.talkMode
-      const stt = data.preferences?.stt
-      const tts = data.preferences?.tts
-
-      const isEnabled = talkMode?.enabled && stt?.enabled
+      const prefs = data.preferences
+      const hasTTS = prefs?.tts !== undefined
+      const hasSTT = prefs?.stt !== undefined
+      const hasTalkMode = prefs?.talkMode !== undefined
 
       return {
-        passed: isEnabled,
-        details: `TalkMode: ${talkMode?.enabled ? 'enabled' : 'disabled'}, STT: ${stt?.enabled ? 'enabled' : 'disabled'}, TTS: ${tts?.enabled ? 'enabled' : 'disabled'}, Silence: ${talkMode?.silenceThresholdMs}ms, MinSpeech: ${talkMode?.minSpeechMs}ms`
+        passed: hasTTS && hasSTT && hasTalkMode,
+        details: `TTS: ${hasTTS ? (prefs.tts.enabled ? 'enabled' : 'disabled') : 'missing'}, STT: ${hasSTT ? (prefs.stt.enabled ? 'enabled' : 'disabled') : 'missing'}, TalkMode: ${hasTalkMode ? (prefs.talkMode.enabled ? 'enabled' : 'disabled') : 'missing'}`
+      }
+    })
+  }
+
+  async testSTTStatus(): Promise<TestResult> {
+    return this.runTest('STT Status', async () => {
+      const response = await this.fetch('/api/stt/status')
+      const data = await response.json()
+      
+      if (response.status !== 200) {
+        return { passed: false, details: `Status: ${response.status}` }
+      }
+      
+      return {
+        passed: data.server?.running === true,
+        details: `Server running: ${data.server?.running}, Port: ${data.server?.port}, Model: ${data.server?.model}`
+      }
+    })
+  }
+
+  async testSTTModels(): Promise<TestResult> {
+    return this.runTest('STT Models', async () => {
+      const response = await this.fetch('/api/stt/models')
+      const data = await response.json()
+      
+      if (response.status !== 200) {
+        return { passed: false, details: `Status: ${response.status}` }
+      }
+      
+      const hasModels = Array.isArray(data.models) && data.models.length > 0
+      return {
+        passed: hasModels,
+        details: `Available models: ${data.models?.join(', ') || 'none'}`
       }
     })
   }
 
   async testSTTTranscription(): Promise<TestResult> {
-    return this.runTest('STT Transcription (16kHz WAV)', async () => {
-      const testText = 'Hello, what is two plus two?'
-      const wavPath = join(tmpdir(), `talkmode-test-${Date.now()}.wav`)
+    return this.runTest('STT Transcription', async () => {
+      const wavPath = join(tmpdir(), `test-stt-${Date.now()}.wav`)
       
-      const generated = await this.generateAudio16kHz(testText, wavPath)
+      const generated = await this.generateAudio(this.config.testText, wavPath)
       if (!generated) {
         return { passed: false, details: 'Failed to generate test audio (requires macOS with say command and ffmpeg)' }
       }
@@ -168,15 +215,70 @@ class TalkModeE2ETest {
       const data = await response.json()
       
       if (response.status !== 200) {
+        if (data.error === 'STT is not enabled') {
+          return { passed: false, details: 'STT is not enabled in settings. Enable it first.' }
+        }
         return { passed: false, details: `Error: ${data.error || response.status}` }
       }
 
       const hasText = typeof data.text === 'string' && data.text.length > 0
+      const originalWords = this.config.testText.toLowerCase().split(/\s+/)
+      const transcribedWords = (data.text || '').toLowerCase().split(/\s+/)
+      const matchingWords = originalWords.filter(w => transcribedWords.some(tw => tw.includes(w) || w.includes(tw)))
+      const accuracy = Math.round((matchingWords.length / originalWords.length) * 100)
 
       return {
-        passed: hasText,
-        details: `Transcribed: "${data.text}" | Duration: ${data.duration?.toFixed(2)}s`
+        passed: hasText && accuracy > 50,
+        details: `Transcribed: "${data.text}" | Accuracy: ~${accuracy}% | Duration: ${data.duration?.toFixed(2)}s`
       }
+    })
+  }
+
+  async testTTSVoices(): Promise<TestResult> {
+    return this.runTest('TTS Voices', async () => {
+      const response = await this.fetch('/api/tts/voices')
+      const data = await response.json()
+
+      if (data.error === 'TTS not configured') {
+        return { passed: true, details: 'TTS not configured (expected if no API key set)' }
+      }
+
+      if (response.status !== 200) {
+        return { passed: false, details: `Error: ${data.error || response.status}` }
+      }
+
+      const hasVoices = Array.isArray(data.voices) && data.voices.length > 0
+      return {
+        passed: hasVoices,
+        details: `Available voices: ${data.voices?.slice(0, 5).join(', ') || 'none'}${data.voices?.length > 5 ? '...' : ''}`
+      }
+    })
+  }
+
+  async testTTSSynthesis(): Promise<TestResult> {
+    return this.runTest('TTS Synthesis', async () => {
+      const response = await this.fetch('/api/tts/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Hello world, this is a test.' })
+      })
+
+      if (response.status === 200) {
+        const contentType = response.headers.get('content-type')
+        const isAudio = contentType?.includes('audio') || contentType?.includes('octet-stream')
+        const buffer = await response.arrayBuffer()
+        return {
+          passed: isAudio && buffer.byteLength > 0,
+          details: `Audio size: ${buffer.byteLength} bytes, Type: ${contentType}`
+        }
+      }
+
+      const data = await response.json()
+      if (data.error?.includes('not configured') || data.error?.includes('API key')) {
+        return { passed: true, details: 'TTS not configured (expected if no API key set)' }
+      }
+
+      return { passed: false, details: `Error: ${data.error || response.status}` }
     })
   }
 
@@ -213,10 +315,9 @@ class TalkModeE2ETest {
 
   async testFullTalkModeFlow(): Promise<TestResult> {
     return this.runTest('Full Talk Mode Flow (STT -> OpenCode -> Response)', async () => {
-      const testQuestion = 'What is two plus two?'
       const wavPath = join(tmpdir(), `talkmode-flow-${Date.now()}.wav`)
       
-      const generated = await this.generateAudio16kHz(testQuestion, wavPath)
+      const generated = await this.generateAudio(this.config.testText, wavPath)
       if (!generated) {
         return { passed: false, details: 'Failed to generate test audio' }
       }
@@ -310,48 +411,13 @@ class TalkModeE2ETest {
     })
   }
 
-  async testTTSResponse(): Promise<TestResult> {
-    return this.runTest('TTS Response Synthesis', async () => {
-      const responseText = 'Two plus two equals four.'
-      
-      const response = await this.fetch('/api/tts/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: responseText })
-      })
-
-      const contentType = response.headers.get('content-type')
-      
-      if (response.status === 200) {
-        const isAudio = contentType?.includes('audio') || contentType?.includes('octet-stream')
-        if (isAudio) {
-          const buffer = await response.arrayBuffer()
-          return {
-            passed: buffer.byteLength > 0,
-            details: `Audio size: ${buffer.byteLength} bytes, Type: ${contentType}`
-          }
-        }
-      }
-
-      try {
-        const data = await response.json()
-        if (data.error?.includes('not configured') || data.error?.includes('API key')) {
-          return { passed: true, details: 'TTS not configured (skipped - would work with API key)' }
-        }
-        return { passed: false, details: `Error: ${data.error || response.status}` }
-      } catch {
-        return { passed: false, details: `Status: ${response.status}, Content-Type: ${contentType}` }
-      }
-    })
-  }
-
-  async enableTalkMode(): Promise<boolean> {
+  async enableVoiceFeatures(): Promise<boolean> {
     const response = await this.fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         preferences: {
-          stt: { enabled: true, model: 'base' },
+          stt: { enabled: true, model: 'base', autoSubmit: false },
           talkMode: { 
             enabled: true, 
             silenceThresholdMs: 800, 
@@ -374,48 +440,52 @@ class TalkModeE2ETest {
     }
   }
 
-  async runAllTests(): Promise<void> {
-    console.log('\n🎧 OpenCode Manager Talk Mode E2E Tests\n')
-    console.log(`Backend URL: ${this.config.baseUrl}`)
-    console.log(`OpenCode URL: ${this.config.opcodeUrl}`)
+  async runAllTests(skipTalkMode: boolean = false): Promise<void> {
+    console.log('\nOpenCode Manager Voice API Tests\n')
+    console.log(`Base URL: ${this.config.baseUrl}`)
     console.log(`User: ${this.config.username || '(none)'}`)
-    console.log('─'.repeat(60))
+    console.log(`Skip Talk Mode Flow: ${skipTalkMode}`)
+    console.log('-'.repeat(60))
 
-    const settingsResult = await this.testTalkModeEnabled()
-    if (!settingsResult.passed) {
-      console.log('\n⚙️  Enabling Talk Mode for tests...')
-      const enabled = await this.enableTalkMode()
-      if (!enabled) {
-        console.log('❌ Failed to enable Talk Mode')
-      } else {
-        console.log('✅ Talk Mode enabled')
-      }
+    await this.testHealth()
+    await this.testSettings()
+    await this.testSTTStatus()
+    await this.testSTTModels()
+    
+    const sttStatus = await this.fetch('/api/stt/status')
+    const sttData = await sttStatus.json()
+    if (!sttData.enabled) {
+      console.log('\n  Enabling voice features for tests...')
+      await this.enableVoiceFeatures()
     }
-
+    
     await this.testSTTTranscription()
-    await this.testCreateSession()
-    await this.testFullTalkModeFlow()
-    await this.testTTSResponse()
+    await this.testTTSVoices()
+    await this.testTTSSynthesis()
+    
+    if (!skipTalkMode) {
+      await this.testCreateSession()
+      await this.testFullTalkModeFlow()
+    }
 
     this.cleanup()
     this.printResults()
   }
 
   private printResults(): void {
-    console.log('\n' + '═'.repeat(60))
+    console.log('\n' + '='.repeat(60))
     console.log('Test Results')
-    console.log('═'.repeat(60))
+    console.log('='.repeat(60))
 
     let passed = 0
     let failed = 0
 
     for (const result of this.results) {
-      const icon = result.passed ? '✅' : '❌'
-      const status = result.passed ? 'PASS' : 'FAIL'
+      const icon = result.passed ? '[PASS]' : '[FAIL]'
       passed += result.passed ? 1 : 0
       failed += result.passed ? 0 : 1
 
-      console.log(`\n${icon} ${result.name} [${status}] (${result.duration}ms)`)
+      console.log(`\n${icon} ${result.name} (${result.duration}ms)`)
       if (result.details) {
         console.log(`   ${result.details}`)
       }
@@ -424,9 +494,9 @@ class TalkModeE2ETest {
       }
     }
 
-    console.log('\n' + '─'.repeat(60))
+    console.log('\n' + '-'.repeat(60))
     console.log(`Total: ${this.results.length} | Passed: ${passed} | Failed: ${failed}`)
-    console.log('─'.repeat(60))
+    console.log('-'.repeat(60))
 
     if (failed > 0) {
       process.exit(1)
@@ -434,62 +504,70 @@ class TalkModeE2ETest {
   }
 }
 
+function printHelp(): void {
+  console.log(`
+OpenCode Manager Voice API Test
+
+Tests STT (Speech-to-Text), TTS (Text-to-Speech), and Talk Mode functionality.
+
+Usage: bun run scripts/test-voice.ts [options]
+
+Options:
+  --url <url>       Base URL (default: http://localhost:5001)
+  --user <username> Username for basic auth
+  --pass <password> Password for basic auth
+  --text <text>     Custom text for STT test (default: "What is two plus two?")
+  --skip-talkmode   Skip the full talk mode flow test (faster)
+  --help, -h        Show this help
+
+Environment Variables:
+  OPENCODE_URL      Base URL
+  OPENCODE_USER     Username
+  OPENCODE_PASS     Password
+  TEST_TEXT         Custom test text
+
+Tests Performed:
+  1. Health endpoint connectivity
+  2. Voice settings (TTS, STT, TalkMode config)
+  3. STT server status and available models
+  4. STT transcription with generated audio
+  5. TTS voices and synthesis endpoints
+  6. OpenCode session creation
+  7. Full talk mode flow: Audio -> STT -> OpenCode -> Response
+
+Examples:
+  # Local development
+  bun run scripts/test-voice.ts
+
+  # Skip slow talk mode test
+  bun run scripts/test-voice.ts --skip-talkmode
+
+  # Remote deployment
+  bun run scripts/test-voice.ts --url https://example.trycloudflare.com --user admin --pass secret
+`)
+}
+
 async function main() {
   const args = process.argv.slice(2)
   
   const config: TestConfig = { ...DEFAULT_CONFIG }
+  let skipTalkMode = false
   
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--url' && args[i + 1]) {
       config.baseUrl = args[++i]
-      if (!config.opcodeUrl.includes('localhost')) {
-        config.opcodeUrl = config.baseUrl.replace(/:\d+$/, '') + ':5551'
-      }
-    } else if (args[i] === '--opencode-url' && args[i + 1]) {
-      config.opcodeUrl = args[++i]
     } else if (args[i] === '--user' && args[i + 1]) {
       config.username = args[++i]
     } else if (args[i] === '--pass' && args[i + 1]) {
       config.password = args[++i]
+    } else if (args[i] === '--text' && args[i + 1]) {
+      config.testText = args[++i]
+    } else if (args[i] === '--skip-talkmode') {
+      skipTalkMode = true
     } else if (args[i] === '--help' || args[i] === '-h') {
-      console.log(`
-OpenCode Manager Talk Mode E2E Test
-
-This test simulates the full Talk Mode flow:
-1. Generate audio from text (using macOS 'say' command)
-2. Transcribe audio via STT API (Whisper)
-3. Send transcription to OpenCode session
-4. Wait for assistant response
-5. Synthesize response via TTS (if configured)
-
-Usage: bun run scripts/test-talkmode-e2e.ts [options]
-
-Options:
-  --url <url>           Backend API URL (default: http://localhost:5001)
-  --opencode-url <url>  OpenCode server URL (default: http://localhost:5551)
-  --user <username>     Username for basic auth
-  --pass <password>     Password for basic auth
-  --help, -h            Show this help
-
-Environment Variables:
-  OPENCODE_URL          Backend API URL
-  OPENCODE_SERVER_URL   OpenCode server URL  
-  OPENCODE_USER         Username
-  OPENCODE_PASS         Password
-
-Examples:
-  # Local development
-  bun run scripts/test-talkmode-e2e.ts
-
-  # Remote deployment (URLs are proxied through backend)
-  bun run scripts/test-talkmode-e2e.ts --url https://example.trycloudflare.com --user admin --pass secret
-`)
+      printHelp()
       process.exit(0)
     }
-  }
-
-  if (config.baseUrl.includes('trycloudflare.com') || config.baseUrl.includes('https://')) {
-    config.opcodeUrl = `${config.baseUrl}/opencode`
   }
 
   if (!config.baseUrl.includes('localhost') && !config.baseUrl.includes('127.0.0.1') && !config.password) {
@@ -497,8 +575,8 @@ Examples:
     process.exit(1)
   }
 
-  const tester = new TalkModeE2ETest(config)
-  await tester.runAllTests()
+  const tester = new VoiceTest(config)
+  await tester.runAllTests(skipTalkMode)
 }
 
 main().catch((error) => {
