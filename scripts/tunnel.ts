@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import path from 'path'
 import os from 'os'
 
-const TUNNEL_STATE_DIR = path.join(os.homedir(), '.lib', 'run', 'opencode-manager')
+const TUNNEL_STATE_DIR = path.join(os.homedir(), '.local', 'run', 'opencode-manager')
 const TUNNEL_STATE_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.json')
 const TUNNEL_PID_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.pid')
 

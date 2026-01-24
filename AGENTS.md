@@ -108,7 +108,7 @@ pnpm dev:backend  # Ctrl+C and restart as needed
 pnpm tunnel:stop
 ```
 
-The tunnel state is stored in `~/.lib/run/opencode-manager/tunnel.json`.
+The tunnel state is stored in `~/.local/run/opencode-manager/tunnel.json`.
 
 **Benefits:**
 - Restart backend without disconnecting mobile/remote users

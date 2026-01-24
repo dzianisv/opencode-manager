@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'fs'
 import path from 'path'
 import os from 'os'
 
-const TUNNEL_STATE_FILE = path.join(os.homedir(), '.lib', 'run', 'opencode-manager', 'tunnel.json')
+const TUNNEL_STATE_FILE = path.join(os.homedir(), '.local', 'run', 'opencode-manager', 'tunnel.json')
 
 interface OpenCodeInstance {
   pid: number

@@ -211,7 +211,7 @@ The `install-service` command installs OpenCode Manager as a user-level service 
 
 **Configuration Files:**
 
-All configuration is stored in `~/.lib/run/opencode-manager/`:
+All configuration is stored in `~/.local/run/opencode-manager/`:
 
 | File | Description |
 |------|-------------|
@@ -505,7 +505,7 @@ When running OpenCode Manager locally, several services work together:
               ▼               ▼               ▼
 ┌───────────────────┐ ┌───────────────┐ ┌───────────────────────┐
 │  OpenCode Server  │ │ Whisper STT   │ │  SQLite Database      │
-│  (port 5551)      │ │ (port 5552)   │ │  ~/.lib/run/          │
+│  (port 5551)      │ │ (port 5552)   │ │  ~/.local/run/        │
 │                   │ │               │ │  opencode-manager/    │
 │  AI agent runtime │ │ Speech-to-    │ │  data.db              │
 │  Session mgmt     │ │ text server   │ │                       │
@@ -525,7 +525,7 @@ When running OpenCode Manager locally, several services work together:
 
 **Data Storage:**
 
-All persistent data is stored in `~/.lib/run/opencode-manager/`:
+All persistent data is stored in `~/.local/run/opencode-manager/`:
 
 | File | Description |
 |------|-------------|
@@ -590,7 +590,7 @@ pnpm dev:backend  # Ctrl+C and restart as needed
 pnpm tunnel:stop
 ```
 
-The tunnel state is stored in `~/.lib/run/opencode-manager/tunnel.json`.
+The tunnel state is stored in `~/.local/run/opencode-manager/tunnel.json`.
 
 Benefits:
 - Restart backend without disconnecting mobile/remote users
