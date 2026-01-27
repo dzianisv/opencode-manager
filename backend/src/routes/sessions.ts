@@ -59,6 +59,17 @@ async function getSessionSummary(
   return undefined
 }
 
+function getRepoDisplayName(repo: { repoUrl?: string | null; localPath?: string | null; fullPath: string }): string {
+  if (repo.repoUrl) {
+    const match = repo.repoUrl.match(/\/([^/]+?)(?:\.git)?$/)
+    return match ? match[1] : repo.repoUrl
+  }
+  if (repo.localPath) {
+    return repo.localPath.split('/').pop() || repo.localPath
+  }
+  return repo.fullPath.split('/').pop() || repo.fullPath
+}
+
 export function createSessionRoutes(database: Database) {
   const app = new Hono()
   
@@ -111,7 +122,7 @@ export function createSessionRoutes(database: Database) {
               title: session.title || 'Untitled Session',
               directory: session.directory,
               repoId: repo.id,
-              repoName: repo.name,
+              repoName: getRepoDisplayName(repo),
               status: (status?.type as 'idle' | 'busy' | 'retry') || 'idle',
               summary,
               time: session.time,
