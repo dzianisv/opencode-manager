@@ -11,10 +11,52 @@ interface SessionWithRepo {
   repoId?: number
   repoName?: string
   status?: 'idle' | 'busy' | 'retry'
+  summary?: string
   time: {
     created: number
     updated: number
   }
+}
+
+interface MessagePart {
+  type: string
+  text?: string
+}
+
+interface SessionMessage {
+  info: {
+    id: string
+    role: string
+  }
+  parts: MessagePart[]
+}
+
+async function getSessionSummary(
+  opencodePort: number,
+  sessionId: string,
+  directory: string
+): Promise<string | undefined> {
+  try {
+    const messagesRes = await fetch(
+      `http://127.0.0.1:${opencodePort}/session/${sessionId}/message?directory=${encodeURIComponent(directory)}`
+    )
+    if (!messagesRes.ok) return undefined
+    
+    const messages = await messagesRes.json() as SessionMessage[]
+    
+    for (const msg of messages) {
+      if (msg.info.role === 'user' && msg.parts?.length > 0) {
+        const textPart = msg.parts.find(p => p.type === 'text' && p.text)
+        if (textPart?.text) {
+          const text = textPart.text.trim()
+          return text.length > 120 ? text.slice(0, 117) + '...' : text
+        }
+      }
+    }
+  } catch {
+    // Ignore errors fetching messages
+  }
+  return undefined
 }
 
 export function createSessionRoutes(database: Database) {
@@ -62,6 +104,7 @@ export function createSessionRoutes(database: Database) {
             if (session.time.updated < cutoffTime) continue
             
             const status = sessionStatuses[session.id]
+            const summary = await getSessionSummary(opencodePort, session.id, session.directory)
             
             recentSessions.push({
               id: session.id,
@@ -70,6 +113,7 @@ export function createSessionRoutes(database: Database) {
               repoId: repo.id,
               repoName: repo.name,
               status: (status?.type as 'idle' | 'busy' | 'retry') || 'idle',
+              summary,
               time: session.time,
             })
           }

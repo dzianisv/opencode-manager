@@ -7,6 +7,7 @@ export interface RecentSession {
   repoId?: number
   repoName?: string
   status?: 'idle' | 'busy' | 'retry'
+  summary?: string
   time: {
     created: number
     updated: number

@@ -4,7 +4,7 @@ import { Command } from 'cmdk'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useRecentSessions, type RecentSession } from '@/hooks/useRecentSessions'
 import { useSessionSwitcherStore } from '@/stores/sessionSwitcherStore'
-import { Clock, FolderGit2, Activity, Circle, Search, Loader2 } from 'lucide-react'
+import { Clock, FolderGit2, Activity, Circle, Search, Loader2, Hash } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +16,13 @@ function SessionStatusIcon({ status }: { status?: 'idle' | 'busy' | 'retry' }) {
     return <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
   }
   return <Circle className="w-2 h-2 text-muted-foreground fill-current" />
+}
+
+function getShortSessionId(id: string): string {
+  if (id.startsWith('ses_')) {
+    return id.slice(4, 12)
+  }
+  return id.slice(0, 8)
 }
 
 export function SessionSwitcher() {
@@ -51,7 +58,8 @@ export function SessionSwitcher() {
     return data.sessions.filter((session) => {
       const titleMatch = session.title.toLowerCase().includes(query)
       const repoMatch = session.repoName?.toLowerCase().includes(query)
-      return titleMatch || repoMatch
+      const summaryMatch = session.summary?.toLowerCase().includes(query)
+      return titleMatch || repoMatch || summaryMatch
     })
   }, [data?.sessions, search])
 
@@ -107,7 +115,18 @@ export function SessionSwitcher() {
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <SessionStatusIcon status={session.status} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{session.title}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground font-mono">
+                          <Hash className="w-3 h-3" />
+                          {getShortSessionId(session.id)}
+                        </span>
+                      </div>
+                      {session.summary && (
+                        <div className="text-sm mt-0.5 line-clamp-1">{session.summary}</div>
+                      )}
+                      {!session.summary && session.title && session.title !== 'Untitled Session' && !session.title.startsWith('New session -') && (
+                        <div className="text-sm mt-0.5 line-clamp-1 text-muted-foreground italic">{session.title}</div>
+                      )}
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                         {session.repoName && (
                           <span className="flex items-center gap-1">

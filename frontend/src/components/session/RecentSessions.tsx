@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useRecentSessions, type RecentSession } from '@/hooks/useRecentSessions'
 import { Card } from '@/components/ui/card'
-import { Clock, Loader2, FolderGit2, Activity, Circle } from 'lucide-react'
+import { Clock, Loader2, FolderGit2, Activity, Circle, Hash } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 interface RecentSessionsProps {
@@ -32,6 +32,13 @@ function SessionStatusIndicator({ status }: { status?: 'idle' | 'busy' | 'retry'
       <span className="text-xs">Idle</span>
     </span>
   )
+}
+
+function getShortSessionId(id: string): string {
+  if (id.startsWith('ses_')) {
+    return id.slice(4, 12)
+  }
+  return id.slice(0, 8)
 }
 
 export function RecentSessions({ maxItems = 5, onSessionClick }: RecentSessionsProps) {
@@ -83,15 +90,28 @@ export function RecentSessions({ maxItems = 5, onSessionClick }: RecentSessionsP
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-medium truncate">{session.title}</h4>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground font-mono">
+                  <Hash className="w-3 h-3" />
+                  {getShortSessionId(session.id)}
+                </span>
                 <SessionStatusIndicator status={session.status} />
               </div>
-              <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+              {session.summary && (
+                <p className="text-sm mt-1 line-clamp-2 text-foreground">
+                  {session.summary}
+                </p>
+              )}
+              {!session.summary && session.title && session.title !== 'Untitled Session' && (
+                <p className="text-sm mt-1 line-clamp-1 text-muted-foreground italic">
+                  {session.title}
+                </p>
+              )}
+              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                 {session.repoName && (
                   <span className="flex items-center gap-1">
                     <FolderGit2 className="w-3 h-3" />
-                    <span className="truncate max-w-[150px]">{session.repoName}</span>
+                    <span className="truncate max-w-[200px]">{session.repoName}</span>
                   </span>
                 )}
                 <span className="flex items-center gap-1">
