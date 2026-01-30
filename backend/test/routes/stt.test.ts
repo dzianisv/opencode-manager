@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const mockWhisperManager = {
+const mockWhisperManager = vi.hoisted(() => ({
   syncStatus: vi.fn(),
   transcribe: vi.fn(),
   getModels: vi.fn(),
@@ -8,7 +8,7 @@ const mockWhisperManager = {
   getPort: vi.fn(),
   getHost: vi.fn(),
   getBaseUrl: vi.fn()
-}
+}))
 
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn(),
