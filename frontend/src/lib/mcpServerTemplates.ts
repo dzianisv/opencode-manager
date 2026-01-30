@@ -53,7 +53,7 @@ export const MCP_SERVER_TEMPLATES: McpServerTemplate[] = [
     name: 'Google Calendar',
     description: 'Manage calendar events, check availability, and schedule meetings',
     type: 'local',
-    command: ['npx', '-y', '@modelcontextprotocol/server-google-calendar'],
+    command: ['npx', '-y', 'mcp-google-calendar'],
     environment: {
       GOOGLE_CLIENT_ID: '',
       GOOGLE_CLIENT_SECRET: '',
@@ -61,15 +61,15 @@ export const MCP_SERVER_TEMPLATES: McpServerTemplate[] = [
     oauth: {
       scope: 'https://www.googleapis.com/auth/calendar',
     },
-    docsUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/google-calendar',
+    docsUrl: 'https://github.com/am2rican5/mcp-google-calendar',
     category: 'google',
   },
   {
     id: 'google-drive',
     name: 'Google Drive',
-    description: 'Access and manage files in Google Drive',
+    description: 'Access and manage files in Google Drive and Sheets',
     type: 'local',
-    command: ['npx', '-y', '@anthropic/mcp-server-google-drive'],
+    command: ['npx', '-y', 'mcp-gdrive'],
     environment: {
       GOOGLE_CLIENT_ID: '',
       GOOGLE_CLIENT_SECRET: '',
@@ -77,7 +77,7 @@ export const MCP_SERVER_TEMPLATES: McpServerTemplate[] = [
     oauth: {
       scope: 'https://www.googleapis.com/auth/drive',
     },
-    docsUrl: 'https://github.com/anthropics/anthropic-quickstarts/tree/main/mcp-google-drive',
+    docsUrl: 'https://github.com/isaacphi/mcp-gdrive',
     category: 'google',
   },
   {
