@@ -171,7 +171,7 @@ export const UserPreferencesSchema = z.object({
 });
 
 export const DEFAULT_TTS_CONFIG: TTSConfig = {
-  enabled: true,
+  enabled: false,
   provider: 'coqui',
   endpoint: "https://api.openai.com",
   apiKey: "",
