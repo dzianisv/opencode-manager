@@ -4,6 +4,14 @@ Mobile-first web interface for OpenCode AI agents. Manage, control, and code wit
 
 ## Demo
 
+### Responsive Dashboard
+
+<p align="center">
+  <img src="docs/assets/dashboard-responsive.gif" alt="Responsive Dashboard - Mobile, Tablet, Desktop" width="600" />
+</p>
+
+*Responsive design: The dashboard adapts seamlessly from mobile to desktop. Recent Sessions and Repositories use consistent card styling with hover effects and grid layouts.*
+
 ### Talk Mode (Voice-to-Code)
 
 <p align="center">
@@ -11,6 +19,14 @@ Mobile-first web interface for OpenCode AI agents. Manage, control, and code wit
 </p>
 
 *Voice-powered coding: Speak your request, get AI-generated code. The demo shows the Talk Mode E2E test - voice input is transcribed via Whisper STT, sent to OpenCode AI, and the response streams back in real-time.*
+
+### Feature Tour
+
+<p align="center">
+  <img src="docs/assets/feature-tour.gif" alt="Feature Tour - Dashboard, Search, Settings, Chat" width="600" />
+</p>
+
+*Key features: Dashboard overview, global search (Cmd+K), voice settings (TTS/STT/Talk Mode), Cloudflare tunnel status with metrics, keyboard shortcuts, OpenCode config, AI providers, and chat sessions.*
 
 ## Why We Use a Fork of OpenCode
 
