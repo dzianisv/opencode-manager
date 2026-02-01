@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Database } from 'bun:sqlite'
 import * as db from '../db/queries'
 import { opencodeServerManager } from '../services/opencode-single-server'
+import { pruneSessions } from '../services/session-prune'
 import { logger } from '../utils/logger'
 
 interface SessionWithRepo {
@@ -142,6 +143,81 @@ export function createSessionRoutes(database: Database) {
       })
     } catch (error: unknown) {
       logger.error('Failed to get recent sessions:', error)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      return c.json({ error: message }, 500)
+    }
+  })
+  
+  // Preview sessions that would be pruned
+  app.get('/prune/preview', async (c) => {
+    try {
+      const daysParam = c.req.query('days')
+      const days = daysParam ? parseInt(daysParam, 10) : 7
+      
+      if (days < 1 || days > 365) {
+        return c.json({ error: 'Days must be between 1 and 365' }, 400)
+      }
+      
+      const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000)
+      const opencodePort = opencodeServerManager.getPort()
+      
+      // Get all sessions from OpenCode API (without directory filter)
+      const sessionsRes = await fetch(`http://127.0.0.1:${opencodePort}/session`)
+      if (!sessionsRes.ok) {
+        return c.json({ error: 'Failed to fetch sessions from OpenCode' }, 500)
+      }
+      
+      const allSessions = await sessionsRes.json() as Array<{
+        id: string
+        title?: string
+        directory: string
+        parentID?: string
+        time: { created: number; updated: number }
+      }>
+      
+      // Filter to sessions older than cutoff and not child sessions
+      const sessionsToPreview = allSessions.filter(session => {
+        if (session.parentID) return false // Skip child sessions
+        return session.time.updated < cutoffTime
+      })
+      
+      return c.json({
+        sessionsToDelete: sessionsToPreview.map(s => ({
+          id: s.id,
+          title: s.title || 'Untitled Session',
+          directory: s.directory,
+          lastUpdated: new Date(s.time.updated).toISOString(),
+          age: Math.floor((Date.now() - s.time.updated) / (24 * 60 * 60 * 1000)),
+        })),
+        count: sessionsToPreview.length,
+        cutoffDays: days,
+        cutoffDate: new Date(cutoffTime).toISOString(),
+      })
+    } catch (error: unknown) {
+      logger.error('Failed to preview sessions for pruning:', error)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      return c.json({ error: message }, 500)
+    }
+  })
+  
+  // Prune old sessions
+  app.post('/prune', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { days?: number }
+      const days = body.days ?? 7
+      
+      if (days < 1 || days > 365) {
+        return c.json({ error: 'Days must be between 1 and 365' }, 400)
+      }
+      
+      const result = await pruneSessions(days)
+      
+      return c.json({
+        success: true,
+        ...result,
+      })
+    } catch (error: unknown) {
+      logger.error('Failed to prune sessions:', error)
       const message = error instanceof Error ? error.message : 'Unknown error'
       return c.json({ error: message }, 500)
     }
