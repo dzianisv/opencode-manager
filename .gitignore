@@ -32,3 +32,6 @@ temp/
 
 # Transient planning docs
 plan.md
+
+# Build artifacts (distributed via releases, not git)
+*-dist.tar.gz
