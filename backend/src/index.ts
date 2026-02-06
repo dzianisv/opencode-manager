@@ -35,6 +35,7 @@ import { chatterboxServerManager } from './services/chatterbox'
 import { coquiServerManager } from './services/coqui'
 import { startGlobalSSEListener, stopGlobalSSEListener } from './services/global-sse'
 import { autoPruneOnStartup } from './services/session-prune'
+import { startLogMaintenance } from './utils/log-maintenance'
 import { 
   getWorkspacePath, 
   getReposPath, 
@@ -275,6 +276,8 @@ async function ensureDefaultAgentsMdExists(): Promise<void> {
 }
 
 try {
+  startLogMaintenance()
+
   await ensureDirectoryExists(getWorkspacePath())
   await ensureDirectoryExists(getReposPath())
   await ensureDirectoryExists(getConfigPath())
@@ -354,6 +357,9 @@ try {
   } catch (error) {
     logger.warn('TTS server failed to start:', error)
   }
+
+  // Start log maintenance routine
+  startLogMaintenance()
 
   try {
     schedulerService.setDatabase(db)
