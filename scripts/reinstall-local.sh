@@ -39,6 +39,9 @@ echo "Installing from $TARBALL..."
 bun install -g "$TARBALL"
 rm -f "$TARBALL"
 
+# Trust postinstall to extract dist tarballs (bun blocks by default)
+cd ~/.bun/install/global && bun pm trust opencode-manager 2>/dev/null || true
+
 echo "[6/6] Installing and starting service..."
 opencode-manager install-service
 
