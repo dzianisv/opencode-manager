@@ -34,6 +34,7 @@ import { logger } from './utils/logger'
 import { chatterboxServerManager } from './services/chatterbox'
 import { startGlobalSSEListener, stopGlobalSSEListener } from './services/global-sse'
 import { autoPruneOnStartup } from './services/session-prune'
+import { startLogMaintenance } from './utils/log-maintenance'
 import { 
   getWorkspacePath, 
   getReposPath, 
@@ -274,6 +275,8 @@ async function ensureDefaultAgentsMdExists(): Promise<void> {
 }
 
 try {
+  startLogMaintenance()
+
   await ensureDirectoryExists(getWorkspacePath())
   await ensureDirectoryExists(getReposPath())
   await ensureDirectoryExists(getConfigPath())
