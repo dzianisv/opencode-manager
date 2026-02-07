@@ -284,7 +284,7 @@ export function createSTTRoutes(db: Database) {
     const settings = settingsService.getSettings(userId)
     const sttConfig = settings.preferences.stt as STTConfigExtended | undefined
 
-    const serverStatus = await whisperServerManager.syncStatus()
+    const serverStatus = whisperServerManager.getStatus()
 
     return c.json({
       enabled: sttConfig?.enabled || false,
