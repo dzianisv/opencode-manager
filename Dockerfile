@@ -90,6 +90,16 @@ RUN echo "Installing uv=${UV_VERSION} opencode=${OPENCODE_VERSION}" && \
     chmod -R 755 /opt/opencode && \
     ln -s /opt/opencode/bin/opencode /usr/local/bin/opencode
 
+# Whisper STT venv (faster-whisper)
+RUN python3 -m venv /opt/whisper-venv && \
+    /opt/whisper-venv/bin/pip install --no-cache-dir \
+    faster-whisper \
+    fastapi \
+    uvicorn \
+    python-multipart
+
+ENV WHISPER_VENV=/opt/whisper-venv
+
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=5003
@@ -102,6 +112,9 @@ COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/backend ./backend
 COPY --from=builder /app/frontend/dist ./frontend/dist
 COPY package.json pnpm-workspace.yaml ./
+
+# Copy Python server scripts for STT/TTS
+COPY scripts/whisper-server.py scripts/coqui-server.py scripts/chatterbox-server.py ./scripts/
 
 RUN mkdir -p /app/backend/node_modules/@opencode-manager && \
     ln -s /app/shared /app/backend/node_modules/@opencode-manager/shared
