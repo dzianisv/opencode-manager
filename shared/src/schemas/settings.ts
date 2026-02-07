@@ -65,6 +65,7 @@ export const TTSConfigSchema = z.object({
 
 export const STTConfigSchema = z.object({
   enabled: z.boolean(),
+  provider: z.enum(['faster-whisper', 'builtin']).default('faster-whisper'),
   model: z.string().default('base'),
   language: z.string().optional(),
   autoSubmit: z.boolean().default(false),
@@ -116,6 +117,7 @@ export type TTSConfig = {
 
 export type STTConfig = {
   enabled: boolean;
+  provider: 'faster-whisper' | 'builtin';
   model: string;
   language?: string;
   autoSubmit: boolean;
@@ -202,6 +204,7 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
 
 export const DEFAULT_STT_CONFIG: STTConfig = {
   enabled: false,
+  provider: 'faster-whisper',
   model: 'base',
   language: undefined,
   autoSubmit: false,

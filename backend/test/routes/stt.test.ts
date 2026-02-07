@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const mockWhisperManager = vi.hoisted(() => ({
+const mockWhisperManager = {
   syncStatus: vi.fn(),
   transcribe: vi.fn(),
   getModels: vi.fn(),
@@ -8,7 +8,7 @@ const mockWhisperManager = vi.hoisted(() => ({
   getPort: vi.fn(),
   getHost: vi.fn(),
   getBaseUrl: vi.fn()
-}))
+}
 
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn(),
@@ -31,6 +31,7 @@ vi.mock('../../src/services/settings', () => ({
       preferences: {
         stt: {
           enabled: true,
+          provider: 'faster-whisper',
           model: 'base',
           language: 'auto',
           autoSubmit: false
@@ -95,6 +96,7 @@ describe('STT Routes', () => {
       expect(res.status).toBe(200)
       expect(data.enabled).toBe(true)
       expect(data.configured).toBe(true)
+      expect(data.provider).toBe('faster-whisper')
       expect(data.server.running).toBe(true)
       expect(data.server.port).toBe(5552)
       expect(data.server.model).toBe('base')
@@ -214,6 +216,7 @@ describe('STT Routes', () => {
           preferences: {
             stt: {
               enabled: false,
+              provider: 'faster-whisper',
               model: 'base',
               language: 'auto'
             }
@@ -234,6 +237,36 @@ describe('STT Routes', () => {
 
       expect(res.status).toBe(400)
       expect(data.error).toBe('STT is not enabled')
+    })
+
+    it('should reject when provider is builtin', async () => {
+      const MockSettingsService = SettingsService as unknown as ReturnType<typeof vi.fn>
+      MockSettingsService.mockImplementationOnce(() => ({
+        getSettings: vi.fn().mockReturnValue({
+          preferences: {
+            stt: {
+              enabled: true,
+              provider: 'builtin',
+              model: 'base',
+              language: 'auto'
+            }
+          }
+        })
+      }))
+
+      const builtinApp = createSTTRoutes(mockDb)
+      const res = await builtinApp.request('/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio: validBase64Audio,
+          format: 'webm'
+        })
+      })
+      const data = await res.json()
+
+      expect(res.status).toBe(400)
+      expect(data.error).toBe('Builtin STT is handled client-side via Web Speech API')
     })
 
     it('should reject when Whisper server is not running', async () => {
