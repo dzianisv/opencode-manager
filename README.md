@@ -7,7 +7,15 @@ Mobile-first web interface for [OpenCode](https://opencode.ai) AI agents. Manage
   <img src="docs/images/ocmgr-demo.gif" alt="OpenCode Manager Demo" height="400" />
 </p>
 
-## Quick Start
+## One-Line Install
+
+```bash
+bun install -g github:dzianisv/opencode-manager && opencode-manager install-service && cat ~/.local/run/opencode-manager/endpoints.json
+```
+
+Installs globally, runs as system service with Cloudflare tunnel, prints access URL.
+
+## Quick Start (Docker)
 
 ```bash
 git clone https://github.com/chriswritescode-dev/opencode-manager.git
