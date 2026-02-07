@@ -21,6 +21,7 @@ import { createPushRoutes } from './routes/push'
 import { createTaskRoutes } from './routes/tasks'
 import { createTelegramRoutes } from './routes/telegram'
 import { createTunnelRoutes } from './routes/tunnel'
+import { createServicesRoutes } from './routes/services'
 import { terminalService } from './services/terminal'
 import { schedulerService } from './services/scheduler'
 import { telegramService } from './services/telegram'
@@ -407,6 +408,7 @@ app.route('/api/push', createPushRoutes(db))
 app.route('/api/tasks', createTaskRoutes(db))
 app.route('/api/telegram', createTelegramRoutes(db))
 app.route('/api/tunnel', createTunnelRoutes())
+app.route('/api/services', createServicesRoutes(db))
 
 app.all('/api/opencode/*', async (c) => {
   const request = c.req.raw
