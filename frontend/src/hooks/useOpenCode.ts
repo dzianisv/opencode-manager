@@ -1,17 +1,47 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useRef, useEffect, useCallback } from "react";
+import { useMemo, useRef, useEffect, useCallback, useState } from "react";
 import { OpenCodeClient } from "../api/opencode";
+import { API_BASE_URL } from "../config";
 import type {
   MessageWithParts,
   MessageListResponse,
   ContentPart,
 } from "../api/types";
 import type { paths, components } from "../api/opencode-types";
+import { parseNetworkError } from "../lib/opencode-errors";
+import { showToast } from "../lib/toast";
+import { useSessionStatus } from "../stores/sessionStatusStore";
+import { ensureSSEConnected, reconnectSSE } from "../lib/sseManager";
+
+const titleGeneratingSessionsState = new Set<string>();
+const titleGeneratingListeners = new Set<() => void>();
+
+function notifyTitleGeneratingListeners() {
+  titleGeneratingListeners.forEach(listener => listener());
+}
+
+export function useTitleGenerating(sessionID: string | undefined) {
+  const [isGenerating, setIsGenerating] = useState(
+    sessionID ? titleGeneratingSessionsState.has(sessionID) : false
+  );
+
+  useEffect(() => {
+    const listener = () => {
+      setIsGenerating(sessionID ? titleGeneratingSessionsState.has(sessionID) : false);
+    };
+    titleGeneratingListeners.add(listener);
+    return () => {
+      titleGeneratingListeners.delete(listener);
+    };
+  }, [sessionID]);
+
+  return isGenerating;
+}
 
 type AssistantMessage = components["schemas"]["AssistantMessage"];
 
 type SendPromptRequest = NonNullable<
-  paths["/session/{id}/message"]["post"]["requestBody"]
+  paths["/session/{sessionID}/message"]["post"]["requestBody"]
 >["content"]["application/json"];
 
 export const useOpenCodeClient = (opcodeUrl: string | null | undefined, directory?: string) => {
@@ -59,7 +89,7 @@ export const useMessages = (opcodeUrl: string | null | undefined, sessionID: str
     refetchOnReconnect: true,
     staleTime: 30000,
     gcTime: 10 * 60 * 1000,
-    placeholderData: (previousData) => previousData,
+    
   });
 };
 
@@ -180,6 +210,45 @@ const createOptimisticUserMessage = (
 export const useSendPrompt = (opcodeUrl: string | null | undefined, directory?: string) => {
   const client = useOpenCodeClient(opcodeUrl, directory);
   const queryClient = useQueryClient();
+  const hasInitializedRef = useRef<Set<string>>(new Set());
+  const setSessionStatus = useSessionStatus((state) => state.setStatus);
+
+  const generateSessionTitle = async (sessionID: string, userPromptText: string) => {
+    if (!client || hasInitializedRef.current.has(sessionID)) return;
+
+    try {
+      const session = await client.getSession(sessionID);
+      const isDefaultTitle = session.title.match(/^New session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+      if (isDefaultTitle && userPromptText) {
+        titleGeneratingSessionsState.add(sessionID);
+        notifyTitleGeneratingListeners();
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/generate-title`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", directory: directory || "" },
+            body: JSON.stringify({ text: userPromptText, sessionID }),
+          });
+
+          if (response.ok) {
+            hasInitializedRef.current.add(sessionID);
+            queryClient.invalidateQueries({
+              queryKey: ["opencode", "session", opcodeUrl, sessionID, directory],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["opencode", "sessions", opcodeUrl, directory],
+            });
+          }
+        } finally {
+          titleGeneratingSessionsState.delete(sessionID);
+          notifyTitleGeneratingListeners();
+        }
+      }
+    } catch (error) {
+      console.error("Failed to generate session title:", error);
+    }
+  };
 
   return useMutation({
     mutationFn: async ({
@@ -188,33 +257,48 @@ export const useSendPrompt = (opcodeUrl: string | null | undefined, directory?: 
       parts,
       model,
       agent,
+      variant,
     }: {
       sessionID: string;
       prompt?: string;
       parts?: ContentPart[];
       model?: string;
       agent?: string;
+      variant?: string;
     }) => {
       if (!client) throw new Error("No client available");
+
+      const connected = await ensureSSEConnected();
+      if (!connected) {
+        showToast.error("Unable to connect. Please try again.");
+        throw new Error("SSE connection failed");
+      }
+
+      setSessionStatus(sessionID, { type: "busy" });
 
       const optimisticUserID = `optimistic_user_${Date.now()}_${Math.random()}`;
 
       const contentParts = parts || [{ type: "text" as const, content: prompt || "", name: "" }];
+      const userPromptText = prompt || (contentParts[0] as ContentPart & { type: "text" })?.content || "";
 
       const userMessage = createOptimisticUserMessage(
         sessionID,
         contentParts,
         optimisticUserID,
       );
+
+      const messagesQueryKey = ["opencode", "messages", opcodeUrl, sessionID, directory];
+      await queryClient.cancelQueries({ queryKey: messagesQueryKey });
+
       queryClient.setQueryData<MessageListResponse>(
-        ["opencode", "messages", opcodeUrl, sessionID, directory],
+        messagesQueryKey,
         (old) => [...(old || []), userMessage],
       );
 
       const requestData: SendPromptRequest = {
         parts: parts?.map((part) =>
           part.type === "text"
-            ? { type: "text", text: part.content }
+            ? { type: "text", text: (part as ContentPart & { type: "text" }).content }
             : part.type === "image"
               ? {
                   type: "file",
@@ -247,29 +331,75 @@ export const useSendPrompt = (opcodeUrl: string | null | undefined, directory?: 
         requestData.agent = agent;
       }
 
+      if (variant) {
+        requestData.variant = variant;
+      }
+
       const response = await client.sendPrompt(sessionID, requestData);
 
-      return { optimisticUserID, response };
+      return { optimisticUserID, userPromptText, response };
     },
-    onError: (_, variables) => {
+    onError: (error, variables) => {
       const { sessionID } = variables;
+      const messagesQueryKey = ["opencode", "messages", opcodeUrl, sessionID, directory];
+      
+      const axiosError = error as { code?: string; response?: unknown };
+      const isNetworkError = axiosError.code === 'ECONNABORTED' || 
+                            axiosError.code === 'ERR_NETWORK' ||
+                            !axiosError.response;
+      
+      if (isNetworkError) {
+        return;
+      }
+
+      const fetchError = error as { statusCode?: number };
+      const isCloudflareTimeout = fetchError.statusCode === 524;
+      if (isCloudflareTimeout) {
+        reconnectSSE();
+        return;
+      }
+      
+      setSessionStatus(sessionID, { type: "idle" });
       queryClient.setQueryData<MessageListResponse>(
-        ["opencode", "messages", opcodeUrl, sessionID, directory],
+        messagesQueryKey,
         (old) => old?.filter((msg) => !msg.info.id.startsWith("optimistic_")),
       );
+      
+      const parsed = parseNetworkError(error);
+      showToast.error(parsed.title, {
+        description: parsed.message,
+        duration: 5000,
+      });
     },
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
       const { sessionID } = variables;
-      const { optimisticUserID } = data;
+      const { optimisticUserID, userPromptText, response } = data;
+      const messagesQueryKey = ["opencode", "messages", opcodeUrl, sessionID, directory];
 
       queryClient.setQueryData<MessageListResponse>(
-        ["opencode", "messages", opcodeUrl, sessionID, directory],
-        (old) => old?.filter((msg) => msg.info.id !== optimisticUserID) || [],
+        messagesQueryKey,
+        (old) => {
+          if (!old) return old;
+          const withoutOptimistic = old.filter((msg) => msg.info.id !== optimisticUserID);
+          
+          const existingIdx = withoutOptimistic.findIndex(m => m.info.id === response.info.id);
+          if (existingIdx >= 0) {
+            const updated = [...withoutOptimistic];
+            updated[existingIdx] = { info: response.info, parts: response.parts };
+            return updated;
+          }
+          
+          return [...withoutOptimistic, { info: response.info, parts: response.parts }];
+        },
       );
+
+      setSessionStatus(sessionID, { type: "idle" });
 
       queryClient.invalidateQueries({
         queryKey: ["opencode", "session", opcodeUrl, sessionID, directory],
       });
+
+      await generateSessionTitle(sessionID, userPromptText);
     },
   });
 };
@@ -402,6 +532,7 @@ export const useAbortSession = (
 export const useSendShell = (opcodeUrl: string | null | undefined, directory?: string) => {
   const client = useOpenCodeClient(opcodeUrl, directory);
   const queryClient = useQueryClient();
+  const setSessionStatus = useSessionStatus((state) => state.setStatus);
 
   return useMutation({
     mutationFn: async ({
@@ -415,6 +546,8 @@ export const useSendShell = (opcodeUrl: string | null | undefined, directory?: s
     }) => {
       if (!client) throw new Error("No client available");
 
+      setSessionStatus(sessionID, { type: "busy" });
+
       const optimisticUserID = `optimistic_user_${Date.now()}_${Math.random()}`;
 
       const userMessage = createOptimisticUserMessage(
@@ -422,8 +555,12 @@ export const useSendShell = (opcodeUrl: string | null | undefined, directory?: s
         [{ type: "text" as const, content: command }],
         optimisticUserID,
       );
+
+      const messagesQueryKey = ["opencode", "messages", opcodeUrl, sessionID, directory];
+      await queryClient.cancelQueries({ queryKey: messagesQueryKey });
+
       queryClient.setQueryData<MessageListResponse>(
-        ["opencode", "messages", opcodeUrl, sessionID, directory],
+        messagesQueryKey,
         (old) => [...(old || []), userMessage],
       );
 
@@ -436,9 +573,13 @@ export const useSendShell = (opcodeUrl: string | null | undefined, directory?: s
     },
     onError: (_, variables) => {
       const { sessionID } = variables;
+      setSessionStatus(sessionID, { type: "idle" });
       queryClient.setQueryData<MessageListResponse>(
         ["opencode", "messages", opcodeUrl, sessionID, directory],
-        (old) => old?.filter((msg) => !msg.info.id.startsWith("optimistic_")),
+        (old) => {
+          if (!old) return old;
+          return old.filter((msg) => !msg.info.id.startsWith("optimistic_"));
+        },
       );
     },
     onSuccess: (data, variables) => {
@@ -447,7 +588,10 @@ export const useSendShell = (opcodeUrl: string | null | undefined, directory?: s
 
       queryClient.setQueryData<MessageListResponse>(
         ["opencode", "messages", opcodeUrl, sessionID, directory],
-        (old) => old?.filter((msg) => msg.info.id !== optimisticUserID) || [],
+        (old) => {
+          if (!old) return old;
+          return old.filter((msg) => msg.info.id !== optimisticUserID);
+        },
       );
 
       queryClient.invalidateQueries({

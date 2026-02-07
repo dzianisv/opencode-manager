@@ -1,29 +1,43 @@
 import { useState, useRef, useEffect, useMemo, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react'
 import { useSendPrompt, useAbortSession, useMessages, useSendShell, useAgents } from '@/hooks/useOpenCode'
-import { useSettings } from '@/hooks/useSettings'
 import { useCommands } from '@/hooks/useCommands'
 import { useCommandHandler } from '@/hooks/useCommandHandler'
 import { useFileSearch } from '@/hooks/useFileSearch'
 import { useModelSelection } from '@/hooks/useModelSelection'
+import { useVariants } from '@/hooks/useVariants'
+import { useSessionAgent } from '@/hooks/useSessionAgent'
+import { useSTT } from '@/hooks/useSTT'
 
 import { useUserBash } from '@/stores/userBashStore'
 import { useMobile } from '@/hooks/useMobile'
 import { useSessionStatusForSession } from '@/stores/sessionStatusStore'
-import { usePermissionContext } from '@/contexts/PermissionContext'
-import { ChevronDown, Square, Upload, X } from 'lucide-react'
+import { usePermissions } from '@/contexts/EventContext'
+import { ChevronDown, Upload, X, Mic, MicOff } from 'lucide-react'
+
+import { SquareFill } from '@/components/ui/square-fill'
 
 import { CommandSuggestions } from '@/components/command/CommandSuggestions'
 import { MentionSuggestions, type MentionItem } from './MentionSuggestions'
-import { VoiceButton } from './VoiceButton'
-import { ContinuousVoiceButton } from './ContinuousVoiceButton'
 import { SessionStatusIndicator } from '@/components/ui/session-status-indicator'
+import { ModelQuickSelect } from '@/components/model/ModelQuickSelect'
+import { AgentQuickSelect } from '@/components/agent/AgentQuickSelect'
 import { detectMentionTrigger, parsePromptToParts, getFilename, filterAgentsByQuery } from '@/lib/promptParser'
 
 
 import type { components } from '@/api/opencode-types'
 import type { MessageWithParts, FileInfo, ImageAttachment } from '@/api/types'
 
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/heic", "image/heif"]
+
+
+const revokeBlobUrls = (attachments: ImageAttachment[]) => {
+  attachments.forEach((attachment) => {
+    if (attachment.dataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(attachment.dataUrl)
+    }
+  })
+}
+
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"]
 
 
@@ -65,31 +79,6 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   onPromptChange
 }, ref) {
   const [prompt, setPrompt] = useState('')
-  
-  useImperativeHandle(ref, () => ({
-    setPromptValue: (value: string) => {
-      setPrompt(value)
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-        textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-        textareaRef.current.focus()
-      }
-    },
-    clearPrompt: () => {
-      setPrompt('')
-      setAttachedFiles(new Map())
-      setImageAttachments([])
-      setSelectedAgent(null)
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-        textareaRef.current.focus()
-      }
-    },
-    triggerFileUpload: () => {
-      fileInputRef.current?.click()
-    }
-  }), [])
-  
   const [isBashMode, setIsBashMode] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionQuery, setSuggestionQuery] = useState('')
@@ -102,14 +91,53 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0)
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-  
+  const [localMode, setLocalMode] = useState<string | null>(null)
+  const [isFocused, setIsFocused] = useState(false)
+  const [isTogglingRecording, setIsTogglingRecording] = useState(false)
+  const lastAddedTranscriptRef = useRef('')
+
+  const {
+    isRecording,
+    isProcessing,
+    startRecording,
+    stopRecording,
+    abortRecording,
+    isSupported: sttSupported,
+    isEnabled: sttEnabled,
+    interimTranscript,
+    transcript,
+    clear: clearSTT,
+  } = useSTT()
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  useImperativeHandle(ref, () => ({
+    setPromptValue: (value: string) => {
+      setPrompt(value)
+      textareaRef.current?.focus()
+    },
+    clearPrompt: () => {
+      setPrompt('')
+      setAttachedFiles(new Map())
+      revokeBlobUrls(imageAttachments)
+      setImageAttachments([])
+      setSelectedAgent(null)
+      if (isRecording) {
+        abortRecording()
+      } else {
+        clearSTT()
+      }
+      textareaRef.current?.focus()
+    },
+    triggerFileUpload: () => {
+      fileInputRef.current?.click()
+    }
+  }), [imageAttachments, clearSTT, isRecording, abortRecording])
   const sendPrompt = useSendPrompt(opcodeUrl, directory)
   const sendShell = useSendShell(opcodeUrl, directory)
   const abortSession = useAbortSession(opcodeUrl, directory, sessionID)
   const { data: messages } = useMessages(opcodeUrl, sessionID, directory)
-  const { preferences, updateSettings } = useSettings()
   const { filterCommands } = useCommands(opcodeUrl)
   const { executeCommand } = useCommandHandler({
     opcodeUrl,
@@ -119,7 +147,8 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     onShowModelsDialog,
     onShowHelpDialog,
     onToggleDetails,
-    onExportSession
+    onExportSession,
+    currentAgent: localMode || undefined
   })
   
   const { files: searchResults } = useFileSearch(
@@ -167,15 +196,15 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
         sessionID,
         parts,
         model: currentModel,
-        agent: selectedAgent || currentMode
+        agent: selectedAgent || currentMode,
+        variant: currentVariant
       })
       setPrompt('')
       setAttachedFiles(new Map())
+      revokeBlobUrls(imageAttachments)
       setImageAttachments([])
       setSelectedAgent(null)
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-      }
+      clearSTT()
       return
     }
 
@@ -189,9 +218,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       })
       setPrompt('')
       setIsBashMode(false)
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
-      }
+      clearSTT()
       return
     }
 
@@ -205,9 +232,7 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       if (command) {
         executeCommand(command, commandArgs?.trim() || '')
         setPrompt('')
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto'
-        }
+        clearSTT()
         return
       }
     }
@@ -218,16 +243,16 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       sessionID,
       parts,
       model: currentModel,
-      agent: selectedAgent || currentMode
+      agent: selectedAgent || currentMode,
+      variant: currentVariant
     })
 
     setPrompt('')
     setAttachedFiles(new Map())
+    revokeBlobUrls(imageAttachments)
     setImageAttachments([])
     setSelectedAgent(null)
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
+    clearSTT()
   }
 
   const handleStop = () => {
@@ -252,8 +277,6 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
         if (textareaRef.current) {
           textareaRef.current.focus()
           textareaRef.current.setSelectionRange(cleanedTemplate.length, cleanedTemplate.length)
-          textareaRef.current.style.height = 'auto'
-          textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
         }
       }, 0)
     } else {
@@ -330,9 +353,220 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     setMentionRange(null)
   }
 
-  const handleModeToggle = () => {
-    const newMode = currentMode === 'plan' ? 'build' : 'plan'
-    updateSettings({ mode: newMode })
+  const handleAgentChange = (agent: string) => {
+    setLocalMode(agent)
+  }
+
+  const handleVoiceToggle = async () => {
+    if (isRecording) {
+      stopRecording()
+    } else {
+      setIsTogglingRecording(true)
+      try {
+        await startRecording()
+        if (textareaRef.current) {
+          textareaRef.current.blur()
+        }
+      } catch {
+        setIsTogglingRecording(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    const textToUse = transcript || interimTranscript
+    if (!isRecording && textToUse && textToUse !== 'Processing...' && textToUse !== 'Recording...') {
+      const trimmedTranscript = textToUse.trim()
+      if (trimmedTranscript && trimmedTranscript !== lastAddedTranscriptRef.current) {
+        if (prompt === '' || prompt === 'Processing...' || prompt === 'Recording...') {
+          setPrompt(trimmedTranscript)
+        } else {
+          setPrompt(prev => `${prev} ${trimmedTranscript}`)
+        }
+        lastAddedTranscriptRef.current = trimmedTranscript
+        textareaRef.current?.focus()
+      }
+    }
+  }, [isRecording, interimTranscript, transcript, prompt])
+
+  useEffect(() => {
+    if (isRecording && isTogglingRecording) {
+      setIsTogglingRecording(false)
+    }
+  }, [isRecording, isTogglingRecording])
+
+  useEffect(() => {
+    if (isTogglingRecording) {
+      lastAddedTranscriptRef.current = ''
+    }
+  }, [isTogglingRecording])
+
+  const addImageAttachment = (file: File) => {
+    const generateId = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID()
+      }
+      return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+    }
+
+    try {
+      const reader = new FileReader()
+      
+      reader.onloadend = () => {
+        try {
+          if (reader.readyState !== 2) return
+          
+          const dataUrl = reader.result as string
+          
+          if (!dataUrl) {
+            const blobUrl = URL.createObjectURL(file)
+            const attachment: ImageAttachment = {
+              id: generateId(),
+              filename: file.name,
+              mime: file.type || 'image/png',
+              dataUrl: blobUrl,
+            }
+            setImageAttachments((prev) => [...prev, attachment])
+            return
+          }
+          
+          const attachment: ImageAttachment = {
+            id: generateId(),
+            filename: file.name,
+            mime: file.type || 'image/png',
+            dataUrl,
+          }
+          setImageAttachments((prev) => [...prev, attachment])
+        } catch (innerError) {
+          console.error('Error inside onloadend:', innerError)
+        }
+      }
+      
+      reader.onerror = () => {
+        console.error('FileReader error:', reader.error?.message)
+      }
+      
+      reader.readAsDataURL(file)
+    } catch (error) {
+      console.error('Error reading file:', error)
+    }
+  }
+
+  const removeImageAttachment = (id: string) => {
+    setImageAttachments((prev) => {
+      const attachment = prev.find((a) => a.id === id)
+      if (attachment?.dataUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(attachment.dataUrl)
+      }
+      return prev.filter((a) => a.id !== id)
+    })
+  }
+
+  const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardData = event.clipboardData
+    if (!clipboardData) return
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as { MSStream?: boolean }).MSStream
+    const isSecureContext = window.isSecureContext || (window.location.protocol === 'http:' && window.location.hostname === 'localhost')
+
+if (isIOS && isSecureContext && navigator.clipboard && navigator.clipboard.read) {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text && text.trim()) {
+          return
+        }
+      } catch {
+      }
+
+      event.preventDefault()
+
+      try {
+        const clipboardItems = await navigator.clipboard.read()
+
+        for (const item of clipboardItems) {
+          for (const type of item.types) {
+            if (ACCEPTED_FILE_TYPES.includes(type) || type.startsWith('image/')) {
+              try {
+                const blob = await item.getType(type)
+                const file = new File([blob], `pasted-${Date.now()}.${type.split('/')[1]}`, { type })
+                addImageAttachment(file)
+              } catch (err) {
+                console.error('Failed to read clipboard item type:', err)
+              }
+            }
+          }
+        }
+        return
+      } catch (error) {
+        console.error('Clipboard read failed on iOS:', error)
+      }
+    }
+
+    const items = Array.from(clipboardData.items)
+    
+    const imageItems = items.filter((item) => {
+      if (item.kind !== 'file') return false
+      
+      const hasKnownType = ACCEPTED_FILE_TYPES.includes(item.type)
+      const isLikelyImage = item.type.startsWith('image/')
+      const hasNoType = !item.type || item.type === ''
+      
+      return hasKnownType || isLikelyImage || hasNoType
+    })
+
+    if (imageItems.length > 0) {
+      event.preventDefault()
+      for (const item of imageItems) {
+        const file = item.getAsFile()
+        if (file) {
+          const isValidImageFile = 
+            ACCEPTED_FILE_TYPES.includes(file.type) ||
+            file.type.startsWith('image/') ||
+            file.size > 0
+          
+          if (isValidImageFile) {
+            addImageAttachment(file)
+          }
+        }
+      }
+    }
+  }
+
+  const handleDragOver = (event: React.DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.dataTransfer?.types.includes('Files')) {
+      setIsDragging(true)
+    }
+  }
+
+  const handleDragLeave = (event: React.DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = async (event: React.DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDragging(false)
+
+    const files = event.dataTransfer?.files
+    if (files) {
+      for (const file of Array.from(files)) {
+        if (ACCEPTED_FILE_TYPES.includes(file.type)) {
+          addImageAttachment(file)
+        }
+      }
+    }
+  }
+
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0]
+    if (file && ACCEPTED_FILE_TYPES.includes(file.type)) {
+      addImageAttachment(file)
+    }
+    event.currentTarget.value = ''
   }
 
   const addImageAttachment = (file: File) => {
@@ -498,9 +732,13 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
       setMentionQuery('')
       setMentionRange(null)
       setPrompt('')
+      revokeBlobUrls(imageAttachments)
       setImageAttachments([])
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
+      clearSTT()
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't') {
+      e.preventDefault()
+      if (hasVariants) {
+        cycleVariant()
       }
     }
   }
@@ -519,11 +757,6 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     }
     
     setPrompt(value)
-    
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-    }
 
     if (isBashMode) {
       return
@@ -567,17 +800,16 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
   const lastAssistantMessage = messages?.filter(msg => msg.info.role === 'assistant').at(-1)
   const hasIncompleteMessages = lastAssistantMessage ? isMessageIncomplete(lastAssistantMessage) : false
 
-  const currentMode = preferences?.mode || 'build'
-  const modeColor = currentMode === 'plan' ? 'text-yellow-600 dark:text-yellow-500' : 'text-green-600 dark:text-green-500'
-  const modeBg = currentMode === 'plan' ? 'bg-yellow-500/20 border-yellow-400 hover:bg-yellow-500/30 hover:border-yellow-300' : 'bg-green-500/20 border-green-400 hover:bg-green-500/30 hover:border-green-300'
-  const modeShadow = currentMode === 'plan' ? 'shadow-yellow-500/20 hover:shadow-yellow-500/30' : 'shadow-green-500/20 hover:shadow-green-500/30'
+  const sessionAgent = useSessionAgent(opcodeUrl, sessionID, directory)
+  const currentMode = localMode ?? sessionAgent.agent
 
-  const { model, modelString } = useModelSelection(opcodeUrl, directory)
+const { model, modelString } = useModelSelection(opcodeUrl, directory)
   const currentModel = modelString || ''
   const displayModelName = model?.modelID || currentModel
   const isMobile = useMobile()
-  const { setShowDialog, hasPermissionsForSession } = usePermissionContext()
+  const { setShowDialog, hasForSession: hasPermissionsForSession } = usePermissions()
   const hasPendingPermissionForSession = hasPermissionsForSession(sessionID)
+  const { hasVariants, currentVariant, cycleVariant } = useVariants(opcodeUrl, directory)
   const sessionStatus = useSessionStatusForSession(sessionID)
   const isSessionActive = sessionStatus.type === 'busy' || sessionStatus.type === 'retry'
   const hasActiveStream = hasIncompleteMessages && isSessionActive
@@ -594,18 +826,24 @@ export const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(funct
     onPromptChange?.(prompt.trim().length > 0)
   }, [prompt, onPromptChange])
 
+  useEffect(() => {
+    setLocalMode(null)
+  }, [sessionID])
+
+  
+
   
 
 return (
     <div className={`relative backdrop-blur-md bg-background opacity-95 border border-border dark:border-white/30 rounded-xl p-2 md:p-3 mb-4 md:mb-1 w-full transition-all ${hasPendingPermissionForSession ? 'border-orange-500/50 ring-1 ring-orange-500/30' : ''}`}>
-      {showStopButton && (
+      {showStopButton && !(isFocused && prompt.trim().length > 0) && (
         <button
           onClick={handleStop}
           disabled={disabled}
-          className="fixed bottom-19 right-0 md:hidden z-50 p-3 rounded-xl transition-all duration-200 active:scale-95 hover:scale-105 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-destructive-foreground border border-red-500/60 shadow-lg shadow-red-500/30"
+          className="border  fixed bottom-19 right-0 md:hidden z-50 p-3 rounded-xl transition-all duration-200 active:scale-95 hover:scale-105 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-destructive-foreground border border-red-500/60 shadow-lg shadow-red-500/30"
           title="Stop"
         >
-          <Square className="w-5 h-5" />
+          <SquareFill className="w-5 h-5" />
         </button>
       )}
 
@@ -624,7 +862,9 @@ return (
             : "Send a message..."
         }
         disabled={disabled}
-        className={`w-full bg-muted/50 pl-2 md:pl-3 pr-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:bg-muted/70 resize-none min-h-[40px] max-h-[200px] md:max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm rounded-lg ${
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        className={`w-full bg-muted/50 pl-2 md:pl-3 pr-3 py-2 text-[16px] text-foreground placeholder-muted-foreground focus:outline-none focus:bg-muted/70 resize-none min-h-[40px] max-h-[120px] disabled:opacity-50 disabled:cursor-not-allowed md:text-sm rounded-lg [field-sizing:content] ${
           isBashMode
             ? 'border-purple-500/50 bg-purple-500/5 focus:bg-purple-500/10'
             : isDragging ? 'border-blue-500/50 border-dashed bg-blue-500/5' : ''
@@ -654,30 +894,36 @@ return (
 
       <div className="flex gap-1.5 md:gap-2 items-center justify-between">
         <div className="flex gap-1.5 md:gap-2 items-center">
-           <button
-            onClick={handleModeToggle}
-            className={`px-3 md:px-3.5 py-1 h-[36px] rounded-lg text-sm font-medium border w-14 flex items-center justify-center transition-all duration-200 active:scale-95 hover:scale-105 shadow-md ${
-              isBashMode 
-                ? 'bg-purple-500/20 border-purple-400 text-purple-700 dark:text-purple-300 shadow-purple-500/20 hover:shadow-purple-500/30' 
-                : `${modeBg} ${modeColor} ${modeShadow}`
-            }`}
-          >
-            {isBashMode ? 'BASH' : currentMode.toUpperCase()} 
-          </button>
+          <AgentQuickSelect
+            opcodeUrl={opcodeUrl}
+            directory={directory}
+            currentAgent={currentMode}
+            onAgentChange={handleAgentChange}
+            isBashMode={isBashMode}
+            disabled={disabled}
+          />
           {hasActiveStream ? (
               <div className="px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg text-xs md:text-sm font-medium text-muted-foreground max-w-[120px] md:max-w-[180px]">
                 <SessionStatusIndicator sessionID={sessionID} />
               </div>
             ) : (
                !hideSecondaryButtons && (
-                 <button
-                   onClick={onShowModelsDialog}
-                   className="px-2.5 py-1.5 md:px-3 h-[36px] rounded-lg text-xs md:text-sm font-medium border bg-muted border-border text-muted-foreground hover:bg-muted-foreground/10 hover:border-foreground/30 transition-colors cursor-pointer max-w-[150px] md:max-w-[220px] truncate dark:border-white/30"
+                 <ModelQuickSelect
+                   opcodeUrl={opcodeUrl}
+                   directory={directory}
+                   onOpenFullDialog={() => onShowModelsDialog?.()}
                  >
-                   {displayModelName || 'Select model'}
-                 </button>
-               )
-            )}
+                   <button
+                     className="px-2.5 py-0.5 md:px-3 min-h-[36px] rounded-lg text-xs md:text-sm font-medium border bg-muted border-border text-muted-foreground hover:bg-muted-foreground/10 hover:border-foreground/30 transition-colors cursor-pointer max-w-[150px] md:max-w-[220px] dark:border-white/30 flex flex-col items-start justify-center"
+                   >
+                     <span className="truncate w-full text-left">{displayModelName || 'Select model'}</span>
+{hasVariants && currentVariant && (
+                        <span className="text-[10px] text-orange-500 truncate w-full text-center capitalize">{currentVariant}</span>
+                      )}
+                   </button>
+                 </ModelQuickSelect>
+                )
+             )}
           
         </div>
 <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
@@ -695,13 +941,13 @@ return (
               className="hidden md:block p-1.5 px-5 md:p-2 md:px-6 rounded-lg transition-all duration-200 active:scale-95 hover:scale-105 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-destructive-foreground border border-red-500/60 hover:border-red-400 shadow-md shadow-red-500/30 hover:shadow-red-500/40 ring-1 ring-red-500/20 hover:ring-red-500/30"
               title="Stop"
             >
-              <Square className="w-4 h-4 md:w-5 md:h-5" />
+              <SquareFill className="w-4 h-4 md:w-5 md:h-5" />
             </button>
 )}
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_FILE_TYPES.join(',')}
+            accept="*/*"
             className="hidden"
             onChange={handleFileInputChange}
           />
@@ -713,58 +959,65 @@ return (
           >
             <Upload className="w-5 h-5" />
           </button>
-          <VoiceButton
-            onTranscription={(text) => {
-              setPrompt(prev => prev ? `${prev} ${text}` : text)
-              if (textareaRef.current) {
-                textareaRef.current.style.height = 'auto'
-                textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-                textareaRef.current.focus()
-              }
-            }}
-            disabled={disabled}
-            className="hidden md:block"
-          />
-          <ContinuousVoiceButton
-            onTranscriptUpdate={(text) => {
-              setPrompt(text)
-              if (textareaRef.current) {
-                textareaRef.current.style.height = 'auto'
-                textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
-              }
-            }}
-            onAutoSubmit={(text) => {
-              const parts = parsePromptToParts(text, attachedFiles, imageAttachments)
-              sendPrompt.mutate({
-                sessionID,
-                parts,
-                model: currentModel,
-                agent: selectedAgent || currentMode
-              })
-              setPrompt('')
-              setAttachedFiles(new Map())
-              setImageAttachments([])
-              setSelectedAgent(null)
-              if (textareaRef.current) {
-                textareaRef.current.style.height = 'auto'
-              }
-            }}
-            disabled={disabled}
-            className="hidden md:block"
-          />
+          {sttEnabled && sttSupported && (
             <button
-               data-submit-prompt
-               onClick={hasPendingPermissionForSession ? () => setShowDialog(true) : handleSubmit}
-               disabled={hasPendingPermissionForSession ? false : ((!prompt.trim() && imageAttachments.length === 0) || disabled)}
-               className={`px-4 md:px-5 py-1.5 md:py-2 rounded-lg text-sm font-medium transition-colors dark:border flex-shrink-0 min-w-[52px] ${
-                 hasPendingPermissionForSession
-                   ? 'bg-orange-500 hover:bg-orange-600 border-orange-400 text-primary-foreground ring-orange-500/20'
-                   : 'bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground border-white/30'
-               }`}
-               title={hasPendingPermissionForSession ? 'View pending permission' : (hasActiveStream ? 'Queue message' : 'Send')}
-             >
-               <span className="whitespace-nowrap">{hasPendingPermissionForSession ? 'View' : (hasActiveStream ? 'Queue' : 'Send')}</span>
+              type="button"
+              onClick={handleVoiceToggle}
+              disabled={disabled || isProcessing}
+              className={`hidden md:flex p-2 rounded-lg transition-all duration-200 active:scale-95 hover:scale-105 shadow-md border items-center justify-center ${
+                isRecording
+                  ? 'bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-destructive-foreground border-red-500/60 animate-pulse'
+                  : 'bg-muted hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground border-border'
+              }`}
+              title={isRecording ? 'Stop recording' : 'Voice input'}
+            >
+              {isTogglingRecording && !isRecording ? (
+                <div className="w-5 h-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+              ) : isProcessing && !isRecording ? (
+                <div className="w-5 h-5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+              ) : isRecording ? (
+                <MicOff className="w-5 h-5" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
             </button>
+          )}
+          {isMobile && !prompt.trim() && imageAttachments.length === 0 && sttEnabled && sttSupported && !hasPendingPermissionForSession ? (
+            <button
+              onClick={handleVoiceToggle}
+              disabled={disabled || isProcessing}
+              className={`px-4 py-2 rounded-lg transition-all duration-200 active:scale-95 flex items-center justify-center min-w-[52px] ${
+                isRecording || isTogglingRecording || (isProcessing && !isRecording)
+                  ? 'bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-destructive-foreground border-2 border-red-500/60 shadow-lg shadow-red-500/30 animate-pulse'
+                  : 'bg-primary hover:bg-primary/90 text-primary-foreground border border-white/30'
+              }`}
+              title={isRecording ? 'Stop recording' : 'Voice input'}
+            >
+              {isTogglingRecording && !isRecording ? (
+                <div className="w-5 h-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : isProcessing && !isRecording ? (
+                <div className="w-5 h-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : isRecording ? (
+                <MicOff className="w-5 h-5" />
+              ) : (
+                <Mic className="w-5 h-5" />
+              )}
+            </button>
+          ) : (
+            <button
+              data-submit-prompt
+              onClick={hasPendingPermissionForSession ? () => setShowDialog(true) : handleSubmit}
+              disabled={hasPendingPermissionForSession ? false : ((!prompt.trim() && imageAttachments.length === 0) || disabled)}
+              className={`px-4 md:px-5 py-1.5 md:py-2 rounded-lg text-sm font-medium transition-colors dark:border flex-shrink-0 min-w-[52px] ${
+                hasPendingPermissionForSession
+                  ? 'bg-orange-500 hover:bg-orange-600 border-orange-400 text-primary-foreground ring-orange-500/20'
+                  : 'bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground disabled:cursor-not-allowed text-primary-foreground border-white/30'
+              }`}
+              title={hasPendingPermissionForSession ? 'View pending permission' : (hasActiveStream ? 'Queue message' : 'Send')}
+            >
+              <span className="whitespace-nowrap">{hasPendingPermissionForSession ? 'View' : (hasActiveStream ? 'Queue' : 'Send')}</span>
+            </button>
+          )}
         </div>
       </div>
       

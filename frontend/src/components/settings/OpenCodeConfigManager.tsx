@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, Plus, Trash2, Edit, Star, StarOff, Download, RotateCcw, FileText } from 'lucide-react'
+import { Loader2, Plus, Trash2, Edit, Star, StarOff, Download, RotateCcw, FileText, ArrowUpCircle, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -12,11 +12,13 @@ import { CommandsEditor } from './CommandsEditor'
 import { AgentsEditor } from './AgentsEditor'
 import { AgentsMdEditor } from './AgentsMdEditor'
 import { McpManager } from './McpManager'
+import { VersionSelectDialog } from './VersionSelectDialog'
 import { settingsApi } from '@/api/settings'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useServerHealth } from '@/hooks/useServerHealth'
 import { parseJsonc, hasJsoncComments } from '@/lib/jsonc'
 import { showToast } from '@/lib/toast'
+import { invalidateConfigCaches } from '@/lib/queryInvalidation'
 import type { OpenCodeConfig } from '@/api/types/settings'
 
 interface Command {
@@ -62,6 +64,7 @@ export function OpenCodeConfigManager() {
   })
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isVersionDialogOpen, setIsVersionDialogOpen] = useState(false)
   const [deleteConfirmConfig, setDeleteConfirmConfig] = useState<OpenCodeConfig | null>(null)
   
   const agentsMdRef = useRef<HTMLButtonElement>(null)
@@ -79,37 +82,76 @@ export function OpenCodeConfigManager() {
     }
   }
 
+  const reloadConfigMutation = useMutation({
+    mutationFn: async () => {
+      return await settingsApi.reloadOpenCodeConfig()
+    },
+    onSuccess: () => {
+      invalidateConfigCaches(queryClient)
+    },
+  })
+
   const restartServerMutation = useMutation({
     mutationFn: async () => {
       return await settingsApi.restartOpenCodeServer()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
+      invalidateConfigCaches(queryClient)
     },
   })
 
-  const getRestartErrorMessage = (error: unknown): string => {
-    return error && typeof error === 'object' && 'response' in error
-      ? ((error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.details
-         || (error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.error
-         || 'Failed to restart OpenCode server')
-      : 'Failed to restart OpenCode server'
-  }
-
-  const rollbackMutation = useMutation({
+  const upgradeOpenCodeMutation = useMutation({
     mutationFn: async () => {
-      return await settingsApi.rollbackOpenCodeConfig()
+      return await settingsApi.upgradeOpenCode()
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      showToast.success(data.message, { id: 'rollback-config' })
-      fetchConfigs()
+      if (data.upgraded && data.newVersion) {
+        queryClient.setQueryData(['health'], (old: Record<string, unknown> | undefined) => {
+          if (!old) return old
+          return { ...old, opencodeVersion: data.newVersion }
+        })
+      }
+      invalidateConfigCaches(queryClient)
+      if (data.upgraded) {
+        showToast.success(`Upgraded to v${data.newVersion} and server restarted`, { id: 'upgrade-opencode' })
+      } else {
+        showToast.success('OpenCode is already up to date', { id: 'upgrade-opencode' })
+      }
     },
-    onError: () => {
-      showToast.error('Failed to rollback to previous config', { id: 'rollback-config' })
+    onError: (error) => {
+      const defaultMessage = 'Failed to upgrade OpenCode'
+      
+      if (error && typeof error === 'object' && 'response' in error) {
+        const response = (error as { response?: { data?: { recovered?: boolean; recoveryMessage?: string; newVersion?: string } } }).response
+        const data = response?.data
+        
+        if (data?.recovered && data.newVersion) {
+          queryClient.setQueryData(['health'], (old: Record<string, unknown> | undefined) => {
+            if (!old) return old
+            return { ...old, opencodeVersion: data.newVersion }
+          })
+          showToast.success(`Upgrade failed but server recovered at v${data.newVersion}`, { id: 'upgrade-opencode' })
+        } else {
+          showToast.error(data?.recoveryMessage || defaultMessage, { id: 'upgrade-opencode' })
+        }
+      } else {
+        showToast.error(defaultMessage, { id: 'upgrade-opencode' })
+      }
+      invalidateConfigCaches(queryClient)
     },
   })
+
+  const getApiErrorMessage = (error: unknown, fallback: string): string => {
+    if (error && typeof error === 'object' && 'response' in error) {
+      const response = (error as { response?: { data?: { details?: string; error?: string } } }).response
+      return response?.data?.details || response?.data?.error || fallback
+    }
+    return fallback
+  }
+
+  const getRestartErrorMessage = (error: unknown): string => {
+    return getApiErrorMessage(error, 'Failed to restart OpenCode server')
+  }
 
   const fetchConfigs = async () => {
     try {
@@ -142,22 +184,21 @@ export function OpenCodeConfigManager() {
 
       const agentsChanged = JSON.stringify(previousContent?.agent) !== JSON.stringify(newContent.agent)
       if (restartServer || agentsChanged) {
-        showToast.loading('Restarting server...', { id: 'update-restart' })
+        showToast.loading('Reloading server...', { id: 'update-restart' })
         try {
-          await restartServerMutation.mutateAsync()
-          showToast.success('Configuration updated and server restarted', { id: 'update-restart' })
+          await reloadConfigMutation.mutateAsync()
+          showToast.success('Configuration updated and server reloaded', { id: 'update-restart' })
         } catch (error) {
           showToast.error(getRestartErrorMessage(error), { id: 'update-restart' })
           throw error
         }
       } else {
         showToast.success('Configuration updated')
+        invalidateConfigCaches(queryClient)
       }
-
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
     } catch (error) {
       console.error('Failed to update config:', error)
-      showToast.error('Failed to update config', { id: 'update-restart' })
+      showToast.error(getApiErrorMessage(error, 'Failed to update config'), { id: 'update-restart' })
     } finally {
       setIsUpdating(false)
     }
@@ -196,10 +237,10 @@ export function OpenCodeConfigManager() {
       await fetchConfigs()
 
       if (isDefault) {
-        showToast.loading('Restarting server...', { id: 'create-config' })
+        showToast.loading('Reloading server...', { id: 'create-config' })
         try {
-          await restartServerMutation.mutateAsync()
-          showToast.success('Configuration created and server restarted', { id: 'create-config' })
+          await reloadConfigMutation.mutateAsync()
+          showToast.success('Configuration created and server reloaded', { id: 'create-config' })
         } catch (error) {
           showToast.error(getRestartErrorMessage(error), { id: 'create-config' })
           throw error
@@ -208,10 +249,10 @@ export function OpenCodeConfigManager() {
         showToast.success('Configuration created', { id: 'create-config' })
       }
 
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
+      invalidateConfigCaches(queryClient)
     } catch (error) {
       console.error('Failed to create config:', error)
-      showToast.error('Failed to create configuration', { id: 'create-config' })
+      showToast.error(getApiErrorMessage(error, 'Failed to create configuration'), { id: 'create-config' })
       throw error
     } finally {
       setIsUpdating(false)
@@ -225,9 +266,11 @@ export function OpenCodeConfigManager() {
       setIsUpdating(true)
       await settingsApi.deleteOpenCodeConfig(config.name)
       setDeleteConfirmConfig(null)
+      if (selectedConfig?.id === config.id) {
+        setSelectedConfig(null)
+      }
       fetchConfigs()
-      // Invalidate agents cache in case deleted config had agents
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
+      invalidateConfigCaches(queryClient)
     } catch (error) {
       console.error('Failed to delete config:', error)
     } finally {
@@ -236,21 +279,16 @@ export function OpenCodeConfigManager() {
   }
 
   const setDefaultConfig = async (config: OpenCodeConfig) => {
-    showToast.loading('Setting default config and restarting server...', { id: 'set-default' })
+    showToast.loading('Setting default config and reloading server...', { id: 'set-default' })
     try {
       setIsUpdating(true)
       await settingsApi.setDefaultOpenCodeConfig(config.name)
       await fetchConfigs()
-      await restartServerMutation.mutateAsync()
-      showToast.success('Default config updated and server restarted', { id: 'set-default' })
+      await reloadConfigMutation.mutateAsync()
+      showToast.success('Default config updated and server reloaded', { id: 'set-default' })
     } catch (error) {
       console.error('Failed to set default config:', error)
-      const errorMessage = error && typeof error === 'object' && 'response' in error
-        ? ((error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.details
-           || (error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.error
-           || 'Failed to set default config')
-        : 'Failed to set default config'
-      showToast.error(errorMessage, { id: 'set-default' })
+      showToast.error(getApiErrorMessage(error, 'Failed to set default config'), { id: 'set-default' })
     } finally {
       setIsUpdating(false)
     }
@@ -314,6 +352,31 @@ export function OpenCodeConfigManager() {
                   variant="outline"
                   size="sm"
                   onClick={async () => {
+                    showToast.loading('Upgrading OpenCode...', { id: 'upgrade-opencode' })
+                    try {
+                      await upgradeOpenCodeMutation.mutateAsync()
+                    } catch (error) {
+                      const errorMessage = error && typeof error === 'object' && 'response' in error
+                        ? ((error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.details
+                           || (error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.error
+                           || 'Failed to upgrade OpenCode')
+                        : 'Failed to upgrade OpenCode'
+                      showToast.error(errorMessage, { id: 'upgrade-opencode' })
+                    }
+                  }}
+                  disabled={upgradeOpenCodeMutation.isPending}
+                >
+                  {upgradeOpenCodeMutation.isPending ? (
+                    <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                  ) : (
+                    <ArrowUpCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                  )}
+                  <span className="text-xs sm:text-sm">Update</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
                     showToast.loading('Restarting OpenCode server...', { id: 'manual-restart' })
                     try {
                       await restartServerMutation.mutateAsync()
@@ -334,18 +397,10 @@ export function OpenCodeConfigManager() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    showToast.loading('Rolling back to previous config...', { id: 'rollback-config' })
-                    rollbackMutation.mutate()
-                  }}
-                  disabled={rollbackMutation.isPending}
+                  onClick={() => setIsVersionDialogOpen(true)}
                 >
-                  {rollbackMutation.isPending ? (
-                    <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                  )}
-                  <span className="text-xs sm:text-sm">Rollback</span>
+                  <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                  <span className="text-xs sm:text-sm">Versions</span>
                 </Button>
                 <Button 
                   size="sm"
@@ -364,6 +419,11 @@ export function OpenCodeConfigManager() {
         onOpenChange={setIsCreateDialogOpen}
         onCreate={createConfig}
         isUpdating={isUpdating}
+      />
+
+      <VersionSelectDialog
+        open={isVersionDialogOpen}
+        onOpenChange={setIsVersionDialogOpen}
       />
 
       {configs.length === 0 ? (
@@ -444,24 +504,16 @@ export function OpenCodeConfigManager() {
           if (!editingConfig) return
           showToast.loading('Saving configuration...', { id: 'edit-config' })
           try {
-            const parsedContent = parseJsonc<Record<string, unknown>>(rawContent)
-            const agentsChanged = JSON.stringify(editingConfig.content.agent) !== JSON.stringify(parsedContent.agent)
             await settingsApi.updateOpenCodeConfig(editingConfig.name, { content: rawContent })
             await fetchConfigs()
-            if (agentsChanged) {
-              showToast.loading('Restarting server...', { id: 'edit-config' })
-              await restartServerMutation.mutateAsync()
-              showToast.success('Config updated and server restarted', { id: 'edit-config' })
-            } else {
-              showToast.success('Configuration saved', { id: 'edit-config' })
-            }
-            queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
+            const successMsg = editingConfig.isDefault
+              ? 'Configuration saved and server reloaded'
+              : 'Configuration saved'
+            showToast.success(successMsg, { id: 'edit-config' })
+            invalidateConfigCaches(queryClient)
           } catch (error) {
-            if (error instanceof Error && error.message.includes('restart')) {
-              showToast.error(getRestartErrorMessage(error), { id: 'edit-config' })
-            } else {
-              showToast.error('Failed to save configuration', { id: 'edit-config' })
-            }
+            showToast.error(getApiErrorMessage(error, 'Failed to save configuration'), { id: 'edit-config' })
+            throw error
           }
         }}
         isUpdating={isUpdating}
@@ -543,7 +595,7 @@ export function OpenCodeConfigManager() {
                         <div className="flex items-center gap-3 min-w-0">
                           <h4 className="text-sm font-medium truncate">Commands</h4>
                           <span className="text-xs text-muted-foreground">
-                            {Object.keys(selectedConfig.content.command as Record<string, Command> || {}).length} configured
+                            {Object.keys((selectedConfig.content?.command as Record<string, Command> | undefined) ?? {}).length} configured
                           </span>
                         </div>
                         <Edit className={`h-4 w-4 transition-transform ${expandedSections.commands ? 'rotate-90' : ''}`} />
@@ -551,7 +603,7 @@ export function OpenCodeConfigManager() {
                       <div className={`${expandedSections.commands ? 'block' : 'hidden'} border-t border-border`}>
                         <div className="p-1 sm:p-4 max-h-[50vh] overflow-y-auto">
                           <CommandsEditor
-                            commands={(selectedConfig.content.command as Record<string, Command>) || {}}
+                            commands={(selectedConfig.content?.command as Record<string, Command> | undefined) ?? {}}
                             onChange={(commands) => {
                               const updatedContent = {
                                 ...selectedConfig.content,
@@ -580,7 +632,7 @@ export function OpenCodeConfigManager() {
                         <div className="flex items-center gap-3 min-w-0">
                           <h4 className="text-sm font-medium truncate">Agents</h4>
                           <span className="text-xs text-muted-foreground">
-                            {Object.keys(selectedConfig.content.agent as Record<string, Agent> || {}).length} configured
+                            {Object.keys((selectedConfig.content?.agent as Record<string, Agent> | undefined) ?? {}).length} configured
                           </span>
                         </div>
                         <Edit className={`h-4 w-4 transition-transform ${expandedSections.agents ? 'rotate-90' : ''}`} />
@@ -588,7 +640,7 @@ export function OpenCodeConfigManager() {
                       <div className={`${expandedSections.agents ? 'block' : 'hidden'} border-t border-border`}>
                         <div className="p-4 max-h-[50vh] overflow-y-auto">
                           <AgentsEditor
-                            agents={(selectedConfig.content.agent as Record<string, Agent>) || {}}
+                            agents={(selectedConfig.content?.agent as Record<string, Agent> | undefined) ?? {}}
                             onChange={(agents) => {
                               const updatedContent = {
                                 ...selectedConfig.content,
@@ -617,7 +669,7 @@ export function OpenCodeConfigManager() {
                         <div className="flex items-center gap-3 min-w-0">
                           <h4 className="text-sm font-medium truncate">MCP Servers</h4>
                           <span className="text-xs text-muted-foreground">
-                            {Object.keys((selectedConfig.content.mcp as Record<string, unknown>) || {}).length} configured
+                            {Object.keys((selectedConfig.content?.mcp as Record<string, unknown> | undefined) ?? {}).length} configured
                           </span>
                         </div>
                         <Edit className={`h-4 w-4 transition-transform ${expandedSections.mcp ? 'rotate-90' : ''}`} />

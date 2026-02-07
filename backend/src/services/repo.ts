@@ -4,122 +4,212 @@ import * as db from '../db/queries'
 import type { Database } from 'bun:sqlite'
 import type { Repo, CreateRepoInput } from '../types/repo'
 import { logger } from '../utils/logger'
-import { SettingsService } from './settings'
-import { createGitEnvForRepoUrl, createNoPromptGitEnv, createGitHubGitEnv } from '../utils/git-auth'
 import { getReposPath } from '@opencode-manager/shared/config/env'
-import { opencodeServerManager } from './opencode-single-server'
+import type { GitAuthService } from './git-auth'
+import { isGitHubHttpsUrl } from '../utils/git-auth'
 import path from 'path'
 
-export class GitAuthenticationError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'GitAuthenticationError'
-  }
-}
+const GIT_CLONE_TIMEOUT = 300000
 
-function isAuthenticationError(error: any): boolean {
-  const message = error?.message?.toLowerCase() || ''
-  return message.includes('authentication failed') || 
-         message.includes('invalid username or token') ||
-         message.includes('could not read username')
-}
-
-interface GitCommandOptions {
-  cwd?: string
-  env?: Record<string, string>
-  silent?: boolean
-}
-
-async function executeGitWithFallback(
-  cmd: string[],
-  options: GitCommandOptions = {}
-): Promise<string> {
-  const { cwd, env = createNoPromptGitEnv(), silent } = options
+function enhanceCloneError(error: unknown, repoUrl: string, originalMessage: string): Error {
+  const message = originalMessage.toLowerCase()
   
-  try {
-    return await executeCommand(cmd, { cwd, env, silent })
-  } catch (error: any) {
-    if (!isAuthenticationError(error)) {
-      throw error
-    }
-    
-    logger.warn(`Git command failed with auth, trying gh auth fallback`)
-    try {
-      const ghToken = (await executeCommand(['gh', 'auth', 'token'])).trim()
-      const ghEnv = createGitHubGitEnv(ghToken)
-      return await executeCommand(cmd, { cwd, env: ghEnv, silent })
-    } catch (ghError: any) {
-      if (!isAuthenticationError(ghError)) {
-        throw ghError
-      }
-      
-      logger.warn(`Git command failed with gh auth, trying without auth (public repo)`)
-      return await executeCommand(cmd, { cwd, env: createNoPromptGitEnv(), silent })
-    }
+  if (message.includes('authentication failed') || message.includes('could not authenticate') || message.includes('invalid credentials')) {
+    return new Error(`Authentication failed for ${repoUrl}. Please add your credentials in Settings > Git Credentials.`)
   }
+  
+  if (message.includes('repository not found') || message.includes('404')) {
+    return new Error(`Repository not found: ${repoUrl}. Check the URL and ensure you have access to it.`)
+  }
+  
+  if (message.includes('permission denied') || (isGitHubHttpsUrl(repoUrl) && message.includes('fatal'))) {
+    return new Error(`Access denied to ${repoUrl}. Please add your credentials in Settings > Git Credentials and ensure you have proper access.`)
+  }
+  
+  if (message.includes('timed out')) {
+    return new Error(`Clone timed out for ${repoUrl}. The repository might be too large or there could be network issues. Try again or verify the repository exists.`)
+  }
+  
+  return error instanceof Error ? error : new Error(originalMessage)
 }
 
-async function hasCommits(repoPath: string): Promise<boolean> {
+interface ErrorWithMessage {
+  message: string
+}
+
+function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as ErrorWithMessage).message === 'string'
+  )
+}
+
+function getErrorMessage(error: unknown): string {
+  if (isErrorWithMessage(error)) {
+    return error.message
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
+async function hasCommits(repoPath: string, env: Record<string, string>): Promise<boolean> {
   try {
-    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'], { silent: true })
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', 'HEAD'], { env, silent: true })
     return true
   } catch {
     return false
   }
 }
 
-
-
-async function safeGetCurrentBranch(repoPath: string): Promise<string | null> {
+async function isValidGitRepo(repoPath: string, env: Record<string, string>): Promise<boolean> {
   try {
-    const repoHasCommits = await hasCommits(repoPath)
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', '--git-dir'], { env, silent: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function checkRepoNameAvailable(name: string): Promise<boolean> {
+  const reposPath = getReposPath()
+  const targetPath = path.join(reposPath, name)
+  try {
+    await executeCommand(['test', '-e', targetPath], { silent: true })
+    return false
+  } catch {
+    return true
+  }
+}
+
+async function copyRepoToWorkspace(sourcePath: string, targetName: string, env: Record<string, string>): Promise<void> {
+  const reposPath = getReposPath()
+  const targetPath = path.join(reposPath, targetName)
+  
+  logger.info(`Copying repo from ${sourcePath} to ${targetPath}`)
+  await executeCommand(['git', 'clone', '--local', sourcePath, targetName], { cwd: reposPath, env })
+  logger.info(`Successfully copied repo to ${targetPath}`)
+}
+
+
+async function safeGetCurrentBranch(repoPath: string, env: Record<string, string>): Promise<string | null> {
+  try {
+    const repoHasCommits = await hasCommits(repoPath, env)
     if (!repoHasCommits) {
       try {
-        const symbolicRef = await executeCommand(['git', '-C', repoPath, 'symbolic-ref', '--short', 'HEAD'], { silent: true })
+        const symbolicRef = await executeCommand(['git', '-C', repoPath, 'symbolic-ref', '--short', 'HEAD'], { env, silent: true })
         return symbolicRef.trim()
       } catch {
         return null
       }
     }
-    const currentBranch = await executeCommand(['git', '-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { silent: true })
+    const currentBranch = await executeCommand(['git', '-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { env, silent: true })
     return currentBranch.trim()
   } catch {
     return null
   }
 }
 
-function getGitEnv(database: Database, repoUrl?: string | null): Record<string, string> {
+async function checkoutBranchSafely(repoPath: string, branch: string, env: Record<string, string>): Promise<void> {
+  const sanitizedBranch = branch
+    .replace(/^refs\/heads\//, '')
+    .replace(/^refs\/remotes\//, '')
+    .replace(/^origin\//, '')
+
+  let localBranchExists = false
   try {
-    const settingsService = new SettingsService(database)
-    const settings = settingsService.getSettings('default')
-    const gitToken = settings.preferences.gitToken
-
-    if (!repoUrl) {
-      return createNoPromptGitEnv()
-    }
-
-    return createGitEnvForRepoUrl(repoUrl, gitToken)
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', '--verify', `refs/heads/${sanitizedBranch}`], { env, silent: true })
+    localBranchExists = true
   } catch {
-    return createNoPromptGitEnv()
+    localBranchExists = false
+  }
+
+  let remoteBranchExists = false
+  try {
+    await executeCommand(['git', '-C', repoPath, 'rev-parse', '--verify', `refs/remotes/origin/${sanitizedBranch}`], { env, silent: true })
+    remoteBranchExists = true
+  } catch {
+    remoteBranchExists = false
+  }
+
+  if (localBranchExists) {
+    logger.info(`Checking out existing local branch: ${sanitizedBranch}`)
+    await executeCommand(['git', '-C', repoPath, 'checkout', sanitizedBranch], { env })
+  } else if (remoteBranchExists) {
+    logger.info(`Checking out remote branch: ${sanitizedBranch}`)
+    await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch, `origin/${sanitizedBranch}`], { env })
+  } else {
+    logger.info(`Creating new branch: ${sanitizedBranch}`)
+    await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch], { env })
   }
 }
 
 export async function initLocalRepo(
   database: Database,
+  gitAuthService: GitAuthService,
   localPath: string,
   branch?: string
 ): Promise<Repo> {
-  const normalizedPath = localPath.trim().replace(/\/+$/, '')
-  const fullPath = path.resolve(getReposPath(), normalizedPath)
+  const normalizedInputPath = localPath.trim().replace(/\/+$/, '')
+  const env = gitAuthService.getGitEnvironment()
   
-  const existing = db.getRepoByLocalPath(database, normalizedPath)
+  let targetPath: string
+  let repoLocalPath: string
+  let sourceWasGitRepo = false
+  
+  if (path.isAbsolute(normalizedInputPath)) {
+    logger.info(`Absolute path detected: ${normalizedInputPath}`)
+    
+    try {
+      const exists = await executeCommand(['test', '-d', normalizedInputPath], { silent: true })
+        .then(() => true)
+        .catch(() => false)
+      
+      if (!exists) {
+        throw new Error(`No such file or directory: '${normalizedInputPath}'`)
+      }
+      
+      const isGit = await isValidGitRepo(normalizedInputPath, env)
+      
+      if (isGit) {
+        sourceWasGitRepo = true
+        const baseName = path.basename(normalizedInputPath)
+        
+        const isAvailable = await checkRepoNameAvailable(baseName)
+        if (!isAvailable) {
+          throw new Error(`A repository named '${baseName}' already exists in the workspace. Please remove it first or use a different source directory.`)
+        }
+        
+        repoLocalPath = baseName
+        
+        logger.info(`Copying existing git repo from ${normalizedInputPath} to workspace as ${baseName}`)
+        await copyRepoToWorkspace(normalizedInputPath, baseName, env)
+        targetPath = path.join(getReposPath(), baseName)
+      } else {
+        throw new Error(`Directory exists but is not a valid Git repository. Please provide either a Git repository path or a simple directory name to create a new empty repository.`)
+      }
+    } catch (error: unknown) {
+      if (isErrorWithMessage(error) && getErrorMessage(error).includes('No such file or directory')) {
+        throw error
+      }
+      throw new Error(`Failed to process absolute path '${normalizedInputPath}': ${getErrorMessage(error)}`)
+    }
+  } else {
+    repoLocalPath = normalizedInputPath
+    targetPath = path.join(getReposPath(), repoLocalPath)
+  }
+  
+  const existing = db.getRepoByLocalPath(database, repoLocalPath)
   if (existing) {
-    logger.info(`Local repo already exists in database: ${normalizedPath}`)
+    logger.info(`Local repo already exists in database: ${repoLocalPath}`)
     return existing
   }
   
   const createRepoInput: CreateRepoInput = {
-    localPath: normalizedPath,
+    localPath: repoLocalPath,
     branch: branch || undefined,
     defaultBranch: branch || 'main',
     cloneStatus: 'cloning',
@@ -132,28 +222,36 @@ export async function initLocalRepo(
   
   try {
     repo = db.createRepo(database, createRepoInput)
-    logger.info(`Created database record for local repo: ${normalizedPath} (id: ${repo.id})`)
-  } catch (error: any) {
-    logger.error(`Failed to create database record for local repo: ${normalizedPath}`, error)
-    throw new Error(`Failed to register local repository '${normalizedPath}': ${error.message}`)
+    logger.info(`Created database record for local repo: ${repoLocalPath} (id: ${repo.id})`)
+  } catch (error: unknown) {
+    logger.error(`Failed to create database record for local repo: ${repoLocalPath}`, error)
+    throw new Error(`Failed to register local repository '${repoLocalPath}': ${getErrorMessage(error)}`)
   }
   
   try {
-    await ensureDirectoryExists(fullPath)
-    directoryCreated = true
-    logger.info(`Created directory for local repo: ${fullPath}`)
-    
-    logger.info(`Initializing git repository: ${fullPath}`)
-
-    await executeCommand(['git', 'init'], { cwd: fullPath })
-    
-    await executeCommand(['git', '-C', fullPath, 'commit', '--allow-empty', '-m', 'Initial commit'])
-    
-    if (branch && branch !== 'main') {
-      await executeCommand(['git', '-C', fullPath, 'checkout', '-b', branch])
+    if (!sourceWasGitRepo) {
+      await ensureDirectoryExists(targetPath)
+      directoryCreated = true
+      logger.info(`Created directory for local repo: ${targetPath}`)
+      
+      logger.info(`Initializing git repository: ${targetPath}`)
+      await executeCommand(['git', 'init'], { cwd: targetPath })
+      
+      if (branch && branch !== 'main') {
+        await executeCommand(['git', '-C', targetPath, 'checkout', '-b', branch])
+      }
+    } else {
+      if (branch) {
+        logger.info(`Switching to branch ${branch} for copied repo`)
+        const currentBranch = await safeGetCurrentBranch(targetPath, env)
+        
+        if (currentBranch !== branch) {
+          await checkoutBranchSafely(targetPath, branch, env)
+        }
+      }
     }
     
-    const isGitRepo = await executeCommand(['git', '-C', fullPath, 'rev-parse', '--git-dir'])
+    const isGitRepo = await executeCommand(['git', '-C', targetPath, 'rev-parse', '--git-dir'])
       .then(() => true)
       .catch(() => false)
     
@@ -162,85 +260,41 @@ export async function initLocalRepo(
     }
     
     db.updateRepoStatus(database, repo.id, 'ready')
-    logger.info(`Local git repo ready: ${normalizedPath}`)
+    logger.info(`Local git repo ready: ${repoLocalPath}`)
     return { ...repo, cloneStatus: 'ready' }
-  } catch (error: any) {
-    logger.error(`Failed to initialize local repo, rolling back: ${normalizedPath}`, error)
+  } catch (error: unknown) {
+    logger.error(`Failed to initialize local repo, rolling back: ${repoLocalPath}`, error)
     
     try {
       db.deleteRepo(database, repo.id)
       logger.info(`Rolled back database record for repo id: ${repo.id}`)
-    } catch (dbError: any) {
-      logger.error(`Failed to rollback database record for repo id ${repo.id}:`, dbError)
+    } catch (dbError: unknown) {
+      logger.error(`Failed to rollback database record for repo id ${repo.id}:`, getErrorMessage(dbError))
     }
     
-    if (directoryCreated) {
+    if (directoryCreated && !sourceWasGitRepo) {
       try {
-        await executeCommand(['rm', '-rf', normalizedPath], getReposPath())
-        logger.info(`Rolled back directory: ${normalizedPath}`)
-      } catch (fsError: any) {
-        logger.error(`Failed to rollback directory ${normalizedPath}:`, fsError)
+        await executeCommand(['rm', '-rf', repoLocalPath], getReposPath())
+        logger.info(`Rolled back directory: ${repoLocalPath}`)
+      } catch (fsError: unknown) {
+        logger.error(`Failed to rollback directory ${repoLocalPath}:`, getErrorMessage(fsError))
+      }
+    } else if (sourceWasGitRepo) {
+      try {
+        await executeCommand(['rm', '-rf', repoLocalPath], getReposPath())
+        logger.info(`Cleaned up copied directory: ${repoLocalPath}`)
+      } catch (fsError: unknown) {
+        logger.error(`Failed to clean up copied directory ${repoLocalPath}:`, getErrorMessage(fsError))
       }
     }
     
-    throw new Error(`Failed to initialize local repository '${normalizedPath}': ${error.message}`)
-  }
-}
-
-export async function registerExternalDirectory(
-  database: Database,
-  absolutePath: string
-): Promise<Repo | null> {
-  const normalizedPath = absolutePath.trim().replace(/\/+$/, '')
-  
-  const existingRepos = db.listRepos(database)
-  for (const repo of existingRepos) {
-    if (repo.fullPath === normalizedPath) {
-      logger.info(`External directory already registered: ${normalizedPath}`)
-      return repo
-    }
-  }
-  
-  try {
-    const isGitRepo = await executeCommand(['git', '-C', normalizedPath, 'rev-parse', '--git-dir'], { silent: true })
-      .then(() => true)
-      .catch(() => false)
-    
-    if (!isGitRepo) {
-      logger.warn(`External directory is not a git repository: ${normalizedPath}`)
-      return null
-    }
-    
-    const currentBranch = await safeGetCurrentBranch(normalizedPath)
-    
-    let remoteUrl: string | undefined
-    try {
-      remoteUrl = (await executeCommand(['git', '-C', normalizedPath, 'remote', 'get-url', 'origin'], { silent: true })).trim()
-    } catch {
-      // No remote - that's ok
-    }
-    
-    const createRepoInput: CreateRepoInput = {
-      repoUrl: remoteUrl,
-      localPath: normalizedPath,
-      branch: currentBranch || undefined,
-      defaultBranch: currentBranch || 'main',
-      cloneStatus: 'ready',
-      clonedAt: Date.now(),
-      isLocal: true,
-    }
-    
-    const repo = db.createRepo(database, createRepoInput)
-    logger.info(`Registered external directory as repo: ${normalizedPath} (id: ${repo.id})`)
-    return repo
-  } catch (error: any) {
-    logger.error(`Failed to register external directory: ${normalizedPath}`, error)
-    return null
+    throw new Error(`Failed to initialize local repository '${repoLocalPath}': ${getErrorMessage(error)}`)
   }
 }
 
 export async function cloneRepo(
   database: Database,
+  gitAuthService: GitAuthService,
   repoUrl: string,
   branch?: string,
   useWorktree: boolean = false
@@ -276,9 +330,9 @@ export async function cloneRepo(
   }
   
   const repo = db.createRepo(database, createRepoInput)
-  
+
   try {
-    const env = getGitEnv(database, normalizedRepoUrl)
+    const env = gitAuthService.getGitEnvironment()
 
     if (shouldUseWorktree) {
       logger.info(`Creating worktree for branch: ${branch}`)
@@ -286,10 +340,10 @@ export async function cloneRepo(
       const baseRepoPath = path.resolve(getReposPath(), baseRepoDirName)
       const worktreePath = path.resolve(getReposPath(), worktreeDirName)
       
-       await executeGitWithFallback(['git', '-C', baseRepoPath, 'fetch', '--all'], { cwd: getReposPath(), env })
+       await executeCommand(['git', '-C', baseRepoPath, 'fetch', '--all'], { cwd: getReposPath(), env })
 
       
-      await createWorktreeSafely(baseRepoPath, worktreePath, branch)
+       await createWorktreeSafely(baseRepoPath, worktreePath, branch, env)
       
       const worktreeVerified = await executeCommand(['test', '-d', worktreePath])
         .then(() => true)
@@ -313,34 +367,44 @@ export async function cloneRepo(
           if (verifyRemoved.trim() === 'exists') {
             throw new Error(`Failed to remove existing directory: ${worktreeDirName}`)
           }
-        } catch (cleanupError: any) {
+        } catch (cleanupError: unknown) {
           logger.error(`Failed to clean up existing directory: ${worktreeDirName}`, cleanupError)
           throw new Error(`Cannot clone: directory ${worktreeDirName} exists and could not be removed`)
         }
       }
       
       try {
-        await executeGitWithFallback(['git', 'clone', '-b', branch, normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env })
-      } catch (error: any) {
-        if (error.message.includes('destination path') && error.message.includes('already exists')) {
+        await executeCommand(['git', 'clone', '-b', branch, normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env, timeout: GIT_CLONE_TIMEOUT })
+      } catch (error: unknown) {
+        if (isErrorWithMessage(error) && getErrorMessage(error).includes('destination path') && getErrorMessage(error).includes('already exists')) {
           logger.error(`Clone failed: directory still exists after cleanup attempt`)
           throw new Error(`Workspace directory ${worktreeDirName} already exists. Please delete it manually or contact support.`)
         }
         
-        logger.info(`Branch '${branch}' not found during clone, cloning default branch and creating branch locally`)
-        await executeGitWithFallback(['git', 'clone', normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env })
-        let localBranchExists = 'missing'
-        try {
-          await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'rev-parse', '--verify', `refs/heads/${branch}`])
-          localBranchExists = 'exists'
-        } catch {
-          localBranchExists = 'missing'
-        }
+        if (branch && isErrorWithMessage(error) && (getErrorMessage(error).includes('Remote branch') || getErrorMessage(error).includes('not found'))) {
+          logger.info(`Branch '${branch}' not found, cloning default branch and creating branch locally`)
+          try {
+            await executeCommand(['git', 'clone', normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env, timeout: GIT_CLONE_TIMEOUT })
+          } catch (cloneError: unknown) {
+            throw enhanceCloneError(cloneError, normalizedRepoUrl, getErrorMessage(cloneError))
+          }
+          
+          let localBranchExists = 'missing'
+          try {
+            await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'rev-parse', '--verify', `refs/heads/${branch}`])
+            localBranchExists = 'exists'
+          } catch {
+            localBranchExists = 'missing'
+          }
+          
           if (localBranchExists.trim() === 'missing') {
             await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'checkout', '-b', branch])
           } else {
             await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'checkout', branch])
           }
+        } else {
+          throw enhanceCloneError(error, normalizedRepoUrl, getErrorMessage(error))
+        }
       }
     } else {
       if (baseRepoExists.trim() === 'exists') {
@@ -352,7 +416,7 @@ export async function cloneRepo(
           
           if (branch) {
             logger.info(`Switching to branch: ${branch}`)
-             await executeGitWithFallback(['git', '-C', path.resolve(getReposPath(), baseRepoDirName), 'fetch', '--all'], { cwd: getReposPath(), env })
+             await executeCommand(['git', '-C', path.resolve(getReposPath(), baseRepoDirName), 'fetch', '--all'], { cwd: getReposPath(), env })
 
             
             let remoteBranchExists = false
@@ -399,30 +463,35 @@ export async function cloneRepo(
         try {
           await executeCommand(['rm', '-rf', worktreeDirName], getReposPath())
           const verifyRemoved = await executeCommand(['bash', '-c', `test -d ${worktreeDirName} && echo exists || echo removed`], getReposPath())
-          if (verifyRemoved.trim() === 'exists') {
-            throw new Error(`Failed to remove existing directory: ${worktreeDirName}`)
-          }
-        } catch (cleanupError: any) {
-          logger.error(`Failed to clean up existing directory: ${worktreeDirName}`, cleanupError)
-          throw new Error(`Cannot clone: directory ${worktreeDirName} exists and could not be removed`)
+        if (verifyRemoved.trim() === 'exists') {
+          throw new Error(`Failed to remove existing directory: ${worktreeDirName}`)
         }
+      } catch (cleanupError: unknown) {
+        logger.error(`Failed to clean up existing directory: ${worktreeDirName}`, cleanupError)
+        throw new Error(`Cannot clone: directory ${worktreeDirName} exists and could not be removed`)
       }
-      
+    }
+    
       try {
         const cloneCmd = branch
           ? ['git', 'clone', '-b', branch, normalizedRepoUrl, worktreeDirName]
           : ['git', 'clone', normalizedRepoUrl, worktreeDirName]
         
-        await executeGitWithFallback(cloneCmd, { cwd: getReposPath(), env })
-      } catch (error: any) {
-        if (error.message.includes('destination path') && error.message.includes('already exists')) {
+        await executeCommand(cloneCmd, { cwd: getReposPath(), env, timeout: GIT_CLONE_TIMEOUT })
+      } catch (error: unknown) {
+        if (isErrorWithMessage(error) && getErrorMessage(error).includes('destination path') && getErrorMessage(error).includes('already exists')) {
           logger.error(`Clone failed: directory still exists after cleanup attempt`)
           throw new Error(`Workspace directory ${worktreeDirName} already exists. Please delete it manually or contact support.`)
         }
         
-        if (branch && (error.message.includes('Remote branch') || error.message.includes('not found'))) {
+        if (branch && isErrorWithMessage(error) && (getErrorMessage(error).includes('Remote branch') || getErrorMessage(error).includes('not found'))) {
           logger.info(`Branch '${branch}' not found, cloning default branch and creating branch locally`)
-          await executeGitWithFallback(['git', 'clone', normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env })
+          try {
+            await executeCommand(['git', 'clone', normalizedRepoUrl, worktreeDirName], { cwd: getReposPath(), env, timeout: GIT_CLONE_TIMEOUT })
+          } catch (cloneError: unknown) {
+            throw enhanceCloneError(cloneError, normalizedRepoUrl, getErrorMessage(cloneError))
+          }
+          
           let localBranchExists = 'missing'
           try {
             await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'rev-parse', '--verify', `refs/heads/${branch}`])
@@ -437,7 +506,7 @@ export async function cloneRepo(
             await executeCommand(['git', '-C', path.resolve(getReposPath(), worktreeDirName), 'checkout', branch])
           }
         } else {
-          throw error
+          throw enhanceCloneError(error, normalizedRepoUrl, getErrorMessage(error))
         }
       }
     }
@@ -445,64 +514,25 @@ export async function cloneRepo(
     db.updateRepoStatus(database, repo.id, 'ready')
     logger.info(`Repo ready: ${normalizedRepoUrl}${branch ? `#${branch}` : ''}${shouldUseWorktree ? ' (worktree)' : ''}`)
     return { ...repo, cloneStatus: 'ready' }
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`Failed to create repo: ${normalizedRepoUrl}${branch ? `#${branch}` : ''}`, error)
     db.deleteRepo(database, repo.id)
     throw error
   }
 }
 
-export async function getCurrentBranch(repo: Repo): Promise<string | null> {
+export async function getCurrentBranch(repo: Repo, env: Record<string, string>): Promise<string | null> {
   const repoPath = path.resolve(getReposPath(), repo.localPath)
-  const branch = await safeGetCurrentBranch(repoPath)
+  const branch = await safeGetCurrentBranch(repoPath, env)
   return branch || repo.branch || repo.defaultBranch || null
 }
 
-export async function listBranches(database: Database, repo: Repo): Promise<{ local: string[], all: string[], current: string | null }> {
-  try {
-    const repoPath = path.resolve(getReposPath(), repo.localPath)
-    const env = getGitEnv(database, repo.repoUrl)
-
-    if (!repo.isLocal) {
-      try {
-        await executeGitWithFallback(['git', '-C', repoPath, 'fetch', '--all'], { env })
-      } catch (error) {
-        logger.warn(`Failed to fetch remote for repo ${repo.id}, using cached branch info:`, error)
-      }
-    }
-    
-    const localBranchesOutput = await executeCommand(['git', '-C', repoPath, 'branch', '--format=%(refname:short)'])
-    const localBranches = localBranchesOutput.trim().split('\n').filter(b => b.trim())
-    
-    let remoteBranches: string[] = []
-    try {
-      const remoteBranchesOutput = await executeCommand(['git', '-C', repoPath, 'branch', '-r', '--format=%(refname:short)'])
-      remoteBranches = remoteBranchesOutput.trim().split('\n')
-        .filter(b => b.trim() && !b.includes('HEAD') && b.includes('/'))
-    } catch (error) {
-      logger.warn(`Failed to get remote branches for repo ${repo.id}:`, error)
-    }
-    
-    const current = await getCurrentBranch(repo)
-    
-    const remoteOnlyBranches = remoteBranches
-      .map(b => b.replace(/^[^/]+\//, ''))
-      .filter(b => !localBranches.includes(b))
-    
-    const allBranches = [...localBranches, ...remoteOnlyBranches]
-    
-    return {
-      local: localBranches,
-      all: allBranches,
-      current
-    }
-  } catch (error: any) {
-    logger.error(`Failed to list branches for repo ${repo.id}:`, error)
-    throw error
-  }
-}
-
-export async function switchBranch(database: Database, repoId: number, branch: string): Promise<void> {
+export async function switchBranch(
+  database: Database,
+  gitAuthService: GitAuthService,
+  repoId: number,
+  branch: string
+): Promise<void> {
   const repo = db.getRepoById(database, repoId)
   if (!repo) {
     throw new Error(`Repo not found: ${repoId}`)
@@ -510,7 +540,7 @@ export async function switchBranch(database: Database, repoId: number, branch: s
   
   try {
     const repoPath = path.resolve(getReposPath(), repo.localPath)
-    const env = getGitEnv(database, repo.repoUrl)
+    const env = gitAuthService.getGitEnvironment()
 
     const sanitizedBranch = branch
       .replace(/^refs\/heads\//, '')
@@ -519,66 +549,20 @@ export async function switchBranch(database: Database, repoId: number, branch: s
 
     logger.info(`Switching to branch: ${sanitizedBranch} in ${repo.localPath}`)
 
-    await executeGitWithFallback(['git', '-C', repoPath, 'fetch', '--all'], { env })
+    await executeCommand(['git', '-C', repoPath, 'fetch', '--all'], { env })
     
-    let localBranchExists = false
-    try {
-      await executeCommand(['git', '-C', repoPath, 'rev-parse', '--verify', `refs/heads/${sanitizedBranch}`])
-      localBranchExists = true
-    } catch {
-      localBranchExists = false
-    }
-    
-    let remoteBranchExists = false
-    try {
-      await executeCommand(['git', '-C', repoPath, 'rev-parse', '--verify', `refs/remotes/origin/${sanitizedBranch}`])
-      remoteBranchExists = true
-    } catch {
-      remoteBranchExists = false
-    }
-    
-    if (localBranchExists) {
-      logger.info(`Checking out existing local branch: ${sanitizedBranch}`)
-      await executeCommand(['git', '-C', repoPath, 'checkout', sanitizedBranch])
-    } else if (remoteBranchExists) {
-      logger.info(`Checking out remote branch: ${sanitizedBranch}`)
-      await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch, `origin/${sanitizedBranch}`])
-    } else {
-      logger.info(`Creating new branch: ${sanitizedBranch}`)
-      await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch])
-    }
+    await checkoutBranchSafely(repoPath, sanitizedBranch, env)
     
     logger.info(`Successfully switched to branch: ${sanitizedBranch}`)
-  } catch (error: any) {
+
+    db.updateRepoBranch(database, repoId, sanitizedBranch)
+  } catch (error: unknown) {
     logger.error(`Failed to switch branch for repo ${repoId}:`, error)
     throw error
   }
 }
 
-export async function createBranch(database: Database, repoId: number, branch: string): Promise<void> {
-  const repo = db.getRepoById(database, repoId)
-  if (!repo) {
-    throw new Error(`Repo not found: ${repoId}`)
-  }
-  
-  try {
-    const repoPath = path.resolve(getReposPath(), repo.localPath)
-    
-    const sanitizedBranch = branch
-      .replace(/^refs\/heads\//, '')
-      .replace(/^refs\/remotes\//, '')
-      .replace(/^origin\//, '')
-
-    logger.info(`Creating new branch: ${sanitizedBranch} in ${repo.localPath}`)
-    await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch])
-    logger.info(`Successfully created and switched to branch: ${sanitizedBranch}`)
-  } catch (error: any) {
-    logger.error(`Failed to create branch for repo ${repoId}:`, error)
-    throw error
-  }
-}
-
-export async function pullRepo(database: Database, repoId: number): Promise<void> {
+export async function createBranch(database: Database, gitAuthService: GitAuthService, repoId: number, branch: string): Promise<void> {
   const repo = db.getRepoById(database, repoId)
   if (!repo) {
     throw new Error(`Repo not found: ${repoId}`)
@@ -590,14 +574,49 @@ export async function pullRepo(database: Database, repoId: number): Promise<void
   }
   
   try {
-    const env = getGitEnv(database, repo.repoUrl)
+    const repoPath = path.resolve(getReposPath(), repo.localPath)
+    const env = gitAuthService.getGitEnvironment()
+    
+    const sanitizedBranch = branch
+      .replace(/^refs\/heads\//, '')
+      .replace(/^refs\/remotes\//, '')
+      .replace(/^origin\//, '')
+
+    logger.info(`Creating new branch: ${sanitizedBranch} in ${repo.localPath}`)
+    await executeCommand(['git', '-C', repoPath, 'checkout', '-b', sanitizedBranch], { env })
+    logger.info(`Successfully created and switched to branch: ${sanitizedBranch}`)
+
+    db.updateRepoBranch(database, repoId, sanitizedBranch)
+  } catch (error: unknown) {
+    logger.error(`Failed to create branch for repo ${repoId}:`, error)
+    throw error
+  }
+}
+
+export async function pullRepo(
+  database: Database,
+  gitAuthService: GitAuthService,
+  repoId: number
+): Promise<void> {
+  const repo = db.getRepoById(database, repoId)
+  if (!repo) {
+    throw new Error(`Repo not found: ${repoId}`)
+  }
+  
+  if (repo.isLocal) {
+    logger.info(`Skipping pull for local repo: ${repo.localPath}`)
+    return
+  }
+  
+  try {
+    const env = gitAuthService.getGitEnvironment()
 
     logger.info(`Pulling repo: ${repo.repoUrl}`)
     await executeCommand(['git', '-C', path.resolve(getReposPath(), repo.localPath), 'pull'], { env })
     
     db.updateLastPulled(database, repoId)
     logger.info(`Repo pulled successfully: ${repo.repoUrl}`)
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`Failed to pull repo: ${repo.repoUrl}`, error)
     throw error
   }
@@ -608,97 +627,53 @@ export async function deleteRepoFiles(database: Database, repoId: number): Promi
   if (!repo) {
     throw new Error(`Repo not found: ${repoId}`)
   }
-  
-  const repoIdentifier = repo.repoUrl || repo.localPath
-  
-  try {
-    logger.info(`Deleting repo files: ${repoIdentifier}`)
-    
-    // Extract just the directory name from the localPath
-    const dirName = repo.localPath.split('/').pop() || repo.localPath
-    const fullPath = path.resolve(getReposPath(), dirName)
-    
-    // If this is a worktree, properly remove it from git first
-    if (repo.isWorktree && repo.branch && repo.repoUrl) {
-      const { name: repoName } = normalizeRepoUrl(repo.repoUrl)
-      const baseRepoPath = path.resolve(getReposPath(), repoName)
-      
-      logger.info(`Removing worktree: ${dirName} from base repo: ${baseRepoPath}`)
-      
-      try {
-        // First try to remove the worktree properly
-        await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', fullPath])
-        logger.info(`Successfully removed worktree: ${dirName}`)
-      } catch (worktreeError: any) {
-        logger.warn(`Failed to remove worktree with normal command, trying force: ${worktreeError.message}`)
-        
-        try {
-          // Try force removal
-          await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', '--force', fullPath])
-          logger.info(`Successfully force-removed worktree: ${dirName}`)
-        } catch (forceError: any) {
-          logger.warn(`Force worktree removal failed, trying prune: ${forceError.message}`)
-          
-          try {
-            // Prune worktree references and try again
-            await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'prune'])
-            await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', '--force', fullPath])
-            logger.info(`Successfully removed worktree after prune: ${dirName}`)
-          } catch (pruneError: any) {
-            logger.error(`All worktree removal methods failed: ${pruneError.message}`)
-            // Continue with directory removal anyway
-          }
-        }
-      }
+
+  const dirName = repo.localPath.split('/').pop() || repo.localPath
+  const fullPath = path.resolve(getReposPath(), dirName)
+
+  if (repo.isWorktree && repo.repoUrl) {
+    const { name: repoName } = normalizeRepoUrl(repo.repoUrl)
+    const baseRepoPath = path.resolve(getReposPath(), repoName)
+
+    try {
+      await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', '--force', fullPath])
+    } catch {
+      // Worktree removal failed, continue with directory removal
+    } finally {
+      await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'prune']).catch(() => {})
     }
-    
-    // Remove the directory
-    logger.info(`Removing directory: ${dirName} from ${getReposPath()}`)
-    await executeCommand(['rm', '-rf', dirName], getReposPath())
-    
-    const checkExists = await executeCommand(['bash', '-c', `test -d ${dirName} && echo exists || echo deleted`], getReposPath())
-    if (checkExists.trim() === 'exists') {
-      logger.error(`Directory still exists after deletion: ${dirName}`)
-      throw new Error(`Failed to delete workspace directory: ${dirName}`)
-    }
-    
-    // If this was a worktree, also prune the base repo to clean up any remaining references
-    if (repo.isWorktree && repo.branch && repo.repoUrl) {
-      const { name: repoName } = normalizeRepoUrl(repo.repoUrl)
-      const baseRepoPath = path.resolve(getReposPath(), repoName)
-      
-      try {
-        logger.info(`Pruning worktree references in base repo: ${baseRepoPath}`)
-        await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'prune'])
-      } catch (pruneError: any) {
-        logger.warn(`Failed to prune worktree references: ${pruneError.message}`)
-      }
-    }
-    
-    db.deleteRepo(database, repoId)
-    logger.info(`Repo deleted successfully: ${repoIdentifier}`)
-  } catch (error: any) {
-    logger.error(`Failed to delete repo: ${repoIdentifier}`, error)
-    throw error
   }
+
+  await executeCommand(['rm', '-rf', dirName], getReposPath())
+  db.deleteRepo(database, repoId)
 }
 
 function normalizeRepoUrl(url: string): { url: string; name: string } {
-  const shorthandMatch = url.match(/^([^\/]+)\/([^\/]+)$/)
-  if (shorthandMatch) {
-    const [, owner, repoName] = shorthandMatch as [string, string, string]
+  const sshMatch = url.match(/^git@([^:]+):(.+?)(?:\.git)?$/)
+  if (sshMatch) {
+    const [, host, pathPart] = sshMatch
+    const path = pathPart ?? ''
+    const repoName = path.split('/').pop() || `repo-${Date.now()}`
     return {
-      url: `https://github.com/${owner}/${repoName}`,
+      url: `https://${host}/${path.replace(/\.git$/, '')}`,
       name: repoName
     }
   }
 
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    const httpsUrl = url.replace(/^http:/, 'https:')
-    const urlWithoutGit = httpsUrl.replace(/\.git$/, '')
-    const match = urlWithoutGit.match(/\/([^\/]+)$/)
+  const shorthandMatch = url.match(/^([^/]+)\/([^/]+)$/)
+  if (shorthandMatch) {
+    const [, owner, repoName] = shorthandMatch
     return {
-      url: urlWithoutGit,
+      url: `https://github.com/${owner}/${repoName}`,
+      name: repoName ?? `repo-${Date.now()}`
+    }
+  }
+
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const httpsUrl = url.replace(/^http:/, 'https:').replace(/\.git$/, '')
+    const match = httpsUrl.match(/([^/]+)$/)
+    return {
+      url: httpsUrl,
       name: match?.[1] || `repo-${Date.now()}`
     }
   }
@@ -713,225 +688,56 @@ export async function cleanupOrphanedDirectories(database: Database): Promise<vo
   try {
     const reposPath = getReposPath()
     await ensureDirectoryExists(reposPath)
-    
+
     const dirResult = await executeCommand(['ls', '-1'], reposPath).catch(() => '')
     const directories = dirResult.split('\n').filter(d => d.trim())
-    
+
     if (directories.length === 0) {
       return
     }
-    
+
     const allRepos = db.listRepos(database)
     const trackedPaths = new Set(allRepos.map(r => r.localPath.split('/').pop()))
-    
     const orphanedDirs = directories.filter(dir => !trackedPaths.has(dir))
-    
-    if (orphanedDirs.length > 0) {
-      logger.info(`Found ${orphanedDirs.length} orphaned directories: ${orphanedDirs.join(', ')}`)
-      
-      for (const dir of orphanedDirs) {
-        try {
-          logger.info(`Removing orphaned directory: ${dir}`)
-          await executeCommand(['rm', '-rf', dir], reposPath)
-        } catch (error) {
-          logger.warn(`Failed to remove orphaned directory ${dir}:`, error)
-        }
-      }
-    }
-  } catch (error) {
-    logger.warn('Failed to cleanup orphaned directories:', error)
-  }
-}
 
-export async function cleanupStaleRepoEntries(database: Database): Promise<{ removed: number }> {
-  let removed = 0
-  const fs = await import('fs/promises')
-  
-  try {
-    const allRepos = db.listRepos(database)
-    logger.info(`Checking ${allRepos.length} repos for stale entries`)
-    
-    for (const repo of allRepos) {
-      const repoPath = repo.fullPath
-      
-      try {
-        const stat = await fs.stat(repoPath).catch(() => null)
-        const exists = stat?.isDirectory() ?? false
-        
-        if (!exists) {
-          logger.info(`Removing stale repo entry (path does not exist): ${repoPath}`)
-          db.deleteRepo(database, repo.id)
-          removed++
-        }
-      } catch (error) {
-        logger.warn(`Error checking repo path ${repoPath}:`, error)
-      }
+    for (const dir of orphanedDirs) {
+      await executeCommand(['rm', '-rf', dir], reposPath).catch(() => {})
     }
-    
-    if (removed > 0) {
-      logger.info(`Cleaned up ${removed} stale repo entries`)
-    }
-    
-    return { removed }
-  } catch (error) {
-    logger.warn('Failed to cleanup stale repo entries:', error)
-    return { removed }
-  }
-}
-
-async function checkWorktreeExists(baseRepoPath: string, worktreePath: string): Promise<boolean> {
-  try {
-    const worktreeList = await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'list', '--porcelain'])
-    return worktreeList.includes(worktreePath)
   } catch {
-    return false
+    // Cleanup is best-effort
   }
 }
 
-async function removeStaleWorktree(baseRepoPath: string, worktreePath: string): Promise<boolean> {
-  try {
-    logger.info(`Attempting to remove stale worktree: ${worktreePath}`)
-    await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', '--force', worktreePath])
-    logger.info(`Successfully removed stale worktree: ${worktreePath}`)
-    return true
-  } catch (error: any) {
-    logger.warn(`Failed to remove stale worktree ${worktreePath}:`, error.message)
-    return false
-  }
-}
-
-async function pruneWorktreeReferences(baseRepoPath: string): Promise<void> {
-  try {
-    logger.info(`Pruning worktree references for: ${baseRepoPath}`)
-    await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'prune'])
-    logger.info(`Successfully pruned worktree references`)
-  } catch (error: any) {
-    logger.warn(`Failed to prune worktree references:`, error.message)
-  }
-}
-
-async function cleanupStaleWorktree(baseRepoPath: string, worktreePath: string): Promise<boolean> {
-  try {
-    logger.info(`Cleaning up stale worktree: ${worktreePath}`)
-    
-    const worktreeList = await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'list', '--porcelain'])
-    const lines = worktreeList.split('\n').filter(line => line.trim())
-    
-    for (const line of lines) {
-      if (line.includes(worktreePath)) {
-        logger.info(`Found worktree reference: ${line}`)
-        await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'remove', '--force', worktreePath])
-        logger.info(`Successfully removed worktree: ${worktreePath}`)
-        return true
-      }
-    }
-    
-    logger.info(`No worktree reference found for ${worktreePath}, attempting prune`)
-    await pruneWorktreeReferences(baseRepoPath)
-    return true
-  } catch (error: any) {
-    logger.warn(`Failed to cleanup worktree ${worktreePath}:`, error.message)
-    return false
-  }
-}
-
-async function isBranchCheckedOutInMainWorktree(baseRepoPath: string, branch: string): Promise<boolean> {
-  const currentBranch = await safeGetCurrentBranch(baseRepoPath)
-  return currentBranch === branch
-}
-
-async function getAvailableBranchForWorktree(baseRepoPath: string, targetBranch: string): Promise<string> {
-  const currentBranch = await safeGetCurrentBranch(baseRepoPath)
-  
-  if (!currentBranch) {
-    return targetBranch
-  }
-  
-  if (currentBranch === targetBranch) {
-    logger.info(`Branch '${targetBranch}' is currently checked out in main worktree`)
-    
-    const defaultBranch = await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).then(ref => ref.trim()).catch(() => 'main')
-    const cleanDefaultBranch = defaultBranch.replace('origin/', '')
-    
-    if (cleanDefaultBranch !== currentBranch) {
-      logger.info(`Switching to '${cleanDefaultBranch}' to free up '${targetBranch}' for worktree`)
-      await executeCommand(['git', '-C', baseRepoPath, 'checkout', cleanDefaultBranch])
-      return targetBranch
-    } else {
-      logger.warn(`Cannot free up branch '${targetBranch}' - it's the default branch`)
-      return `${targetBranch}-worktree-${Date.now()}`
-    }
-  }
-  
-  return targetBranch
-}
-
-async function createWorktreeSafely(baseRepoPath: string, worktreePath: string, branch: string): Promise<void> {
-  const currentBranch = await safeGetCurrentBranch(baseRepoPath)
+async function createWorktreeSafely(baseRepoPath: string, worktreePath: string, branch: string, env: Record<string, string>): Promise<void> {
+  const currentBranch = await safeGetCurrentBranch(baseRepoPath, env)
   if (currentBranch === branch) {
-    logger.info(`Branch '${branch}' is checked out in main repo, switching away...`)
-    const defaultBranch = await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--abbrev-ref', 'origin/HEAD'])
+    const defaultBranch = await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--abbrev-ref', 'origin/HEAD'], { env })
       .then(ref => ref.trim().replace('origin/', ''))
       .catch(() => 'main')
-    
-    try {
-      await executeCommand(['git', '-C', baseRepoPath, 'checkout', defaultBranch])
-    } catch {
-      logger.warn(`Could not switch to ${defaultBranch}, trying 'main'`)
-      await executeCommand(['git', '-C', baseRepoPath, 'checkout', 'main'])
-    }
+
+    await executeCommand(['git', '-C', baseRepoPath, 'checkout', defaultBranch], { env })
+      .catch(() => executeCommand(['git', '-C', baseRepoPath, 'checkout', 'main'], { env }))
   }
-  
+
+  await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'prune'], { env }).catch(() => {})
+
   let branchExists = false
   try {
-    await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--verify', `refs/heads/${branch}`])
+    await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--verify', `refs/heads/${branch}`], { env, silent: true })
     branchExists = true
   } catch {
     try {
-      await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--verify', `refs/remotes/origin/${branch}`])
+      await executeCommand(['git', '-C', baseRepoPath, 'rev-parse', '--verify', `refs/remotes/origin/${branch}`], { env, silent: true })
       branchExists = true
     } catch {
       branchExists = false
     }
   }
-  
-  const maxRetries = 3
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logger.info(`Creating worktree (attempt ${attempt}/${maxRetries}): ${branch} -> ${worktreePath}`)
-      
-      if (branchExists) {
-        await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'add', worktreePath, branch])
-      } else {
-        logger.info(`Branch '${branch}' does not exist, creating it in worktree`)
-        await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'add', '-b', branch, worktreePath])
-      }
-      
-      logger.info(`Successfully created worktree: ${worktreePath}`)
-      return
-    } catch (error: any) {
-      const isLastAttempt = attempt === maxRetries
-      const errorMessage = error.message || ''
-      
-      if (errorMessage.includes('already used by worktree')) {
-        logger.warn(`Worktree already exists, attempting cleanup (attempt ${attempt}/${maxRetries})`)
-        
-        const cleaned = await cleanupStaleWorktree(baseRepoPath, worktreePath)
-        if (!cleaned && isLastAttempt) {
-          throw new Error(`Failed to create worktree: '${branch}' is already used by a worktree and cleanup failed. Manual intervention may be required.`)
-        }
-        
-        if (!cleaned) {
-          logger.warn(`Cleanup failed, will retry...`)
-          continue
-        }
-      } else if (isLastAttempt) {
-        throw new Error(`Failed to create worktree after ${maxRetries} attempts: ${errorMessage}`)
-      } else {
-        logger.warn(`Worktree creation failed (attempt ${attempt}/${maxRetries}): ${errorMessage}, retrying...`)
-      }
-    }
+
+  if (branchExists) {
+    await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'add', worktreePath, branch], { env })
+  } else {
+    await executeCommand(['git', '-C', baseRepoPath, 'worktree', 'add', '-b', branch, worktreePath], { env })
   }
 }
 

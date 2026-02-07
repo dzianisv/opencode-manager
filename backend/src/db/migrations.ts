@@ -1,11 +1,20 @@
 import { Database } from 'bun:sqlite'
 import { logger } from '../utils/logger'
 
+interface ColumnInfo {
+  cid: number
+  name: string
+  type: string
+  notnull: number
+  dflt_value: unknown
+  pk: number
+}
+
 export function runMigrations(db: Database): void {
   try {
-    const tableInfo = db.prepare("PRAGMA table_info(repos)").all() as any[]
+    const tableInfo = db.prepare("PRAGMA table_info(repos)").all() as ColumnInfo[]
     
-    const repoUrlColumn = tableInfo.find((col: any) => col.name === 'repo_url')
+    const repoUrlColumn = tableInfo.find((col: ColumnInfo) => col.name === 'repo_url')
     if (repoUrlColumn && repoUrlColumn.notnull === 1) {
       logger.info('Migrating repos table to allow nullable repo_url for local repos')
       db.run('BEGIN TRANSACTION')
@@ -26,7 +35,7 @@ export function runMigrations(db: Database): void {
           )
         `)
         
-        const existingColumns = tableInfo.map((col: any) => col.name)
+        const existingColumns = tableInfo.map((col: ColumnInfo) => col.name)
         const columnsToCopy = ['id', 'repo_url', 'local_path', 'branch', 'default_branch', 'clone_status', 'cloned_at', 'last_pulled', 'opencode_config_name', 'is_worktree', 'is_local']
           .filter(col => existingColumns.includes(col))
         
@@ -107,7 +116,10 @@ export function runMigrations(db: Database): void {
     }
     
     try {
-      const repos = db.prepare("SELECT id, local_path FROM repos WHERE local_path LIKE 'repos/%'").all() as any[]
+      const repos = db.prepare("SELECT id, local_path FROM repos WHERE local_path LIKE 'repos/%'").all() as Array<{
+        id: number
+        local_path: string
+      }>
       if (repos.length > 0) {
         logger.info(`Migrating ${repos.length} repos to remove 'repos/' prefix from local_path`)
         const updateStmt = db.prepare("UPDATE repos SET local_path = ? WHERE id = ?")
@@ -121,56 +133,56 @@ export function runMigrations(db: Database): void {
       logger.error('Failed to migrate local_path format:', error)
     }
     
-    try {
-      db.run(`
-        CREATE TABLE IF NOT EXISTS scheduled_tasks (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          schedule_type TEXT NOT NULL,
-          schedule_value TEXT NOT NULL,
-          command_type TEXT NOT NULL,
-          command_config TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'active',
-          last_run_at INTEGER,
-          next_run_at INTEGER,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        )
-      `)
-      db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_status ON scheduled_tasks(status)')
-      logger.info('Scheduled tasks table created/verified')
-    } catch (error) {
-      logger.debug('Scheduled tasks table might already exist:', error)
-    }
-    
-    try {
-      db.run(`
-        CREATE TABLE IF NOT EXISTS telegram_sessions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          chat_id TEXT UNIQUE NOT NULL,
-          opencode_session_id TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        )
-      `)
-      db.run('CREATE INDEX IF NOT EXISTS idx_telegram_sessions_chat_id ON telegram_sessions(chat_id)')
-      
-      db.run(`
-        CREATE TABLE IF NOT EXISTS telegram_allowlist (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          chat_id TEXT UNIQUE NOT NULL,
-          added_at INTEGER NOT NULL
-        )
-      `)
-      db.run('CREATE INDEX IF NOT EXISTS idx_telegram_allowlist_chat_id ON telegram_allowlist(chat_id)')
-      logger.info('Telegram tables created/verified')
-    } catch (error) {
-      logger.debug('Telegram tables might already exist:', error)
-    }
+    migrateGitTokenToCredentials(db)
     
     logger.info('Database migrations completed successfully')
   } catch (error) {
     logger.error('Failed to run database migrations:', error)
     throw error
+  }
+}
+
+function migrateGitTokenToCredentials(db: Database): void {
+  try {
+    const rows = db.prepare('SELECT user_id, preferences FROM user_preferences').all() as Array<{
+      user_id: string
+      preferences: string
+    }>
+
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.preferences) as Record<string, unknown>
+        const gitToken = parsed.gitToken as string | undefined
+        const existingCredentials = parsed.gitCredentials as Array<unknown> | undefined
+
+        if (!gitToken) {
+          continue
+        }
+
+        if (existingCredentials && existingCredentials.length > 0) {
+          continue
+        }
+
+        const { gitToken: _gitToken, ...rest } = parsed
+        void _gitToken
+        const migrated = {
+          ...rest,
+          gitCredentials: [{
+            name: 'GitHub',
+            host: 'https://github.com/',
+            token: gitToken,
+          }],
+        }
+
+        db.prepare('UPDATE user_preferences SET preferences = ? WHERE user_id = ?')
+          .run(JSON.stringify(migrated), row.user_id)
+
+        logger.info(`Migrated gitToken to gitCredentials for user: ${row.user_id}`)
+      } catch (parseError) {
+        logger.error(`Failed to parse preferences for user ${row.user_id}:`, parseError)
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to migrate gitToken to gitCredentials:', error)
   }
 }

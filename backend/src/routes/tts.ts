@@ -7,8 +7,6 @@ import { join } from 'path'
 import { SettingsService } from '../services/settings'
 import { logger } from '../utils/logger'
 import { getWorkspacePath } from '@opencode-manager/shared/config/env'
-import { chatterboxServerManager } from '../services/chatterbox'
-import { coquiServerManager } from '../services/coqui'
 
 const TTS_CACHE_DIR = join(getWorkspacePath(), 'cache', 'tts')
 const DISCOVERY_CACHE_DIR = join(getWorkspacePath(), 'cache', 'discovery')
@@ -304,149 +302,6 @@ export async function getCacheStats(): Promise<{ count: number; sizeBytes: numbe
 
 export { generateCacheKey, ensureCacheDir, getCachedAudio, cacheAudio, getCacheSize, cleanupOldestFiles }
 
-import type { Context } from 'hono'
-import type { TTSConfig } from '@opencode-manager/shared'
-
-async function handleChatterboxSynthesis(
-  c: Context, 
-  text: string, 
-  ttsConfig: TTSConfig,
-  abortController: AbortController
-): Promise<Response> {
-  const status = chatterboxServerManager.getStatus()
-  
-  if (!status.running) {
-    logger.info('Chatterbox server not running, attempting to start...')
-    try {
-      await chatterboxServerManager.start()
-    } catch (error) {
-      logger.error('Failed to start Chatterbox server:', error)
-      return c.json({ 
-        error: 'Chatterbox server not available', 
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 503)
-    }
-  }
-  
-  const voice = ttsConfig.voice || 'default'
-  const exaggeration = ttsConfig.chatterboxExaggeration ?? 0.5
-  const cfgWeight = ttsConfig.chatterboxCfgWeight ?? 0.5
-  
-  const cacheKey = generateCacheKey(text, voice, 'chatterbox', exaggeration)
-  
-  await ensureCacheDir()
-  
-  const cachedAudio = await getCachedAudio(cacheKey)
-  if (cachedAudio) {
-    logger.info(`Chatterbox cache hit: ${cacheKey.substring(0, 8)}...`)
-    return new Response(cachedAudio, {
-      headers: {
-        'Content-Type': 'audio/wav',
-        'X-Cache': 'HIT',
-      },
-    })
-  }
-  
-  if (abortController.signal.aborted) {
-    return new Response(null, { status: 499 })
-  }
-  
-  logger.info(`Chatterbox cache miss, synthesizing: ${cacheKey.substring(0, 8)}...`)
-  
-  try {
-    const audioBuffer = await chatterboxServerManager.synthesize(text, {
-      voice,
-      exaggeration,
-      cfgWeight
-    })
-    
-    await cacheAudio(cacheKey, audioBuffer)
-    logger.info(`Chatterbox audio cached: ${cacheKey.substring(0, 8)}...`)
-    
-    return new Response(audioBuffer, {
-      headers: {
-        'Content-Type': 'audio/wav',
-        'X-Cache': 'MISS',
-      },
-    })
-  } catch (error) {
-    logger.error('Chatterbox synthesis failed:', error)
-    return c.json({ 
-      error: 'Chatterbox synthesis failed', 
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, 500)
-  }
-}
-
-async function handleCoquiSynthesis(
-  c: Context, 
-  text: string, 
-  ttsConfig: TTSConfig,
-  abortController: AbortController
-): Promise<Response> {
-  const status = coquiServerManager.getStatus()
-  
-  if (!status.running) {
-    logger.info('Coqui TTS server not running, attempting to start...')
-    try {
-      await coquiServerManager.start()
-    } catch (error) {
-      logger.error('Failed to start Coqui TTS server:', error)
-      return c.json({ 
-        error: 'Coqui TTS server not available', 
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 503)
-    }
-  }
-  
-  const voice = ttsConfig.voice || 'default'
-  const speed = ttsConfig.speed ?? 1.0
-  
-  const cacheKey = generateCacheKey(text, voice, 'coqui-jenny', speed)
-  
-  await ensureCacheDir()
-  
-  const cachedAudio = await getCachedAudio(cacheKey)
-  if (cachedAudio) {
-    logger.info(`Coqui cache hit: ${cacheKey.substring(0, 8)}...`)
-    return new Response(cachedAudio, {
-      headers: {
-        'Content-Type': 'audio/wav',
-        'X-Cache': 'HIT',
-      },
-    })
-  }
-  
-  if (abortController.signal.aborted) {
-    return new Response(null, { status: 499 })
-  }
-  
-  logger.info(`Coqui cache miss, synthesizing: ${cacheKey.substring(0, 8)}...`)
-  
-  try {
-    const audioBuffer = await coquiServerManager.synthesize(text, {
-      voice,
-      speed
-    })
-    
-    await cacheAudio(cacheKey, audioBuffer)
-    logger.info(`Coqui audio cached: ${cacheKey.substring(0, 8)}...`)
-    
-    return new Response(audioBuffer, {
-      headers: {
-        'Content-Type': 'audio/wav',
-        'X-Cache': 'MISS',
-      },
-    })
-  } catch (error) {
-    logger.error('Coqui synthesis failed:', error)
-    return c.json({ 
-      error: 'Coqui synthesis failed', 
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, 500)
-  }
-}
-
 export function createTTSRoutes(db: Database) {
   const app = new Hono()
 
@@ -469,20 +324,6 @@ export function createTTSRoutes(db: Database) {
       
       if (!ttsConfig?.enabled) {
         return c.json({ error: 'TTS is not enabled' }, 400)
-      }
-      
-      const provider = ttsConfig.provider || 'external'
-      
-      if (provider === 'chatterbox') {
-        return await handleChatterboxSynthesis(c, text, ttsConfig, abortController)
-      }
-      
-      if (provider === 'coqui') {
-        return await handleCoquiSynthesis(c, text, ttsConfig, abortController)
-      }
-      
-      if (provider === 'builtin') {
-        return c.json({ error: 'Builtin TTS is handled client-side' }, 400)
       }
       
       if (!ttsConfig.apiKey) {
@@ -535,6 +376,7 @@ export function createTTSRoutes(db: Database) {
         logger.error(`TTS API error: ${response.status} - ${errorText}`)
         const status = response.status >= 400 && response.status < 600 ? response.status as 400 | 500 : 500
         
+        // Try to parse error details for better frontend display
         let errorDetails = errorText
         try {
           const errorJson = JSON.parse(errorText)
@@ -546,6 +388,7 @@ export function createTTSRoutes(db: Database) {
             errorDetails = errorJson.message
           }
         } catch {
+          // Use raw error text if parsing fails
         }
         
         return c.json({ 
@@ -681,188 +524,16 @@ export function createTTSRoutes(db: Database) {
     const settings = settingsService.getSettings(userId)
     const ttsConfig = settings.preferences.tts
     const cacheStats = await getCacheStats()
-    const chatterboxStatus = chatterboxServerManager.getStatus()
-    const coquiStatus = coquiServerManager.getStatus()
     
     return c.json({
       enabled: ttsConfig?.enabled || false,
-      configured: !!(ttsConfig?.apiKey) || ttsConfig?.provider === 'chatterbox' || ttsConfig?.provider === 'coqui' || ttsConfig?.provider === 'builtin',
-      provider: ttsConfig?.provider || 'external',
+      configured: !!(ttsConfig?.apiKey),
       cache: {
         ...cacheStats,
         maxSizeMB: MAX_CACHE_SIZE_MB,
         ttlHours: CACHE_TTL_MS / (60 * 60 * 1000)
-      },
-      chatterbox: {
-        running: chatterboxStatus.running,
-        device: chatterboxStatus.device,
-        cudaAvailable: chatterboxStatus.cudaAvailable,
-        error: chatterboxStatus.error
-      },
-      coqui: {
-        running: coquiStatus.running,
-        device: coquiStatus.device,
-        model: coquiStatus.model,
-        cudaAvailable: coquiStatus.cudaAvailable,
-        error: coquiStatus.error
       }
     })
-  })
-
-  app.get('/chatterbox/status', async (c) => {
-    const status = chatterboxServerManager.getStatus()
-    return c.json(status)
-  })
-
-  app.post('/chatterbox/start', async (c) => {
-    try {
-      await chatterboxServerManager.start()
-      return c.json({ success: true, status: chatterboxServerManager.getStatus() })
-    } catch (error) {
-      logger.error('Failed to start Chatterbox server:', error)
-      return c.json({ 
-        error: 'Failed to start Chatterbox server',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.post('/chatterbox/stop', async (c) => {
-    try {
-      await chatterboxServerManager.stop()
-      return c.json({ success: true })
-    } catch (error) {
-      logger.error('Failed to stop Chatterbox server:', error)
-      return c.json({ 
-        error: 'Failed to stop Chatterbox server',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.get('/chatterbox/voices', async (c) => {
-    try {
-      const voices = await chatterboxServerManager.getVoices()
-      return c.json(voices)
-    } catch (error) {
-      logger.error('Failed to get Chatterbox voices:', error)
-      return c.json({ 
-        error: 'Failed to get voices',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.post('/chatterbox/voices/upload', async (c) => {
-    try {
-      const formData = await c.req.formData()
-      const audio = formData.get('audio') as File | null
-      const name = formData.get('name') as string | null
-
-      if (!audio || !name) {
-        return c.json({ error: 'Audio file and name are required' }, 400)
-      }
-
-      const audioBuffer = Buffer.from(await audio.arrayBuffer())
-      const result = await chatterboxServerManager.uploadVoice(audioBuffer, name, audio.name)
-      
-      return c.json({ success: true, ...result })
-    } catch (error) {
-      logger.error('Failed to upload voice:', error)
-      return c.json({ 
-        error: 'Failed to upload voice',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.delete('/chatterbox/voices/:voiceId', async (c) => {
-    try {
-      const voiceId = c.req.param('voiceId')
-      await chatterboxServerManager.deleteVoice(voiceId)
-      return c.json({ success: true })
-    } catch (error) {
-      logger.error('Failed to delete voice:', error)
-      return c.json({ 
-        error: 'Failed to delete voice',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.get('/coqui/status', async (c) => {
-    const status = coquiServerManager.getStatus()
-    return c.json(status)
-  })
-
-  app.post('/coqui/start', async (c) => {
-    try {
-      await coquiServerManager.start()
-      return c.json({ success: true, status: coquiServerManager.getStatus() })
-    } catch (error) {
-      logger.error('Failed to start Coqui TTS server:', error)
-      return c.json({ 
-        error: 'Failed to start Coqui TTS server',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.post('/coqui/stop', async (c) => {
-    try {
-      await coquiServerManager.stop()
-      return c.json({ success: true })
-    } catch (error) {
-      logger.error('Failed to stop Coqui TTS server:', error)
-      return c.json({ 
-        error: 'Failed to stop Coqui TTS server',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.get('/coqui/voices', async (c) => {
-    try {
-      const voices = await coquiServerManager.getVoices()
-      return c.json(voices)
-    } catch (error) {
-      logger.error('Failed to get Coqui voices:', error)
-      return c.json({ 
-        error: 'Failed to get voices',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.get('/coqui/models', async (c) => {
-    try {
-      const models = await coquiServerManager.getModels()
-      return c.json(models)
-    } catch (error) {
-      logger.error('Failed to get Coqui models:', error)
-      return c.json({ 
-        error: 'Failed to get models',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
-  })
-
-  app.post('/coqui/models/change', async (c) => {
-    try {
-      const body = await c.req.json() as { modelId: string }
-      if (!body.modelId) {
-        return c.json({ error: 'modelId is required' }, 400)
-      }
-      
-      const result = await coquiServerManager.changeModel(body.modelId)
-      return c.json(result)
-    } catch (error) {
-      logger.error('Failed to change Coqui model:', error)
-      return c.json({ 
-        error: 'Failed to change model',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }, 500)
-    }
   })
 
   return app

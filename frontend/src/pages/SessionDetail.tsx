@@ -4,16 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import { getRepo } from "@/api/repos";
 import { MessageThread } from "@/components/message/MessageThread";
 import { PromptInput, type PromptInputHandle } from "@/components/message/PromptInput";
-import { TalkModeOverlay } from "@/components/message/TalkModeOverlay";
-import { X, VolumeX } from "lucide-react";
+import { X, VolumeX, FolderOpen, Plug, Settings, CornerUpLeft, GitCommitHorizontal } from "lucide-react";
 import { ModelSelectDialog } from "@/components/model/ModelSelectDialog";
-import { SessionDetailHeader } from "@/components/session/SessionDetailHeader";
+import { Header } from "@/components/ui/header";
 import { SessionList } from "@/components/session/SessionList";
 
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
 import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useSession, useAbortSession, useUpdateSession, useMessages } from "@/hooks/useOpenCode";
+import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ContextUsageIndicator } from "@/components/session/ContextUsageIndicator";
+import { useSession, useAbortSession, useUpdateSession, useMessages, useTitleGenerating, useCreateSession } from "@/hooks/useOpenCode";
 import { OPENCODE_API_ENDPOINT, API_BASE_URL } from "@/config";
 import { useSSE } from "@/hooks/useSSE";
 import { useUIState } from "@/stores/uiStateStore";
@@ -24,12 +26,24 @@ import { useSettingsDialog } from "@/hooks/useSettingsDialog";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useSwipeBack } from "@/hooks/useMobile";
 import { useTTS } from "@/hooks/useTTS";
-import { useAutoReadMessages } from "@/hooks/useAutoReadMessages";
 import { useEffect, useRef, useCallback, useMemo } from "react";
 import { MessageSkeleton } from "@/components/message/MessageSkeleton";
 import { exportSession, downloadMarkdown } from "@/lib/exportSession";
 import { showToast } from "@/lib/toast";
 import { RepoMcpDialog } from "@/components/repo/RepoMcpDialog";
+import { createOpenCodeClient } from "@/api/opencode";
+import { useSessionStatus } from "@/stores/sessionStatusStore";
+import { useQuestions } from "@/contexts/EventContext";
+import { QuestionPrompt } from "@/components/session/QuestionPrompt";
+import { PendingActionsGroup } from "@/components/notifications/PendingActionsGroup";
+import { SourceControlPanel } from "@/components/source-control";
+
+const compareMessageIds = (id1: string, id2: string): number => {
+  const num1 = parseInt(id1, 10)
+  const num2 = parseInt(id2, 10)
+  if (!isNaN(num1) && !isNaN(num2)) return num1 - num2
+  return id1.localeCompare(id2)
+}
 
 export function SessionDetail() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
@@ -43,7 +57,7 @@ export function SessionDetail() {
   const [sessionsDialogOpen, setSessionsDialogOpen] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [mcpDialogOpen, setMcpDialogOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [sourceControlOpen, setSourceControlOpen] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string | undefined>();
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [hasPromptContent, setHasPromptContent] = useState(false);
@@ -90,7 +104,7 @@ export function SessionDetail() {
     if (!rawMessages) return undefined
     const revertMessageID = session?.revert?.messageID
     if (!revertMessageID) return rawMessages
-    return rawMessages.filter(msg => msg.info.id < revertMessageID)
+    return rawMessages.filter(msg => compareMessageIds(msg.info.id, revertMessageID) < 0)
   }, [rawMessages, session?.revert?.messageID]);
 
   const { scrollToBottom } = useAutoScroll({
@@ -100,22 +114,103 @@ export function SessionDetail() {
     onScrollStateChange: setShowScrollButton
   });
 
-  const { isConnected, isReconnecting } = useSSE(opcodeUrl, repoDirectory);
+  const { isConnected, isReconnecting } = useSSE(opcodeUrl, repoDirectory, sessionId);
   const abortSession = useAbortSession(opcodeUrl, repoDirectory, sessionId);
   const updateSession = useUpdateSession(opcodeUrl, repoDirectory);
+  const createSession = useCreateSession(opcodeUrl, repoDirectory);
+  const isTitleGenerating = useTitleGenerating(sessionId);
   const { open: openSettings } = useSettingsDialog();
-  const { modelString } = useModelSelection(opcodeUrl, repoDirectory);
+  const { model, modelString } = useModelSelection(opcodeUrl, repoDirectory);
   const isEditingMessage = useUIState((state) => state.isEditingMessage);
   const { isPlaying, stop } = useTTS();
+  const setSessionStatus = useSessionStatus((state) => state.setStatus);
+  const { current: currentQuestion, reply: replyToQuestion, reject: rejectQuestion } = useQuestions();
 
-  useAutoReadMessages({
-    sessionId,
-    messages,
-    enabled: true,
-  });
+  const handleNewSession = useCallback(async () => {
+    try {
+      const newSession = await createSession.mutateAsync({ agent: undefined });
+      if (newSession?.id) {
+        navigate(`/repos/${repoId}/sessions/${newSession.id}`);
+      }
+    } catch {
+      showToast.error('Failed to create new session');
+    }
+  }, [createSession, navigate, repoId]);
 
-  useKeyboardShortcuts({
+  const handleCompact = useCallback(async () => {
+    if (!opcodeUrl || !sessionId) return;
+    if (!model?.providerID || !model?.modelID) {
+      showToast.error('No model selected. Please select a provider and model first.');
+      return;
+    }
+
+    showToast.loading('Compacting session...', { id: `compact-${sessionId}` });
+    setSessionStatus(sessionId, { type: 'compact' });
+
+    try {
+      const client = createOpenCodeClient(opcodeUrl, repoDirectory);
+      await client.summarizeSession(sessionId, model.providerID, model.modelID);
+    } catch (error) {
+      showToast.error(`Compact failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setSessionStatus(sessionId, { type: 'idle' });
+    }
+  }, [opcodeUrl, sessionId, model, repoDirectory, setSessionStatus]);
+
+  const handleUndo = useCallback(async () => {
+    if (!opcodeUrl || !sessionId) return;
+    try {
+      const client = createOpenCodeClient(opcodeUrl, repoDirectory);
+      await client.sendCommand(sessionId, { command: 'undo', arguments: '' });
+    } catch (error) {
+      showToast.error(`Undo failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [opcodeUrl, sessionId, repoDirectory]);
+
+  const handleRedo = useCallback(async () => {
+    if (!opcodeUrl || !sessionId) return;
+    try {
+      const client = createOpenCodeClient(opcodeUrl, repoDirectory);
+      await client.sendCommand(sessionId, { command: 'redo', arguments: '' });
+    } catch (error) {
+      showToast.error(`Redo failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [opcodeUrl, sessionId, repoDirectory]);
+
+  const handleFork = useCallback(async () => {
+    if (!opcodeUrl || !sessionId) return;
+    try {
+      const client = createOpenCodeClient(opcodeUrl, repoDirectory);
+      const forkedSession = await client.forkSession(sessionId);
+      if (forkedSession?.id) {
+        navigate(`/repos/${repoId}/sessions/${forkedSession.id}`);
+        showToast.success('Session forked');
+      }
+    } catch (error) {
+      showToast.error(`Fork failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [opcodeUrl, sessionId, repoDirectory, navigate, repoId]);
+
+  const handleCloseSession = useCallback(() => {
+    navigate(`/repos/${repoId}`);
+  }, [navigate, repoId]);
+
+  const { leaderActive } = useKeyboardShortcuts({
     openModelDialog: () => setModelDialogOpen(true),
+    openSessions: () => setSessionsDialogOpen(true),
+    openSettings,
+    newSession: handleNewSession,
+    closeSession: handleCloseSession,
+    compact: handleCompact,
+    undo: handleUndo,
+    redo: handleRedo,
+    fork: handleFork,
+    toggleSidebar: () => setFileBrowserOpen(prev => !prev),
+    toggleMode: () => {
+      const modeButton = document.querySelector(
+        "[data-toggle-mode]",
+      ) as HTMLButtonElement;
+      modeButton?.click();
+    },
     submitPrompt: () => {
       const submitButton = document.querySelector(
         "[data-submit-prompt]",
@@ -128,19 +223,6 @@ export function SessionDetail() {
       }
     },
   });
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const newMode = preferences?.mode === "plan" ? "build" : "plan";
-        updateSettings({ mode: newMode });
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [preferences?.mode, updateSettings]);
 
   
 
@@ -205,9 +287,7 @@ export function SessionDetail() {
     promptInputRef.current?.clearPrompt()
   }, []);
 
-  const handleAttachFile = useCallback(() => {
-    promptInputRef.current?.triggerFileUpload()
-  }, []);
+  
 
   
 
@@ -231,32 +311,102 @@ export function SessionDetail() {
   }
 
   return (
-    <div 
+    <div
       ref={pageRef}
       className="h-dvh max-h-dvh overflow-hidden bg-gradient-to-br from-background via-background to-background flex flex-col"
       style={swipeStyles}
     >
-      <SessionDetailHeader
-        repo={repo}
-        sessionId={sessionId}
-        sessionTitle={session?.title || "Untitled Session"}
-        repoId={repoId}
-        isConnected={isConnected}
-        isReconnecting={isReconnecting}
-        opcodeUrl={opcodeUrl}
-        repoDirectory={repoDirectory}
-        parentSessionId={session?.parentID}
-        onFileBrowserOpen={() => setFileBrowserOpen(true)}
-        onSettingsOpen={openSettings}
-        onMcpDialogOpen={() => setMcpDialogOpen(true)}
-        onSessionTitleUpdate={handleSessionTitleUpdate}
-        onParentSessionClick={handleParentSessionClick}
-        onAttachFile={handleAttachFile}
-        onTerminalOpen={() => setTerminalOpen(true)}
-      />
+      <Header>
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
+          {session?.parentID ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleParentSessionClick}
+                className="text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/20 h-7 px-2 gap-1"
+                title="Back to parent session"
+              >
+                <CornerUpLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-xs">Parent</span>
+              </Button>
+              <div className="hidden sm:block">
+                <Header.BackButton to={`/repos/${repoId}`} className="text-xs sm:text-sm" />
+              </div>
+            </>
+          ) : (
+            <Header.BackButton to={`/repos/${repoId}`} className="text-xs sm:text-sm" />
+          )}
+          <Header.EditableTitle
+            value={session?.title || "Untitled Session"}
+            onChange={handleSessionTitleUpdate}
+            subtitle={<span className="text-orange-600 dark:text-orange-400">{repo.repoUrl?.split("/").pop()?.replace(".git", "") || repo.localPath || "Repository"}</span>}
+            generating={isTitleGenerating}
+          />
+        </div>
+        <Header.Actions className="gap-2 sm:gap-4">
+          <div className="hidden sm:flex items-center gap-1">
+            <PendingActionsGroup />
+          </div>
+          <ContextUsageIndicator
+            opcodeUrl={opcodeUrl}
+            sessionID={sessionId}
+            directory={repoDirectory}
+            isConnected={isConnected}
+            isReconnecting={isReconnecting}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFileBrowserOpen(true)}
+            className="hidden md:flex text-foreground border-border hover:bg-accent transition-all duration-200 hover:scale-105"
+          >
+            <FolderOpen className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Files</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMcpDialogOpen(true)}
+            className="hidden md:flex text-foreground border-border hover:bg-accent transition-all duration-200 hover:scale-105"
+          >
+            <Plug className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">MCP</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSourceControlOpen(true)}
+            className="hidden md:flex text-foreground border-border hover:bg-accent transition-all duration-200 hover:scale-105"
+          >
+            <GitCommitHorizontal className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Source</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={openSettings}
+            className="hidden md:flex text-foreground border-border hover:bg-accent transition-all duration-200 hover:scale-105"
+          >
+            <Settings className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Settings</span>
+          </Button>
+          <Header.MobileDropdown>
+            <DropdownMenuItem onClick={() => setMcpDialogOpen(true)}>
+              <Plug className="w-4 h-4 mr-2" /> MCP
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSourceControlOpen(true)}>
+              <GitCommitHorizontal className="w-4 h-4 mr-2" /> Source Control
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFileBrowserOpen(true)}>
+              <FolderOpen className="w-4 h-4 mr-2" /> Files
+            </DropdownMenuItem>
+          </Header.MobileDropdown>
+        </Header.Actions>
+      </Header>
 
       <div className="flex-1 overflow-hidden flex flex-col relative">
-        <div key={sessionId} ref={messageContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-28 overscroll-contain">
+        <div key={sessionId} ref={messageContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-28 overscroll-contain [mask-image:linear-gradient(to_bottom,transparent,black_16px,black)]">
           {repoLoading || sessionLoading || messagesLoading ? (
             <MessageSkeleton />
           ) : opcodeUrl && repoDirectory ? (
@@ -290,7 +440,12 @@ export function SessionDetail() {
                   <span className="text-sm font-medium hidden sm:inline">Clear</span>
                 </button>
               )}
-              {isPlaying && (
+              {leaderActive && (
+                <div className="absolute -top-12 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-primary/90 text-primary-foreground border border-primary shadow-lg backdrop-blur-md animate-pulse">
+                  <span className="text-sm font-medium">Waiting for shortcut key...</span>
+                </div>
+              )}
+              {isPlaying && !leaderActive && (
                 <button
                   onMouseDown={(e) => e.preventDefault()}
                   onTouchEnd={(e) => {
@@ -304,6 +459,14 @@ export function SessionDetail() {
                   <VolumeX className="w-6 h-6" />
                   <span className="text-sm font-medium hidden sm:inline">Stop Audio</span>
                 </button>
+              )}
+              {currentQuestion && currentQuestion.sessionID === sessionId && (
+                <QuestionPrompt
+                  key={currentQuestion.id}
+                  question={currentQuestion}
+                  onReply={replyToQuestion}
+                  onReject={rejectQuestion}
+                />
               )}
               <PromptInput
                 ref={promptInputRef}
@@ -359,6 +522,7 @@ export function SessionDetail() {
         onClose={handleFileBrowserClose}
         basePath={repo.localPath}
         repoName={repo.repoUrl?.split("/").pop()?.replace(".git", "") || repo.localPath || "Repository"}
+        repoId={repoId}
         initialSelectedFile={selectedFilePath}
       />
 
@@ -369,14 +533,12 @@ export function SessionDetail() {
         directory={repoDirectory}
       />
 
-      <TerminalPanel
-        cwd={repoDirectory}
-        isOpen={terminalOpen}
-        onClose={() => setTerminalOpen(false)}
-      />
-
-      <TalkModeOverlay
-        sessionID={sessionId}
+      <SourceControlPanel
+        repoId={repoId}
+        isOpen={sourceControlOpen}
+        onClose={() => setSourceControlOpen(false)}
+        currentBranch={repo.currentBranch || repo.branch || "main"}
+        repoName={repo.repoUrl?.split("/").pop()?.replace(".git", "") || repo.localPath || "Repository"}
       />
     </div>
   );

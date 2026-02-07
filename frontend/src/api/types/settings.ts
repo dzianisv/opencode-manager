@@ -1,21 +1,17 @@
 import {
   DEFAULT_TTS_CONFIG,
   DEFAULT_STT_CONFIG,
-  DEFAULT_TALK_MODE_CONFIG,
-  DEFAULT_NOTIFICATION_CONFIG,
-  DEFAULT_SESSION_PRUNE_CONFIG,
   DEFAULT_KEYBOARD_SHORTCUTS,
   DEFAULT_USER_PREFERENCES,
+  DEFAULT_LEADER_KEY,
   type TTSConfig,
   type STTConfig,
-  type TalkModeConfig,
-  type NotificationConfig,
-  type SessionPruneConfig,
   type OpenCodeConfigContent,
 } from '@opencode-manager/shared'
+import type { NotificationPreferences } from '@opencode-manager/shared/types'
 
-export type { TTSConfig, STTConfig, TalkModeConfig, NotificationConfig, SessionPruneConfig, OpenCodeConfigContent }
-export { DEFAULT_TTS_CONFIG, DEFAULT_STT_CONFIG, DEFAULT_TALK_MODE_CONFIG, DEFAULT_NOTIFICATION_CONFIG, DEFAULT_SESSION_PRUNE_CONFIG, DEFAULT_KEYBOARD_SHORTCUTS, DEFAULT_USER_PREFERENCES }
+export type { TTSConfig, STTConfig, OpenCodeConfigContent, NotificationPreferences }
+export { DEFAULT_TTS_CONFIG, DEFAULT_STT_CONFIG, DEFAULT_KEYBOARD_SHORTCUTS, DEFAULT_USER_PREFERENCES, DEFAULT_LEADER_KEY }
 
 export interface CustomCommand {
   name: string
@@ -29,6 +25,18 @@ export interface CustomAgent {
   config: Record<string, unknown>
 }
 
+export interface GitCredential {
+  name: string
+  host: string
+  token: string
+  username?: string
+}
+
+export interface GitIdentity {
+  name: string
+  email: string
+}
+
 export interface UserPreferences {
   theme: 'dark' | 'light' | 'system'
   mode: 'plan' | 'build'
@@ -38,21 +46,24 @@ export interface UserPreferences {
   showReasoning: boolean
   expandToolCalls: boolean
   expandDiffs: boolean
+  leaderKey?: string
+  directShortcuts?: string[]
   keyboardShortcuts: Record<string, string>
   customCommands: CustomCommand[]
   customAgents: CustomAgent[]
-  gitToken?: string
+  gitCredentials?: GitCredential[]
+  gitIdentity?: GitIdentity
   tts?: TTSConfig
   stt?: STTConfig
-  talkMode?: TalkModeConfig
-  notifications?: NotificationConfig
-  sessionPrune?: SessionPruneConfig
+  notifications?: NotificationPreferences
+  repoOrder?: number[]
 }
 
 export interface SettingsResponse {
   preferences: UserPreferences
   updatedAt: number
   serverRestarted?: boolean
+  reloadError?: string
 }
 
 export interface UpdateSettingsRequest {

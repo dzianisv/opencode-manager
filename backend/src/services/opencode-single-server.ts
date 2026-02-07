@@ -1,22 +1,18 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { logger } from '../utils/logger'
-import { createGitHubGitEnv, createNoPromptGitEnv } from '../utils/git-auth'
+import { createGitEnv, createGitIdentityEnv, resolveGitIdentity } from '../utils/git-auth'
 import { SettingsService } from './settings'
 import { getWorkspacePath, getOpenCodeConfigFilePath, ENV } from '@opencode-manager/shared/config/env'
 import type { Database } from 'bun:sqlite'
-import { openCodeDiscoveryService, type OpenCodeInstance } from './opencode-discovery'
-import { opencodeSdkClient } from './opencode-sdk-client'
+import type { GitCredential } from '../utils/git-auth'
 
 const OPENCODE_SERVER_PORT = ENV.OPENCODE.PORT
+const OPENCODE_SERVER_HOST = ENV.OPENCODE.HOST
 const OPENCODE_SERVER_DIRECTORY = getWorkspacePath()
 const OPENCODE_CONFIG_PATH = getOpenCodeConfigFilePath()
 const MIN_OPENCODE_VERSION = '1.0.137'
 const MAX_STDERR_SIZE = 10240
-const CLIENT_MODE = process.env.OPENCODE_CLIENT_MODE === 'true'
-const HEALTH_CHECK_INTERVAL = 5000
-const MAX_RECONNECT_DELAY = 30000
-const BASE_RECONNECT_DELAY = 1000
 
 function compareVersions(v1: string, v2: string): number {
   const parts1 = v1.split('.').map(Number)
@@ -39,11 +35,6 @@ class OpenCodeServerManager {
   private db: Database | null = null
   private version: string | null = null
   private lastStartupError: string | null = null
-  private connectedDirectory: string | null = null
-  private healthCheckInterval: NodeJS.Timeout | null = null
-  private reconnectAttempts: number = 0
-  private activePort: number = OPENCODE_SERVER_PORT
-  private isReconnecting: boolean = false
 
   private constructor() {}
 
@@ -64,58 +55,26 @@ class OpenCodeServerManager {
       return
     }
 
-    if (CLIENT_MODE) {
-      logger.info(`Client mode: discovering OpenCode instances...`)
-      
-      const instance = await this.discoverAndConnect()
-      if (instance) {
-        this.isHealthy = true
-        this.activePort = instance.port
-        this.version = instance.version
-        this.connectedDirectory = instance.directory
-        this.reconnectAttempts = 0
-        opencodeSdkClient.configure(this.activePort)
-        logger.info(`Connected to OpenCode server v${this.version || 'unknown'} on port ${this.activePort}`)
-        if (this.connectedDirectory) {
-          logger.info(`OpenCode server directory: ${this.connectedDirectory}`)
-        }
-        this.startHealthMonitor()
-        return
-      }
-      
-      const configuredHealthy = await this.waitForHealth(10000)
-      if (configuredHealthy) {
-        this.isHealthy = true
-        this.activePort = OPENCODE_SERVER_PORT
-        opencodeSdkClient.configure(this.activePort)
-        await this.fetchVersion()
-        await this.fetchConnectedDirectory()
-        logger.info(`Connected to OpenCode server v${this.version || 'unknown'} on port ${this.activePort}`)
-        if (this.connectedDirectory) {
-          logger.info(`OpenCode server directory: ${this.connectedDirectory}`)
-        }
-        this.startHealthMonitor()
-        return
-      }
-      
-      logger.warn(`No OpenCode servers found. Will keep monitoring for instances...`)
-      this.startHealthMonitor()
-      return
-    }
-
     const isDevelopment = ENV.SERVER.NODE_ENV !== 'production'
-    
-    let gitToken = ''
+
+    let gitCredentials: GitCredential[] = []
+    let gitIdentityEnv: Record<string, string> = {}
     if (this.db) {
       try {
         const settingsService = new SettingsService(this.db)
         const settings = settingsService.getSettings('default')
-        gitToken = settings.preferences.gitToken || ''
+        gitCredentials = settings.preferences.gitCredentials || []
+        
+        const identity = await resolveGitIdentity(settings.preferences.gitIdentity, gitCredentials)
+        if (identity) {
+          gitIdentityEnv = createGitIdentityEnv(identity)
+          logger.info(`Git identity resolved: ${identity.name} <${identity.email}>`)
+        }
       } catch (error) {
-        logger.warn('Failed to get git token from settings:', error)
+        logger.warn('Failed to get git settings:', error)
       }
     }
-    
+
     const existingProcesses = await this.findProcessesByPort(OPENCODE_SERVER_PORT)
     if (existingProcesses.length > 0) {
       logger.info(`OpenCode server already running on port ${OPENCODE_SERVER_PORT}`)
@@ -155,13 +114,13 @@ class OpenCodeServerManager {
     logger.info(`OpenCode XDG_CONFIG_HOME: ${path.join(OPENCODE_SERVER_DIRECTORY, '.config')}`)
     logger.info(`OpenCode will use ?directory= parameter for session isolation`)
 
-    const gitEnv = gitToken ? createGitHubGitEnv(gitToken) : createNoPromptGitEnv()
+    const gitEnv = createGitEnv(gitCredentials)
 
     let stderrOutput = ''
 
     this.serverProcess = spawn(
       'opencode',
-      ['serve', '--port', OPENCODE_SERVER_PORT.toString(), '--hostname', '127.0.0.1'],
+      ['serve', '--port', OPENCODE_SERVER_PORT.toString(), '--hostname', OPENCODE_SERVER_HOST],
       {
         cwd: OPENCODE_SERVER_DIRECTORY,
         detached: !isDevelopment,
@@ -169,8 +128,8 @@ class OpenCodeServerManager {
         env: {
           ...process.env,
           ...gitEnv,
-          // Use system default XDG_DATA_HOME (~/.local/share) to share sessions with CLI
-          // Only override XDG_CONFIG_HOME for workspace-specific config
+          ...gitIdentityEnv,
+          XDG_DATA_HOME: path.join(OPENCODE_SERVER_DIRECTORY, '.opencode/state'),
           XDG_CONFIG_HOME: path.join(OPENCODE_SERVER_DIRECTORY, '.config'),
           OPENCODE_CONFIG: OPENCODE_CONFIG_PATH,
         }
@@ -206,12 +165,10 @@ class OpenCodeServerManager {
       throw new Error('OpenCode server failed to become healthy')
     }
 
-      this.isHealthy = true
-      this.activePort = OPENCODE_SERVER_PORT
-      opencodeSdkClient.configure(this.activePort)
-      logger.info('OpenCode server is healthy')
+    this.isHealthy = true
+    logger.info('OpenCode server is healthy')
 
-      await this.fetchVersion()
+    await this.fetchVersion()
     if (this.version) {
       logger.info(`OpenCode version: ${this.version}`)
       if (!this.isVersionSupported()) {
@@ -236,16 +193,25 @@ class OpenCodeServerManager {
     try {
       process.kill(this.serverPid, 'SIGTERM')
     } catch (error) {
-      logger.warn(`Failed to send SIGTERM to ${this.serverPid}:`, error)
+      const errorCode = error && typeof error === 'object' && 'code' in error ? (error as { code: string }).code : ''
+      if (errorCode === 'ESRCH') {
+        logger.debug(`Process ${this.serverPid} already stopped`)
+      } else {
+        logger.warn(`Failed to send SIGTERM to ${this.serverPid}:`, error)
+      }
     }
     
     await new Promise(r => setTimeout(r, 2000))
     
     try {
-      process.kill(this.serverPid, 0)
       process.kill(this.serverPid, 'SIGKILL')
-    } catch {
-      
+    } catch (error) {
+      const errorCode = error && typeof error === 'object' && 'code' in error ? (error as { code: string }).code : ''
+      if (errorCode === 'ESRCH') {
+        logger.debug(`Process ${this.serverPid} already stopped`)
+      } else {
+        logger.warn(`Failed to send SIGKILL to ${this.serverPid}:`, error)
+      }
     }
     
     this.serverPid = null
@@ -253,10 +219,45 @@ class OpenCodeServerManager {
   }
 
   async restart(): Promise<void> {
-    logger.info('Restarting OpenCode server')
+    logger.info('Restarting OpenCode server (full process restart)')
     await this.stop()
     await new Promise(r => setTimeout(r, 1000))
     await this.start()
+  }
+
+  async reloadConfig(): Promise<void> {
+    logger.info('Reloading OpenCode configuration (via API)')
+    try {
+      const response = await fetch(`http://${OPENCODE_SERVER_HOST}:${OPENCODE_SERVER_PORT}/config`, {
+        method: 'GET'
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to get current config: ${response.status}`)
+      }
+
+      const currentConfig = await response.json()
+      logger.info('Triggering OpenCode config reload via PATCH')
+      const patchResponse = await fetch(`http://${OPENCODE_SERVER_HOST}:${OPENCODE_SERVER_PORT}/config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentConfig)
+      })
+
+      if (!patchResponse.ok) {
+        throw new Error(`Failed to reload config: ${patchResponse.status}`)
+      }
+
+      logger.info('OpenCode configuration reloaded successfully')
+      await new Promise(r => setTimeout(r, 500))
+      const healthy = await this.checkHealth()
+      if (!healthy) {
+        throw new Error('Server unhealthy after config reload')
+      }
+    } catch (error) {
+      logger.error('Failed to reload OpenCode config:', error)
+      throw error
+    }
   }
 
   getPort(): number {
@@ -276,14 +277,6 @@ class OpenCodeServerManager {
     return compareVersions(this.version, MIN_OPENCODE_VERSION) >= 0
   }
 
-  getConnectedDirectory(): string | null {
-    return this.connectedDirectory
-  }
-
-  isClientMode(): boolean {
-    return CLIENT_MODE
-  }
-
   getLastStartupError(): string | null {
     return this.lastStartupError
   }
@@ -294,7 +287,7 @@ class OpenCodeServerManager {
 
   async checkHealth(): Promise<boolean> {
     try {
-      const response = await fetch(`http://127.0.0.1:${OPENCODE_SERVER_PORT}/doc`, {
+      const response = await fetch(`http://${OPENCODE_SERVER_HOST}:${OPENCODE_SERVER_PORT}/doc`, {
         signal: AbortSignal.timeout(3000)
       })
       return response.ok
@@ -306,44 +299,13 @@ class OpenCodeServerManager {
   async fetchVersion(): Promise<string | null> {
     try {
       const result = execSync('opencode --version 2>&1', { encoding: 'utf8' })
-      // Use a stricter regex to avoid matching IP addresses (e.g., 0.0.0.0) in debug output
-      // We look for a version number at the end of a line or standing alone
-      const lines = result.split('\n')
-      for (const line of lines) {
-        const match = line.match(/(?:^|\s|v)(\d+\.\d+\.\d+)(?:\s|$)/)
-        if (match && match[1]) {
-          // Verify it's not part of an IP address (heuristic: check if followed by another dot)
-          const fullMatch = match[0]
-          const index = line.indexOf(fullMatch)
-          const nextChar = line[index + fullMatch.length]
-          if (nextChar === '.') continue
-          
-          this.version = match[1]
-          return this.version
-        }
+      const match = result.match(/(\d+\.\d+\.\d+)/)
+      if (match && match[1]) {
+        this.version = match[1]
+        return this.version
       }
     } catch (error) {
       logger.warn('Failed to get OpenCode version:', error)
-    }
-    return null
-  }
-
-  async fetchConnectedDirectory(): Promise<string | null> {
-    if (!CLIENT_MODE) return null
-    
-    try {
-      const response = await fetch(`http://127.0.0.1:${OPENCODE_SERVER_PORT}/session`, {
-        signal: AbortSignal.timeout(5000)
-      })
-      if (response.ok) {
-        const sessions = await response.json() as Array<{ directory?: string }>
-        if (sessions.length > 0 && sessions[0]?.directory) {
-          this.connectedDirectory = sessions[0].directory
-          return this.connectedDirectory
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to get OpenCode server directory:', error)
     }
     return null
   }

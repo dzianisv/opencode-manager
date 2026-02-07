@@ -1,6 +1,6 @@
-import axios from "axios";
 import { API_BASE_URL } from "@/config";
 import { settingsApi } from "./settings";
+import { fetchWrapper } from "./fetchWrapper";
 
 export type ProviderSource = "configured" | "local" | "builtin";
 
@@ -48,6 +48,7 @@ export interface OpenCodeModel {
       pdf: boolean;
     };
   };
+  variants?: Record<string, Record<string, unknown>>;
 }
 
 export interface OpenCodeProvider {
@@ -87,6 +88,7 @@ export interface Model {
   provider?: {
     npm: string;
   };
+  variants?: Record<string, Record<string, unknown>>;
 }
 
 export interface Provider {
@@ -98,6 +100,7 @@ export interface Provider {
   models: Record<string, Model>;
   options?: Record<string, unknown>;
   source?: ProviderSource;
+  isConnected?: boolean;
 }
 
 export interface ProviderWithModels {
@@ -108,6 +111,7 @@ export interface ProviderWithModels {
   npm?: string;
   models: Model[];
   source: ProviderSource;
+  isConnected: boolean;
 }
 
 interface ConfigProvider {
@@ -139,28 +143,26 @@ function classifyProviderSource(providerId: string, isFromConfig: boolean): Prov
   return "configured";
 }
 
-function getProviderPriority(source: ProviderSource): number {
-  switch (source) {
-    case "configured": return 1;
-    case "local": return 2;
-    case "builtin": return 3;
-    default: return 4;
-  }
+
+interface OpenCodeProviderResponse {
+  all: OpenCodeProvider[];
+  connected: string[];
+  default: Record<string, string>;
 }
 
-
-
-async function getProvidersFromOpenCodeServer(): Promise<Provider[]> {
+async function getProvidersFromOpenCodeServer(): Promise<{ providers: Provider[]; connected: string[] }> {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/opencode/provider`);
-    
-    if (response?.data?.all && Array.isArray(response.data.all)) {
-      return response.data.all.map((openCodeProvider: OpenCodeProvider) => {
+    const response = await fetchWrapper<OpenCodeProviderResponse>(`${API_BASE_URL}/api/opencode/provider`);
+
+    if (response?.all && Array.isArray(response.all)) {
+      const connectedSet = new Set(response.connected || []);
+
+      const providers = response.all.map((openCodeProvider: OpenCodeProvider) => {
         const models: Record<string, Model> = {};
-        
+
         Object.entries(openCodeProvider.models).forEach(([modelId, openCodeModel]) => {
           models[modelId] = {
-            id: openCodeModel.id,
+            id: modelId,
             name: openCodeModel.name,
             attachment: openCodeModel.capabilities.attachment,
             reasoning: openCodeModel.capabilities.reasoning,
@@ -187,6 +189,7 @@ async function getProvidersFromOpenCodeServer(): Promise<Provider[]> {
             provider: {
               npm: openCodeModel.api.npm,
             },
+            variants: openCodeModel.variants,
           };
         });
 
@@ -196,21 +199,24 @@ async function getProvidersFromOpenCodeServer(): Promise<Provider[]> {
           env: openCodeProvider.env,
           models,
           options: openCodeProvider.options,
+          isConnected: connectedSet.has(openCodeProvider.id),
         };
       });
+
+      return { providers, connected: response.connected || [] };
     }
   } catch (error) {
     console.warn("Failed to load providers from OpenCode server", error);
   }
 
-  return [];
+  return { providers: [], connected: [] };
 }
 
-export async function getProviders(): Promise<Provider[]> {
+export async function getProviders(): Promise<{ providers: Provider[]; connected: string[] }> {
   return await getProvidersFromOpenCodeServer();
 }
 
-async function getConfiguredProviders(): Promise<ProviderWithModels[]> {
+async function getConfiguredProviders(connectedIds: Set<string>): Promise<ProviderWithModels[]> {
   try {
     const config = await settingsApi.getDefaultOpenCodeConfig();
     if (!config?.content?.provider) return [];
@@ -229,7 +235,7 @@ async function getConfiguredProviders(): Promise<ProviderWithModels[]> {
           if (!modelConfig || typeof modelConfig !== "object") continue;
 
           models.push({
-            id: modelConfig.id || modelId,
+            id: modelId,
             name: modelConfig.name || modelId,
             limit: modelConfig.limit ? {
               context: modelConfig.limit.context || 0,
@@ -247,6 +253,7 @@ async function getConfiguredProviders(): Promise<ProviderWithModels[]> {
         npm: providerConfig.npm,
         models,
         source,
+        isConnected: connectedIds.has(providerId),
       });
     }
 
@@ -258,11 +265,10 @@ async function getConfiguredProviders(): Promise<ProviderWithModels[]> {
 }
 
 export async function getProvidersWithModels(): Promise<ProviderWithModels[]> {
-  const [builtinProviders, configuredProviders] = await Promise.all([
-    getProviders(),
-    getConfiguredProviders(),
-  ]);
+  const { providers: builtinProviders, connected } = await getProviders();
+  const connectedIds = new Set(connected);
 
+  const configuredProviders = await getConfiguredProviders(connectedIds);
   const configuredIds = new Set(configuredProviders.map((p) => p.id));
 
   const builtinResult: ProviderWithModels[] = builtinProviders
@@ -270,7 +276,7 @@ export async function getProvidersWithModels(): Promise<ProviderWithModels[]> {
     .map((provider) => {
       const models = Object.entries(provider.models || {}).map(([id, model]) => ({
         ...model,
-        id: model.id || id,
+        id: id,
         name: model.name || id,
       }));
       return {
@@ -281,15 +287,16 @@ export async function getProvidersWithModels(): Promise<ProviderWithModels[]> {
         npm: provider.npm,
         models,
         source: "builtin" as ProviderSource,
+        isConnected: provider.isConnected ?? false,
       };
     });
 
   const allProviders = [...configuredProviders, ...builtinResult];
 
   allProviders.sort((a, b) => {
-    const priorityA = getProviderPriority(a.source);
-    const priorityB = getProviderPriority(b.source);
-    if (priorityA !== priorityB) return priorityA - priorityB;
+    if (a.isConnected !== b.isConnected) {
+      return a.isConnected ? -1 : 1;
+    }
     return a.name.localeCompare(b.name);
   });
 
@@ -319,24 +326,28 @@ export function formatProviderName(
 
 export const providerCredentialsApi = {
   list: async (): Promise<string[]> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/providers/credentials`);
-    return data.providers;
+    const { providers } = await fetchWrapper<{ providers: string[] }>(`${API_BASE_URL}/api/providers/credentials`);
+    return providers;
   },
 
   getStatus: async (providerId: string): Promise<boolean> => {
-    const { data } = await axios.get(
+    const { hasCredentials } = await fetchWrapper<{ hasCredentials: boolean }>(
       `${API_BASE_URL}/api/providers/${providerId}/credentials/status`
     );
-    return data.hasCredentials;
+    return hasCredentials;
   },
 
   set: async (providerId: string, apiKey: string): Promise<void> => {
-    await axios.post(`${API_BASE_URL}/api/providers/${providerId}/credentials`, {
-      apiKey,
+    await fetchWrapper(`${API_BASE_URL}/api/providers/${providerId}/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
     });
   },
 
   delete: async (providerId: string): Promise<void> => {
-    await axios.delete(`${API_BASE_URL}/api/providers/${providerId}/credentials`);
+    await fetchWrapper(`${API_BASE_URL}/api/providers/${providerId}/credentials`, {
+      method: 'DELETE',
+    });
   },
 };

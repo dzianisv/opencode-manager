@@ -8,8 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Search, Check, Star, Home, Globe } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, Search, Check, Star } from "lucide-react";
 import {
   getProvidersWithModels,
   formatModelName,
@@ -57,7 +57,7 @@ function SearchInput({ onSearch, initialValue = "" }: SearchInputProps) {
           placeholder="Search models..."
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="pl-10 text-sm"
+          className="pl-10 md:text-sm"
         />
       </div>
     </div>
@@ -93,17 +93,6 @@ const ModelCard = memo(function ModelCard({
     return null;
   }, [model.experimental, model.status]);
 
-  const sourceBadge = useMemo(() => {
-    switch (provider.source) {
-      case "configured":
-        return <Badge variant="default" className="text-xs px-1.5 py-0 bg-yellow-500/20 text-yellow-600 border-yellow-500/30">Custom</Badge>;
-      case "local":
-        return <Badge variant="default" className="text-xs px-1.5 py-0 bg-green-500/20 text-green-600 border-green-500/30">Local</Badge>;
-      default:
-        return null;
-    }
-  }, [provider.source]);
-
   return (
     <div
       className={`p-3 sm:p-4 rounded-lg border cursor-pointer transition-colors ${
@@ -119,7 +108,6 @@ const ModelCard = memo(function ModelCard({
             <h4 className="font-semibold text-sm truncate">
               {formatModelName(model)}
             </h4>
-            {sourceBadge}
           </div>
           <p className="text-xs text-muted-foreground truncate">
             {formatProviderName(provider)}
@@ -256,17 +244,13 @@ const ModelGrid = memo(function ModelGrid({
 });
 
 interface ProviderSidebarProps {
-  groupedProviders: {
-    configured: ProviderWithModels[];
-    local: ProviderWithModels[];
-    builtin: ProviderWithModels[];
-  };
+  providers: ProviderWithModels[];
   selectedProvider: string;
   onSelect: (providerId: string) => void;
 }
 
 const ProviderSidebar = memo(function ProviderSidebar({
-  groupedProviders,
+  providers,
   selectedProvider,
   onSelect,
 }: ProviderSidebarProps) {
@@ -282,69 +266,19 @@ const ProviderSidebar = memo(function ProviderSidebar({
           All Providers
         </Button>
 
-        {groupedProviders.configured.length > 0 && (
-          <div>
-            <h3 className="text-xs font-semibold text-yellow-600 mb-2 flex items-center gap-1.5">
-              <Star className="h-3 w-3" />
-              Custom Providers
-            </h3>
-            <div className="space-y-1">
-              {groupedProviders.configured.map((provider) => (
-                <Button
-                  key={provider.id}
-                  variant={selectedProvider === provider.id ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => onSelect(provider.id)}
-                  className="w-full justify-start text-sm"
-                >
-                  {formatProviderName(provider)}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {groupedProviders.local.length > 0 && (
-          <div>
-            <h3 className="text-xs font-semibold text-green-600 mb-2 flex items-center gap-1.5">
-              <Home className="h-3 w-3" />
-              Local Providers
-            </h3>
-            <div className="space-y-1">
-              {groupedProviders.local.map((provider) => (
-                <Button
-                  key={provider.id}
-                  variant={selectedProvider === provider.id ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => onSelect(provider.id)}
-                  className="w-full justify-start text-sm"
-                >
-                  {formatProviderName(provider)}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {groupedProviders.builtin.length > 0 && (
-          <div>
-            <h3 className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-              <Globe className="h-3 w-3" />
-              Built-in Providers
-            </h3>
-            <div className="space-y-1">
-              {groupedProviders.builtin.map((provider) => (
-                <Button
-                  key={provider.id}
-                  variant={selectedProvider === provider.id ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => onSelect(provider.id)}
-                  className="w-full justify-start text-sm"
-                >
-                  {formatProviderName(provider)}
-                </Button>
-              ))}
-            </div>
+        {providers.length > 0 && (
+          <div className="space-y-1">
+            {providers.map((provider) => (
+              <Button
+                key={provider.id}
+                variant={selectedProvider === provider.id ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => onSelect(provider.id)}
+                className="w-full justify-start text-sm"
+              >
+                {formatProviderName(provider)}
+              </Button>
+            ))}
           </div>
         )}
       </div>
@@ -364,13 +298,17 @@ export function ModelSelectDialog({
   const { modelString, setModel, recentModels } = useModelSelection(opcodeUrl, directory);
   const currentModel = modelString || "";
 
-  const { data: providers = [], isLoading: loading } = useQuery({
+  const { data: allProviders = [], isLoading: loading } = useQuery({
     queryKey: ["providers-with-models"],
     queryFn: () => getProvidersWithModels(),
     enabled: open,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   });
+
+  const connectedProviders = useMemo(() => {
+    return allProviders.filter(p => p.isConnected);
+  }, [allProviders]);
 
   useEffect(() => {
     if (open) {
@@ -379,18 +317,14 @@ export function ModelSelectDialog({
   }, [open]);
 
   const flatModels = useMemo((): FlatModel[] => {
-    const sourceOrder = { configured: 0, local: 1, builtin: 2 };
-    return providers
-      .slice()
-      .sort((a, b) => (sourceOrder[a.source] ?? 2) - (sourceOrder[b.source] ?? 2))
-      .flatMap((provider) =>
-        provider.models.map((model) => ({
-          model,
-          provider,
-          modelKey: `${provider.id}/${model.id}`,
-        }))
-      );
-  }, [providers]);
+    return connectedProviders.flatMap((provider) =>
+      provider.models.map((model) => ({
+        model,
+        provider,
+        modelKey: `${provider.id}/${model.id}`,
+      }))
+    );
+  }, [connectedProviders]);
 
   const recentFlatModels = useMemo((): FlatModel[] => {
     return recentModels
@@ -404,29 +338,26 @@ export function ModelSelectDialog({
 
   const filteredModels = useMemo(() => {
     const search = searchQuery.toLowerCase();
-    return flatModels.filter((item) => {
-      if (selectedProvider && item.provider.id !== selectedProvider) {
-        return false;
-      }
-      if (!search) return true;
-      return (
+    let filtered = flatModels;
+    
+    if (selectedProvider) {
+      filtered = filtered.filter((item) => item.provider.id === selectedProvider);
+    }
+    
+    if (search) {
+      filtered = filtered.filter((item) =>
         item.model.name.toLowerCase().includes(search) ||
         item.model.id.toLowerCase().includes(search) ||
         item.provider.name.toLowerCase().includes(search)
       );
-    });
+    }
+    
+    return filtered;
   }, [flatModels, selectedProvider, searchQuery]);
 
-  const groupedProviders = useMemo(() => {
-    const configured = providers.filter(p => p.source === "configured");
-    const local = providers.filter(p => p.source === "local");
-    const builtin = providers.filter(p => p.source === "builtin");
-    return { configured, local, builtin };
-  }, [providers]);
-
   const selectedProviderData = useMemo(
-    () => providers.find(p => p.id === selectedProvider),
-    [providers, selectedProvider]
+    () => connectedProviders.find(p => p.id === selectedProvider),
+    [connectedProviders, selectedProvider]
   );
 
   const handleProviderSelect = useCallback((providerId: string) => {
@@ -447,7 +378,7 @@ export function ModelSelectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] max-h-[90vh] bg-background border-border text-foreground p-0 flex flex-col gap-0">
+      <DialogContent mobileFullscreen className="sm:w-[95vw] sm:max-w-7xl sm:h-[90vh] sm:max-h-[90vh] bg-background border-border text-foreground flex flex-col gap-0">
         <DialogHeader className="p-4 sm:p-6 pb-2 border-b border-border flex-shrink-0">
           <DialogTitle className="text-lg sm:text-xl font-semibold">
             {selectedProvider && selectedProviderData ? `Select Model - ${selectedProviderData.name}` : 'Select Model'}
@@ -456,7 +387,7 @@ export function ModelSelectDialog({
 
         <div className="flex flex-1 overflow-hidden">
           <ProviderSidebar
-            groupedProviders={groupedProviders}
+            providers={connectedProviders}
             selectedProvider={selectedProvider}
             onSelect={handleProviderSelect}
           />
@@ -468,45 +399,11 @@ export function ModelSelectDialog({
                   <SelectValue placeholder="Select a provider..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {groupedProviders.configured.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel className="flex items-center gap-1.5 text-yellow-600">
-                        <Star className="h-3 w-3" />
-                        Custom Providers
-                      </SelectLabel>
-                      {groupedProviders.configured.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {formatProviderName(provider)} ({provider.models.length})
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
-                  {groupedProviders.local.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel className="flex items-center gap-1.5 text-green-600">
-                        <Home className="h-3 w-3" />
-                        Local Providers
-                      </SelectLabel>
-                      {groupedProviders.local.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {formatProviderName(provider)} ({provider.models.length})
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
-                  {groupedProviders.builtin.length > 0 && (
-                    <SelectGroup>
-                      <SelectLabel className="flex items-center gap-1.5 text-muted-foreground">
-                        <Globe className="h-3 w-3" />
-                        Built-in Providers
-                      </SelectLabel>
-                      {groupedProviders.builtin.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {formatProviderName(provider)} ({provider.models.length})
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  )}
+                  {connectedProviders.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {formatProviderName(provider)} ({provider.models.length})
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -518,6 +415,7 @@ export function ModelSelectDialog({
 
             <div className="flex-1 overflow-y-auto p-3 sm:p-4">
               <ModelGrid
+                key={selectedProvider || "all"}
                 models={filteredModels}
                 currentModel={currentModel}
                 onSelect={handleModelSelect}

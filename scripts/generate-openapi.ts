@@ -8,7 +8,8 @@ import {ENV} from '../backend/src/config'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const OPENCODE_URL = ENV.VITE_API_URL + '/api/opencode'
+const API_URL = process.env.VITE_API_URL || 'http://localhost:8001'
+const OPENCODE_URL = API_URL + '/api/opencode'
 
 async function generateOpenAPISpec() {
   console.log(`📥 Fetching OpenAPI spec from ${OPENCODE_URL}/doc`)

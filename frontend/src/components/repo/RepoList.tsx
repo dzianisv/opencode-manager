@@ -1,19 +1,100 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listRepos, deleteRepo } from "@/api/repos";
-import { DeleteDialog } from "@/components/ui/delete-dialog";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Loader2, GitBranch, Search, Trash2, MoreVertical } from "lucide-react";
-import { RepoCard } from "./RepoCard";
+import { useState } from "react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { DndContext, closestCenter, KeyboardSensor, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
+import { listRepos, deleteRepo, updateRepoOrder } from "@/api/repos"
+import { fetchReposGitStatus } from "@/api/git"
+import { DeleteDialog } from "@/components/ui/delete-dialog"
+import { ListToolbar } from "@/components/ui/list-toolbar"
+import { GitBranch, Search, GripVertical } from "lucide-react"
+import type { Repo } from "@/api/types"
+import type { GitStatusResponse } from "@/types/git"
+import { RepoCard } from "./RepoCard"
+import { RepoCardSkeleton } from "./RepoCardSkeleton"
+import { useMobile } from "@/hooks/useMobile"
+
+interface RepoCardWrapperProps {
+  repo: Repo
+  onDelete: (id: number) => void
+  isDeleting: boolean
+  isSelected: boolean
+  onSelect: (id: number, selected: boolean) => void
+  gitStatus?: GitStatusResponse
+}
+
+function SortableRepoCard({
+  repo,
+  onDelete,
+  isDeleting,
+  isSelected,
+  onSelect,
+  gitStatus,
+}: RepoCardWrapperProps) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: repo.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div className="relative">
+        <div
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
+          className="absolute left-0 top-1/2 -translate-y-1/2 z-10 cursor-grab active:cursor-grabbing touch-none p-1 rounded hover:bg-accent/80"
+        >
+          <GripVertical className="w-4 h-4 text-muted-foreground" />
+        </div>
+        <div className="pl-8">
+          <RepoCard
+            repo={repo}
+            onDelete={onDelete}
+            isDeleting={isDeleting}
+            isSelected={isSelected}
+            onSelect={onSelect}
+            gitStatus={gitStatus}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StaticRepoCard({
+  repo,
+  onDelete,
+  isDeleting,
+  isSelected,
+  onSelect,
+  gitStatus,
+}: RepoCardWrapperProps) {
+  return (
+    <RepoCard
+      repo={repo}
+      onDelete={onDelete}
+      isDeleting={isDeleting}
+      isSelected={isSelected}
+      onSelect={onSelect}
+      gitStatus={gitStatus}
+    />
+  )
+}
 
 export function RepoList() {
-  const queryClient = useQueryClient();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [repoToDelete, setRepoToDelete] = useState<number | null>(null);
-  const [selectedRepos, setSelectedRepos] = useState<Set<number>>(new Set());
-  const [searchQuery, setSearchQuery] = useState("");
+  const queryClient = useQueryClient()
+  const isMobile = useMobile()
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [repoToDelete, setRepoToDelete] = useState<number | null>(null)
+  const [selectedRepos, setSelectedRepos] = useState<Set<number>>(new Set())
+  const [searchQuery, setSearchQuery] = useState("")
+  const [reorderMode, setReorderMode] = useState(false)
+  
+  const isDragEnabled = !isMobile || reorderMode
 
   const {
     data: repos,
@@ -22,34 +103,114 @@ export function RepoList() {
   } = useQuery({
     queryKey: ["repos"],
     queryFn: listRepos,
-  });
+  })
+
+  const repoIds = repos?.map((repo) => repo.id) || []
+
+  const { data: gitStatuses } = useQuery({
+    queryKey: ["reposGitStatus", repoIds],
+    queryFn: () => fetchReposGitStatus(repoIds),
+    enabled: repoIds.length > 0,
+  })
 
   const deleteMutation = useMutation({
     mutationFn: deleteRepo,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repos"] });
-      setDeleteDialogOpen(false);
-      setRepoToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["repos"] })
+      setDeleteDialogOpen(false)
+      setRepoToDelete(null)
     },
-  });
+  })
 
   const batchDeleteMutation = useMutation({
     mutationFn: async (repoIds: number[]) => {
-      await Promise.all(repoIds.map((id) => deleteRepo(id)));
+      await Promise.all(repoIds.map((id) => deleteRepo(id)))
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repos"] });
-      setDeleteDialogOpen(false);
-      setSelectedRepos(new Set());
+      queryClient.invalidateQueries({ queryKey: ["repos"] })
+      setDeleteDialogOpen(false)
+      setSelectedRepos(new Set())
     },
-  });
+  })
+
+  const updateOrderMutation = useMutation({
+    mutationFn: updateRepoOrder,
+    onMutate: async (newOrder) => {
+      await queryClient.cancelQueries({ queryKey: ["repos"] })
+
+      const previousRepos = queryClient.getQueryData<Repo[]>(["repos"])
+
+      queryClient.setQueryData<Repo[]>(["repos"], (old) => {
+        if (!old) return old
+        const repoMap = new Map(old.map((repo) => [repo.id, repo]))
+        const reorderedRepos = newOrder.map((id) => repoMap.get(id)).filter((repo): repo is Repo => repo !== undefined)
+        const newRepos = old.filter((repo) => !newOrder.includes(repo.id))
+        return [...reorderedRepos, ...newRepos]
+      })
+
+      return { previousRepos }
+    },
+    onError: (_error, _variables, context) => {
+      queryClient.setQueryData(["repos"], context?.previousRepos)
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["repos"] })
+    },
+  })
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (!repos || !over) return
+
+    if (active.id !== over.id) {
+      const oldIndex = repos.findIndex((repo) => repo.id === Number(active.id))
+      const newIndex = repos.findIndex((repo) => repo.id === Number(over.id))
+
+      if (oldIndex === -1 || newIndex === -1) return
+
+      const newOrder = arrayMove(repos, oldIndex, newIndex).map((repo) => repo.id)
+      updateOrderMutation.mutate(newOrder)
+    }
+
+  }
 
   if (isLoading && !repos) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <Loader2 className="w-6 h-6 animate-spin" />
+      <div className="px-0 md:p-4 h-full flex flex-col">
+        <div className="px-2 md:px-0">
+          <div className="h-10 bg-muted/50 animate-pulse rounded w-full" />
+        </div>
+        <div className="mx-2 md:mx-0 flex-1 min-h-0">
+          <div className="h-full overflow-y-auto pt-4 pb-2 md:pb-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-3 md:gap-4 w-full">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="md:pl-8">
+                  <RepoCardSkeleton />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -58,7 +219,7 @@ export function RepoList() {
         Failed to load repositories:{" "}
         {error instanceof Error ? error.message : "Unknown error"}
       </div>
-    );
+    )
   }
 
   if (!repos || repos.length === 0) {
@@ -69,131 +230,94 @@ export function RepoList() {
           No repositories yet. Add one to get started.
         </p>
       </div>
-    );
+    )
   }
 
   const dedupedRepos = repos.reduce((acc, repo) => {
     if (repo.isWorktree) {
-      acc.push(repo);
+      acc.push(repo)
     } else {
-      const key = repo.repoUrl || repo.localPath;
-      const existing = acc.find(r => (r.repoUrl || r.localPath) === key && !r.isWorktree);
-      
+      const key = repo.repoUrl || repo.localPath
+      const existing = acc.find((r) => (r.repoUrl || r.localPath) === key && !r.isWorktree)
+
       if (!existing) {
-        acc.push(repo);
+        acc.push(repo)
       }
     }
-    
-    return acc;
-  }, [] as typeof repos);
+
+    return acc
+  }, [] as Repo[])
 
   const filteredRepos = dedupedRepos.filter((repo) => {
-    const repoName = repo.repoUrl 
+    const repoName = repo.repoUrl
       ? repo.repoUrl.split("/").slice(-1)[0].replace(".git", "")
-      : repo.localPath;
-    const searchTarget = repo.repoUrl || repo.localPath || "";
+      : repo.localPath
+    const searchTarget = repo.repoUrl || repo.localPath || ""
     return (
       repoName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       searchTarget.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  });
+    )
+  })
 
   const handleSelectRepo = (id: number, selected: boolean) => {
-    const newSelected = new Set(selectedRepos);
+    const newSelected = new Set(selectedRepos)
     if (selected) {
-      newSelected.add(id);
+      newSelected.add(id)
     } else {
-      newSelected.delete(id);
+      newSelected.delete(id)
     }
-    setSelectedRepos(newSelected);
-  };
+    setSelectedRepos(newSelected)
+  }
 
   const handleSelectAll = () => {
     const allFilteredSelected = filteredRepos.every((repo) =>
       selectedRepos.has(repo.id),
-    );
+    )
 
     if (allFilteredSelected) {
-      setSelectedRepos(new Set());
+      setSelectedRepos(new Set())
     } else {
-      const filteredIds = filteredRepos.map((repo) => repo.id);
-      setSelectedRepos(new Set([...selectedRepos, ...filteredIds]));
+      const filteredIds = filteredRepos.map((repo) => repo.id)
+      setSelectedRepos(new Set([...selectedRepos, ...filteredIds]))
     }
-  };
+  }
 
   const handleBatchDelete = () => {
     if (selectedRepos.size > 0) {
-      setDeleteDialogOpen(true);
+      setDeleteDialogOpen(true)
     }
-  };
+  }
 
+  const handleDeleteAll = () => {
+    if (filteredRepos.length === 0) return
+    setSelectedRepos(new Set(filteredRepos.map((r) => r.id)))
+    setDeleteDialogOpen(true)
+  }
 
   return (
     <>
-      <div className="px-0 py-2 md:p-4">
-        <div className="flex items-center gap-3 mb-4 md:mb-6 px-2 md:px-0">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-            <Input
-              placeholder="Search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          {filteredRepos.length > 0 && (
-            <Button
-              onClick={handleSelectAll}
-              variant={selectedRepos.size > 0 ? "default" : "outline"}
-              className="whitespace-nowrap hidden md:flex"
-            >
-              {filteredRepos.every((repo) => selectedRepos.has(repo.id))
-                ? "Deselect All"
-                : "Select All"}
-            </Button>
-          )}
-          <Button
-            onClick={handleBatchDelete}
-            variant="destructive"
-            disabled={selectedRepos.size === 0}
-            className="hidden md:flex whitespace-nowrap"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete ({selectedRepos.size})
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="md:hidden"
-                disabled={filteredRepos.length === 0}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {filteredRepos.length > 0 && (
-                <DropdownMenuItem onClick={handleSelectAll}>
-                  {filteredRepos.every((repo) => selectedRepos.has(repo.id))
-                    ? "Deselect All"
-                    : "Select All"}
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem 
-                onClick={handleBatchDelete}
-                disabled={selectedRepos.size === 0}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete ({selectedRepos.size})
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+      <div className="px-0 md:p-4 h-full flex flex-col">
+        <div className=" px-2 md:px-0">
+          <ListToolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            selectedCount={selectedRepos.size}
+            totalCount={filteredRepos.length}
+            allSelected={
+              filteredRepos.length > 0 &&
+              filteredRepos.every((repo) => selectedRepos.has(repo.id))
+            }
+            onToggleSelectAll={handleSelectAll}
+            onDelete={handleBatchDelete}
+            onDeleteAll={handleDeleteAll}
+            reorderMode={reorderMode}
+            onToggleReorderMode={() => setReorderMode((m) => !m)}
+            showReorderToggle={isMobile}
+          />
         </div>
 
-        <div className="mx-2 md:mx-0">
-          <div className="py-2 md:py-0">
+        <div className="mx-2 md:mx-0 flex-1 min-h-0">
+          <div className="h-full overflow-y-auto pt-4 pb-2 md:pb-0 [mask-image:linear-gradient(to_bottom,transparent,black_16px,black)]">
             {filteredRepos.length === 0 ? (
               <div className="text-center p-12">
                 <Search className="w-12 h-12 mx-auto mb-4 text-zinc-600" />
@@ -201,21 +325,49 @@ export function RepoList() {
                   No repositories found matching "{searchQuery}"
                 </p>
               </div>
+            ) : isDragEnabled ? (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext items={filteredRepos.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-3 md:gap-4 w-full md:pb-0">
+                    {filteredRepos.map((repo) => (
+                      <SortableRepoCard
+                        key={repo.id}
+                        repo={repo}
+                        onDelete={(id) => {
+                          setRepoToDelete(id)
+                          setDeleteDialogOpen(true)
+                        }}
+                        isDeleting={
+                          deleteMutation.isPending && repoToDelete === repo.id
+                        }
+                        isSelected={selectedRepos.has(repo.id)}
+                        onSelect={handleSelectRepo}
+                        gitStatus={gitStatuses?.get(repo.id)}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-3 md:gap-4 w-full pb-20 md:pb-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-3 md:gap-4 w-full md:pb-0">
                 {filteredRepos.map((repo) => (
-                  <RepoCard
+                  <StaticRepoCard
                     key={repo.id}
                     repo={repo}
                     onDelete={(id) => {
-                      setRepoToDelete(id);
-                      setDeleteDialogOpen(true);
+                      setRepoToDelete(id)
+                      setDeleteDialogOpen(true)
                     }}
                     isDeleting={
                       deleteMutation.isPending && repoToDelete === repo.id
                     }
                     isSelected={selectedRepos.has(repo.id)}
                     onSelect={handleSelectRepo}
+                    gitStatus={gitStatuses?.get(repo.id)}
                   />
                 ))}
               </div>
@@ -229,14 +381,15 @@ export function RepoList() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={() => {
           if (repoToDelete) {
-            deleteMutation.mutate(repoToDelete);
+            deleteMutation.mutate(repoToDelete)
           } else if (selectedRepos.size > 0) {
-            batchDeleteMutation.mutate(Array.from(selectedRepos));
+            batchDeleteMutation.mutate(Array.from(selectedRepos))
           }
         }}
         onCancel={() => {
-          setDeleteDialogOpen(false);
-          setRepoToDelete(null);
+          setDeleteDialogOpen(false)
+          setRepoToDelete(null)
+          setSelectedRepos(new Set())
         }}
         title={
           selectedRepos.size > 0
@@ -251,5 +404,5 @@ export function RepoList() {
         isDeleting={deleteMutation.isPending || batchDeleteMutation.isPending}
       />
     </>
-  );
+  )
 }

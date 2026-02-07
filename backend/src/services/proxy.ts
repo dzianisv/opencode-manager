@@ -1,12 +1,54 @@
 import { logger } from '../utils/logger'
 import { ENV } from '@opencode-manager/shared/config/env'
 
-function getOpenCodeServerUrl(): string {
-  return `http://127.0.0.1:${ENV.OPENCODE.PORT}`
+const OPENCODE_SERVER_URL = `http://${ENV.OPENCODE.HOST}:${ENV.OPENCODE.PORT}`
+
+export async function setOpenCodeAuth(providerId: string, apiKey: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${OPENCODE_SERVER_URL}/auth/${providerId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'api', key: apiKey }),
+    })
+    
+    if (response.ok) {
+      logger.info(`Set OpenCode auth for provider: ${providerId}`)
+      return true
+    }
+    
+    logger.error(`Failed to set OpenCode auth: ${response.status} ${response.statusText}`)
+    return false
+  } catch (error) {
+    logger.error('Failed to set OpenCode auth:', error)
+    return false
+  }
 }
 
-export async function patchOpenCodeConfig(config: Record<string, unknown>): Promise<boolean> {
-  const OPENCODE_SERVER_URL = getOpenCodeServerUrl()
+export async function deleteOpenCodeAuth(providerId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${OPENCODE_SERVER_URL}/auth/${providerId}`, {
+      method: 'DELETE',
+    })
+    
+    if (response.ok) {
+      logger.info(`Deleted OpenCode auth for provider: ${providerId}`)
+      return true
+    }
+    
+    logger.error(`Failed to delete OpenCode auth: ${response.status} ${response.statusText}`)
+    return false
+  } catch (error) {
+    logger.error('Failed to delete OpenCode auth:', error)
+    return false
+  }
+}
+
+export type PatchConfigResult = {
+  success: boolean
+  error?: string
+}
+
+export async function patchOpenCodeConfig(config: Record<string, unknown>): Promise<PatchConfigResult> {
   try {
     const response = await fetch(`${OPENCODE_SERVER_URL}/config`, {
       method: 'PATCH',
@@ -16,14 +58,37 @@ export async function patchOpenCodeConfig(config: Record<string, unknown>): Prom
     
     if (response.ok) {
       logger.info('Patched OpenCode config via API')
-      return true
+      return { success: true }
     }
     
-    logger.error(`Failed to patch OpenCode config: ${response.status} ${response.statusText}`)
-    return false
+    let errorMessage = `${response.status} ${response.statusText}`
+    try {
+      const errorBody = await response.json() as Record<string, unknown>
+      if (errorBody?.name === 'ConfigInvalidError' && errorBody?.data) {
+        const data = errorBody.data as { issues?: Array<{ message: string; path?: string[] }> }
+        if (data.issues) {
+          const issues = data.issues
+            .map((issue) => 
+              issue.path ? `${issue.path.join('.')}: ${issue.message}` : issue.message
+            )
+            .join('; ')
+          errorMessage = `Invalid config: ${issues}`
+        }
+      } else if (typeof errorBody?.error === 'string') {
+        errorMessage = errorBody.error
+      } else if (typeof errorBody?.message === 'string') {
+        errorMessage = errorBody.message
+      }
+    } catch {
+      // Use default error message if we can't parse response body
+    }
+    
+    logger.error(`Failed to patch OpenCode config: ${errorMessage}`)
+    return { success: false, error: errorMessage }
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     logger.error('Failed to patch OpenCode config:', error)
-    return false
+    return { success: false, error: errorMessage }
   }
 }
 
@@ -81,7 +146,6 @@ export async function proxyToOpenCodeWithDirectory(
   body?: string,
   headers?: Record<string, string>
 ): Promise<Response> {
-  const OPENCODE_SERVER_URL = getOpenCodeServerUrl()
   const url = new URL(`${OPENCODE_SERVER_URL}${path}`)
   
   if (directory) {

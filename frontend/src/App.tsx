@@ -1,25 +1,21 @@
+import { useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { Repos } from './pages/Repos'
 import { RepoDetail } from './pages/RepoDetail'
 import { SessionDetail } from './pages/SessionDetail'
-import { TerminalPage } from './pages/Terminal'
-import TasksPage from './pages/Tasks/TasksPage'
+import { Login } from './pages/Login'
+import { Register } from './pages/Register'
+import { Setup } from './pages/Setup'
 import { SettingsDialog } from './components/settings/SettingsDialog'
 import { useSettingsDialog } from './hooks/useSettingsDialog'
 import { useTheme } from './hooks/useTheme'
 import { TTSProvider } from './contexts/TTSContext'
-import { STTProvider } from './contexts/STTContext'
-import { TalkModeProvider } from './contexts/TalkModeContext'
-import { PermissionProvider } from '@/contexts/PermissionContext'
-import { QuestionProvider } from '@/contexts/QuestionContext'
+import { AuthProvider } from './contexts/AuthContext'
+import { EventProvider, usePermissions } from '@/contexts/EventContext'
 import { PermissionRequestDialog } from './components/session/PermissionRequestDialog'
-import { QuestionDialog } from './components/question/QuestionDialog'
-import { usePermissionContext } from './contexts/PermissionContext'
-import { GlobalPermissionNotification } from './components/permissions/GlobalPermissionNotification'
-import { NotificationProvider } from './components/providers/NotificationProvider'
-import { SessionSwitcher } from './components/session/SessionSwitcher'
+import { loginLoader, setupLoader, registerLoader, protectedLoader } from './lib/auth-loaders'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,74 +26,102 @@ const queryClient = new QueryClient({
   },
 })
 
-function AppContent() {
-  const { isOpen, close } = useSettingsDialog()
-  useTheme()
-
-return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Repos />} />
-        <Route path="/tasks" element={<TasksPage />} />
-        <Route path="/repos/:id" element={<RepoDetail />} />
-        <Route path="/repos/:id/sessions/:sessionId" element={<SessionDetail />} />
-        <Route path="/repos/:id/terminal" element={<TerminalPage />} />
-      </Routes>
-      <GlobalPermissionNotification />
-      <SessionSwitcher />
-      <SettingsDialog open={isOpen} onOpenChange={close} />
-      <Toaster
-        position="bottom-right"
-        expand={false}
-        richColors
-        closeButton
-      />
-    </BrowserRouter>
-  )
-}
-
 function PermissionDialogWrapper() {
   const {
-    currentPermission,
+    current: currentPermission,
     pendingCount,
-    isFromDifferentSession,
-    respondToPermission,
+    respond: respondToPermission,
     showDialog,
     setShowDialog,
-    currentRepoDirectory,
-  } = usePermissionContext()
+  } = usePermissions()
 
   return (
     <PermissionRequestDialog
       permission={currentPermission}
       pendingCount={pendingCount}
-      isFromDifferentSession={isFromDifferentSession}
+      isFromDifferentSession={false}
       onRespond={respondToPermission}
       open={showDialog}
       onOpenChange={setShowDialog}
-      repoDirectory={currentRepoDirectory}
+      repoDirectory={null}
     />
   )
 }
 
-function App() {
+function AppShell() {
+  const { isOpen, close } = useSettingsDialog()
+  useTheme()
 
+  useEffect(() => {
+    const loader = document.getElementById('app-loader')
+    if (loader) {
+      loader.style.transition = 'opacity 0.2s ease-out'
+      loader.style.opacity = '0'
+      setTimeout(() => loader.remove(), 200)
+    }
+  }, [])
+
+  return (
+    <AuthProvider>
+      <EventProvider>
+        <Outlet />
+        <PermissionDialogWrapper />
+        <SettingsDialog open={isOpen} onOpenChange={close} />
+        <Toaster
+          position="bottom-right"
+          expand={false}
+          richColors
+          closeButton
+          duration={2500}
+        />
+      </EventProvider>
+    </AuthProvider>
+  )
+}
+
+const router = createBrowserRouter([
+  {
+    element: <AppShell />,
+    children: [
+      {
+        path: '/login',
+        element: <Login />,
+        loader: loginLoader,
+      },
+      {
+        path: '/register',
+        element: <Register />,
+        loader: registerLoader,
+      },
+      {
+        path: '/setup',
+        element: <Setup />,
+        loader: setupLoader,
+      },
+      {
+        path: '/',
+        element: <Repos />,
+        loader: protectedLoader,
+      },
+      {
+        path: '/repos/:id',
+        element: <RepoDetail />,
+        loader: protectedLoader,
+      },
+      {
+        path: '/repos/:id/sessions/:sessionId',
+        element: <SessionDetail />,
+        loader: protectedLoader,
+      },
+    ],
+  },
+])
+
+function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TTSProvider>
-        <STTProvider>
-          <TalkModeProvider>
-            <PermissionProvider>
-              <QuestionProvider>
-                <NotificationProvider>
-                  <AppContent />
-                  <PermissionDialogWrapper />
-                  <QuestionDialog />
-                </NotificationProvider>
-              </QuestionProvider>
-            </PermissionProvider>
-          </TalkModeProvider>
-        </STTProvider>
+        <RouterProvider router={router} />
       </TTSProvider>
     </QueryClientProvider>
   )

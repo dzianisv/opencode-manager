@@ -1,11 +1,13 @@
 import { memo } from 'react'
 import type { components } from '@/api/opencode-types'
-import { Volume2, Square, Loader2 } from 'lucide-react'
+import { Volume2, Loader2 } from 'lucide-react'
 import { TextPart } from './TextPart'
+import { SquareFill } from '@/components/ui/square-fill'
 import { PatchPart } from './PatchPart'
 import { ToolCallPart } from './ToolCallPart'
 import { RetryPart } from './RetryPart'
 import { useTTS } from '@/hooks/useTTS'
+import { useMobile } from '@/hooks/useMobile'
 import { CopyButton } from '@/components/ui/copy-button'
 
 type RetryPartType = components['schemas']['RetryPart']
@@ -91,7 +93,7 @@ export function TTSButton({ content, className = "" }: TTSButtonProps) {
       {isLoading && isThisPlaying ? (
         <Loader2 className="w-4 h-4 animate-spin" />
       ) : isThisPlaying ? (
-        <Square className="w-4 h-4" />
+        <SquareFill className="w-4 h-4" />
       ) : (
         <Volume2 className="w-4 h-4" />
       )}
@@ -103,6 +105,7 @@ export function TTSButton({ content, className = "" }: TTSButtonProps) {
 
 export const MessagePart = memo(function MessagePart({ part, role, allParts, partIndex, onFileClick, onChildSessionClick, messageTextContent }: MessagePartProps) {
   const copyableContent = getCopyableContent(part, allParts)
+  const isMobile = useMobile()
   
   switch (part.type) {
     case 'text':
@@ -140,14 +143,18 @@ export const MessagePart = memo(function MessagePart({ part, role, allParts, par
           <div className="text-sm font-medium text-blue-600 dark:text-blue-400">Agent: {part.name}</div>
         </div>
       )
-    case 'step-finish':
+    case 'step-finish': {
+      const isFree = part.cost === 0
+      const totalTokens = part.tokens.input + part.tokens.output + (part.tokens.cache?.read || 0)
+      const costText = isMobile && isFree ? null : <span>${part.cost.toFixed(4)} • {totalTokens} tokens</span>
       return (
         <div className="text-xs text-muted-foreground my-1 flex items-center gap-2">
-          <span>${part.cost.toFixed(4)} • {part.tokens.input + part.tokens.output} tokens</span>
+          {costText}
           <CopyButton content={copyableContent} title="Copy step complete" />
           {messageTextContent && <TTSButton content={messageTextContent} />}
         </div>
       )
+    }
     case 'file':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-muted border border-border text-sm text-foreground">

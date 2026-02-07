@@ -47,16 +47,10 @@ export function TTSProvider({ children }: TTSProviderProps) {
 
   const ttsConfig = preferences?.tts
   const isBuiltin = ttsConfig?.provider === 'builtin'
-  const isChatterbox = ttsConfig?.provider === 'chatterbox'
-  const isCoqui = ttsConfig?.provider === 'coqui'
   const isEnabled = (() => {
     if (!ttsConfig?.enabled) return false
     if (isBuiltin) {
       return isWebSpeechSupported()
-    }
-    if (isChatterbox || isCoqui) {
-      // Local TTS providers don't require API key
-      return true
     }
     // External requires apiKey
     return !!ttsConfig?.apiKey
@@ -210,42 +204,28 @@ export function TTSProvider({ children }: TTSProviderProps) {
       prefetchedBlobsRef.current.delete(index)
       
       const url = URL.createObjectURL(blob)
-      let urlRevoked = false
-      const revokeUrl = () => {
-        if (!urlRevoked) {
-          urlRevoked = true
-          URL.revokeObjectURL(url)
-        }
-      }
-      
-      try {
-        const audio = new Audio(url)
-        audioRef.current = audio
+      const audio = new Audio(url)
+      audioRef.current = audio
 
-        audio.onended = () => {
-          revokeUrl()
-          audioRef.current = null
-          if (!stoppedRef.current) {
-            playChunk(index + 1)
-          }
-        }
-
-        audio.onerror = () => {
-          revokeUrl()
-          audioRef.current = null
-          if (!stoppedRef.current) {
-            setError('Audio playback failed')
-            setState('error')
-          }
-        }
-
-        setState('playing')
-        await audio.play()
-      } catch (playErr) {
-        revokeUrl()
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
         audioRef.current = null
-        throw playErr
+        if (!stoppedRef.current) {
+          playChunk(index + 1)
+        }
       }
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+        if (!stoppedRef.current) {
+          setError('Audio playback failed')
+          setState('error')
+        }
+      }
+
+      setState('playing')
+      await audio.play()
     } catch (err) {
       if (stoppedRef.current) return
       setError(err instanceof Error ? err.message : 'TTS failed')
@@ -332,8 +312,6 @@ export function TTSProvider({ children }: TTSProviderProps) {
     }
 
     const configIsBuiltin = config.provider === 'builtin'
-    const configIsChatterbox = config.provider === 'chatterbox'
-    const configIsCoqui = config.provider === 'coqui'
 
     if (configIsBuiltin) {
       if (!isWebSpeechSupported()) {
@@ -342,10 +320,7 @@ export function TTSProvider({ children }: TTSProviderProps) {
         return false
       }
       return speakBuiltinWithConfig(text, config)
-    } else if (configIsChatterbox || configIsCoqui) {
-      // Local TTS providers don't require API key - handled by backend
     } else {
-      // External provider requires API key
       if (!config.apiKey) {
         setError('API key not configured')
         setState('error')
@@ -357,30 +332,29 @@ export function TTSProvider({ children }: TTSProviderProps) {
         setState('error')
         return false
       }
+
+      const sanitizedText = sanitizeForTTS(text)
+      
+      if (!sanitizedText?.trim()) {
+        setError('No readable content after sanitization')
+        setState('error')
+        return false
+      }
+
+      stop()
+      stoppedRef.current = false
+      setError(null)
+
+      setOriginalText(text)
+      setCurrentText(sanitizedText)
+
+      abortControllerRef.current = new AbortController()
+      chunksRef.current = splitIntoChunks(sanitizedText)
+      
+      playChunk(0)
+      
+      return true
     }
-
-    // Both chatterbox and external providers use the backend API
-    const sanitizedText = sanitizeForTTS(text)
-    
-    if (!sanitizedText?.trim()) {
-      setError('No readable content after sanitization')
-      setState('error')
-      return false
-    }
-
-    stop()
-    stoppedRef.current = false
-    setError(null)
-
-    setOriginalText(text)
-    setCurrentText(sanitizedText)
-
-    abortControllerRef.current = new AbortController()
-    chunksRef.current = splitIntoChunks(sanitizedText)
-    
-    playChunk(0)
-    
-    return true
   }, [speakBuiltinWithConfig, stop, playChunk])
 
   // Main speak function - uses stored preferences

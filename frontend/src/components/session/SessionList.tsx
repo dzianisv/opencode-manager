@@ -1,14 +1,8 @@
 import { useState, useMemo } from "react";
 import { useSessions, useDeleteSession } from "@/hooks/useOpenCode";
-import { useFirstMessage } from "@/hooks/useFirstMessage";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ListToolbar } from "@/components/ui/list-toolbar";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
-import { Trash2, Clock, Search, MoreVertical, Hash } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { SessionCard } from "./SessionCard";
 
 interface SessionListProps {
   opcodeUrl: string;
@@ -135,6 +129,20 @@ export const SessionList = ({
     return filtered.sort((a, b) => b.time.updated - a.time.updated);
   }, [sessions, searchQuery, directory]);
 
+  const todaySessions = useMemo(() => {
+    if (!filteredSessions) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return filteredSessions.filter((session) => new Date(session.time.updated) >= today);
+  }, [filteredSessions]);
+
+  const olderSessions = useMemo(() => {
+    if (!filteredSessions) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return filteredSessions.filter((session) => new Date(session.time.updated) < today);
+  }, [filteredSessions]);
+
   if (isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading sessions...</div>;
   }
@@ -168,6 +176,7 @@ export const SessionList = ({
   const cancelDelete = () => {
     setDeleteDialogOpen(false);
     setSessionToDelete(null);
+    setSelectedSessions(new Set());
   };
 
   const toggleSessionSelection = (sessionId: string, selected: boolean) => {
@@ -202,95 +211,76 @@ export const SessionList = ({
     }
   };
 
+  const handleDeleteAll = () => {
+    if (!filteredSessions || filteredSessions.length === 0) return;
+    setSessionToDelete(filteredSessions.map((s) => s.id));
+    setDeleteDialogOpen(true);
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="p-4 flex-shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          {filteredSessions && filteredSessions.length > 0 && (
-            <Button
-              onClick={toggleSelectAll}
-              variant={selectedSessions.size > 0 ? "default" : "outline"}
-              className="whitespace-nowrap hidden md:flex"
-            >
-              {filteredSessions.every((session) =>
-                selectedSessions.has(session.id),
-              )
-                ? "Deselect All"
-                : "Select All"}
-            </Button>
-          )}
-          <Button
-            onClick={handleBulkDelete}
-            variant="destructive"
-            disabled={selectedSessions.size === 0}
-            className="hidden md:flex whitespace-nowrap"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete ({selectedSessions.size})
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="md:hidden"
-                disabled={filteredSessions.length === 0}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {filteredSessions.length > 0 && (
-                <DropdownMenuItem onClick={toggleSelectAll}>
-                  {filteredSessions.every((session) =>
-                    selectedSessions.has(session.id),
-                  )
-                    ? "Deselect All"
-                    : "Select All"}
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem 
-                onClick={handleBulkDelete}
-                disabled={selectedSessions.size === 0}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete ({selectedSessions.size})
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+      <div className="px-4 pt-2 flex-shrink-0">
+        <ListToolbar
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          selectedCount={selectedSessions.size}
+          totalCount={filteredSessions.length}
+          allSelected={
+            filteredSessions.length > 0 &&
+            filteredSessions.every((session) => selectedSessions.has(session.id))
+          }
+          onToggleSelectAll={toggleSelectAll}
+          onDelete={handleBulkDelete}
+          onDeleteAll={handleDeleteAll}
+        />
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-4 min-h-0 [mask-image:linear-gradient(to_bottom,transparent,black_16px,black)]">
         <div className="flex flex-col gap-2">
           {filteredSessions.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-4">
               No sessions found
             </div>
           ) : (
-            filteredSessions.map((session) => (
-              <SessionItem
-                key={session.id}
-                session={session}
-                directory={directory}
-                isSelected={selectedSessions.has(session.id)}
-                isActive={activeSessionID === session.id}
-                onSelect={() => onSelectSession(session.id)}
-                onToggle={(checked) => toggleSessionSelection(session.id, checked)}
-                onDelete={(e) => handleDelete(session.id, e)}
-              />
-            ))
+            <>
+              {todaySessions.length > 0 && (
+                <>
+                  <div className="text-xs font-semibold text-muted-foreground px-1 py-2">
+                    Today
+                  </div>
+                  {todaySessions.map((session) => (
+                    <SessionCard
+                      key={session.id}
+                      session={session}
+                      isSelected={selectedSessions.has(session.id)}
+                      isActive={activeSessionID === session.id}
+                      onSelect={onSelectSession}
+                      onToggleSelection={(selected) => {
+                        toggleSessionSelection(session.id, selected);
+                      }}
+                      onDelete={(e) => handleDelete(session.id, e)}
+                    />
+                  ))}
+                </>
+              )}
+
+              {todaySessions.length > 0 && olderSessions.length > 0 && (
+                <div className="my-2 h-px bg-border/80" />
+              )}
+              {olderSessions.map((session) => (
+                <SessionCard
+                  key={session.id}
+                  session={session}
+                  isSelected={selectedSessions.has(session.id)}
+                  isActive={activeSessionID === session.id}
+                  onSelect={onSelectSession}
+                  onToggleSelection={(selected) => {
+                    toggleSessionSelection(session.id, selected);
+                  }}
+                  onDelete={(e) => handleDelete(session.id, e)}
+                />
+              ))}
+            </>
           )}
         </div>
       </div>

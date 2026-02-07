@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NotificationPreferencesSchema, DEFAULT_NOTIFICATION_PREFERENCES } from "./notifications";
 
 const ALLOWED_TTS_HOSTS = [
   'api.openai.com',
@@ -46,10 +47,8 @@ export const CustomCommandSchema = z.object({
 
 export const TTSConfigSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(['external', 'builtin', 'chatterbox', 'coqui']).default('external'),
-  endpoint: z.string().refine(isAllowedTTSEndpoint, {
-    message: 'TTS endpoint must be a valid HTTPS URL from an allowed provider',
-  }),
+  provider: z.enum(['external', 'builtin']).default('external'),
+  endpoint: z.string(),
   apiKey: z.string(),
   voice: z.string(),
   model: z.string(),
@@ -58,37 +57,17 @@ export const TTSConfigSchema = z.object({
   availableModels: z.array(z.string()).optional(),
   lastVoicesFetch: z.number().optional(),
   lastModelsFetch: z.number().optional(),
-  chatterboxExaggeration: z.number().min(0).max(1).optional(),
-  chatterboxCfgWeight: z.number().min(0).max(1).optional(),
-  autoReadNewMessages: z.boolean().optional(),
 });
 
 export const STTConfigSchema = z.object({
   enabled: z.boolean(),
-  model: z.string().default('base'),
-  language: z.string().optional(),
-  autoSubmit: z.boolean().default(false),
+  provider: z.enum(['external', 'builtin']).default('builtin'),
+  endpoint: z.string(),
+  apiKey: z.string(),
+  model: z.string(),
+  language: z.string().default('en-US'),
   availableModels: z.array(z.string()).optional(),
-});
-
-export const TalkModeConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  silenceThresholdMs: z.number().min(300).max(2000).default(800),
-  minSpeechMs: z.number().min(200).max(1000).default(400),
-  autoInterrupt: z.boolean().default(true),
-});
-
-export const NotificationConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  sessionComplete: z.boolean().default(true),
-  permissionRequests: z.boolean().default(true),
-  sound: z.boolean().default(false),
-});
-
-export const SessionPruneConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  intervalDays: z.number().min(1).max(365).default(7),
-  lastPrunedAt: z.number().optional(),
+  lastModelsFetch: z.number().optional(),
 });
 
 export const CustomAgentSchema = z.object({
@@ -99,7 +78,7 @@ export const CustomAgentSchema = z.object({
 
 export type TTSConfig = {
   enabled: boolean;
-  provider: 'external' | 'builtin' | 'chatterbox' | 'coqui';
+  provider: 'external' | 'builtin';
   endpoint: string;
   apiKey: string;
   voice: string;
@@ -109,57 +88,61 @@ export type TTSConfig = {
   availableModels?: string[];
   lastVoicesFetch?: number;
   lastModelsFetch?: number;
-  chatterboxExaggeration?: number;
-  chatterboxCfgWeight?: number;
-  autoReadNewMessages?: boolean;
 };
 
 export type STTConfig = {
   enabled: boolean;
+  provider: 'external' | 'builtin';
+  endpoint: string;
+  apiKey: string;
   model: string;
-  language?: string;
-  autoSubmit: boolean;
+  language: string;
   availableModels?: string[];
-};
-
-export type TalkModeConfig = {
-  enabled: boolean;
-  silenceThresholdMs: number;
-  minSpeechMs: number;
-  autoInterrupt: boolean;
-};
-
-export type NotificationConfig = {
-  enabled: boolean;
-  sessionComplete: boolean;
-  permissionRequests: boolean;
-  sound: boolean;
-};
-
-export type SessionPruneConfig = {
-  enabled: boolean;
-  intervalDays: number;
-  lastPrunedAt?: number;
+  lastModelsFetch?: number;
 };
 
 const isBrowser = typeof navigator !== 'undefined';
 const isMac = isBrowser && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 const CMD_KEY = isMac ? 'Cmd' : 'Ctrl';
 
+export const DEFAULT_LEADER_KEY = `${CMD_KEY}+O`;
+
 export const DEFAULT_KEYBOARD_SHORTCUTS: Record<string, string> = {
   submit: `${CMD_KEY}+Enter`,
   abort: 'Escape',
-  toggleMode: 'Tab',
-  undo: `${CMD_KEY}+Z`,
-  redo: `${CMD_KEY}+Shift+Z`,
-  compact: `${CMD_KEY}+K`,
-  fork: `${CMD_KEY}+Shift+F`,
-  settings: `${CMD_KEY}+,`,
-  sessions: `${CMD_KEY}+S`,
-  newSession: `${CMD_KEY}+N`,
-  closeSession: `${CMD_KEY}+W`,
-  toggleSidebar: `${CMD_KEY}+B`,
-  selectModel: `${CMD_KEY}+M`,
+  toggleMode: 'T',
+  undo: 'Z',
+  redo: 'Shift+Z',
+  compact: 'K',
+  fork: 'F',
+  settings: ',',
+  sessions: 'S',
+  newSession: 'N',
+  closeSession: 'W',
+  toggleSidebar: 'B',
+  selectModel: 'M',
+  variantCycle: `${CMD_KEY}+T`,
+};
+
+export const GitCredentialSchema = z.object({
+  name: z.string(),
+  host: z.string(),
+  token: z.string(),
+  username: z.string().optional(),
+});
+
+export type GitCredential = z.infer<typeof GitCredentialSchema>;
+
+export const GitIdentitySchema = z.object({
+  name: z.string(),
+  email: z.string(),
+});
+
+export type GitIdentity = z.infer<typeof GitIdentitySchema>;
+
+export const DEFAULT_GIT_IDENTITY: GitIdentity = {
+  name: 'OpenCode Agent',
+  email: '',
 };
 
 export const UserPreferencesSchema = z.object({
@@ -171,21 +154,23 @@ export const UserPreferencesSchema = z.object({
   showReasoning: z.boolean(),
   expandToolCalls: z.boolean(),
   expandDiffs: z.boolean(),
+  leaderKey: z.string().optional(),
+  directShortcuts: z.array(z.string()).optional(),
   keyboardShortcuts: z.record(z.string(), z.string()),
   customCommands: z.array(CustomCommandSchema),
   customAgents: z.array(CustomAgentSchema),
-  gitToken: z.string().optional(),
+  gitCredentials: z.array(GitCredentialSchema).optional(),
+  gitIdentity: GitIdentitySchema.optional(),
   tts: TTSConfigSchema.optional(),
   stt: STTConfigSchema.optional(),
-  talkMode: TalkModeConfigSchema.optional(),
-  notifications: NotificationConfigSchema.optional(),
-  sessionPrune: SessionPruneConfigSchema.optional(),
+  notifications: NotificationPreferencesSchema.optional(),
   lastKnownGoodConfig: z.string().optional(),
+  repoOrder: z.array(z.number()).optional(),
 });
 
 export const DEFAULT_TTS_CONFIG: TTSConfig = {
   enabled: false,
-  provider: 'coqui',
+  provider: 'external',
   endpoint: "https://api.openai.com",
   apiKey: "",
   voice: "alloy",
@@ -195,37 +180,17 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
   availableModels: [],
   lastVoicesFetch: 0,
   lastModelsFetch: 0,
-  chatterboxExaggeration: 0.5,
-  chatterboxCfgWeight: 0.5,
-  autoReadNewMessages: false,
 };
 
 export const DEFAULT_STT_CONFIG: STTConfig = {
   enabled: false,
-  model: 'base',
-  language: undefined,
-  autoSubmit: false,
-  availableModels: ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'],
-};
-
-export const DEFAULT_TALK_MODE_CONFIG: TalkModeConfig = {
-  enabled: false,
-  silenceThresholdMs: 800,
-  minSpeechMs: 400,
-  autoInterrupt: true,
-};
-
-export const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
-  enabled: false,
-  sessionComplete: true,
-  permissionRequests: true,
-  sound: false,
-};
-
-export const DEFAULT_SESSION_PRUNE_CONFIG: SessionPruneConfig = {
-  enabled: false,
-  intervalDays: 7,
-  lastPrunedAt: undefined,
+  provider: 'builtin',
+  endpoint: "https://api.openai.com",
+  apiKey: "",
+  model: '',
+  language: 'en-US',
+  availableModels: [],
+  lastModelsFetch: 0,
 };
 
 export const DEFAULT_USER_PREFERENCES = {
@@ -235,15 +200,16 @@ export const DEFAULT_USER_PREFERENCES = {
   showReasoning: false,
   expandToolCalls: false,
   expandDiffs: true,
+  leaderKey: DEFAULT_LEADER_KEY,
+  directShortcuts: ['submit', 'abort'],
   keyboardShortcuts: DEFAULT_KEYBOARD_SHORTCUTS,
   customCommands: [],
   customAgents: [],
-  gitToken: undefined,
+  gitCredentials: [] as GitCredential[],
+  gitIdentity: DEFAULT_GIT_IDENTITY,
   tts: DEFAULT_TTS_CONFIG,
   stt: DEFAULT_STT_CONFIG,
-  talkMode: DEFAULT_TALK_MODE_CONFIG,
-  notifications: DEFAULT_NOTIFICATION_CONFIG,
-  sessionPrune: DEFAULT_SESSION_PRUNE_CONFIG,
+  notifications: DEFAULT_NOTIFICATION_PREFERENCES,
 };
 
 export const SettingsResponseSchema = z.object({

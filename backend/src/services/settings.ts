@@ -63,6 +63,7 @@ export class SettingsService {
 
     try {
       const parsed = parseJsonc(row.preferences) as Record<string, unknown>
+      
       const validated = UserPreferencesSchema.parse({
         ...DEFAULT_USER_PREFERENCES,
         ...parsed,

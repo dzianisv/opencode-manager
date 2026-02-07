@@ -2,20 +2,32 @@ import path from "path";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, path.resolve(__dirname, ".."), "");
   const backendPort = env.PORT || 5001;
-  const authUsername = env.AUTH_USERNAME;
-  const authPassword = env.AUTH_PASSWORD;
-  
-  const proxyHeaders = authUsername && authPassword 
-    ? { headers: { Authorization: `Basic ${Buffer.from(`${authUsername}:${authPassword}`).toString('base64')}` } }
-    : {};
 
   return {
     envDir: path.resolve(__dirname, ".."),
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      VitePWA({
+        registerType: "autoUpdate",
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
+        injectRegister: false,
+        manifest: false,
+        injectManifest: {
+          globPatterns: ["**/*.{html,svg,png,ico}"],
+        },
+        devOptions: {
+          enabled: false,
+        },
+      }),
+    ],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
@@ -24,18 +36,10 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "0.0.0.0",
       port: 5173,
-      allowedHosts: true,
       proxy: {
-        "/api/terminal/socket.io": {
-          target: `http://127.0.0.1:${backendPort}`,
-          ws: true,
-          changeOrigin: true,
-          ...proxyHeaders,
-        },
         "/api": {
-          target: `http://127.0.0.1:${backendPort}`,
+          target: `http://localhost:${backendPort}`,
           changeOrigin: true,
-          ...proxyHeaders,
         },
       },
     },

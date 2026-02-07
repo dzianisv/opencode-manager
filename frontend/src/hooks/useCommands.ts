@@ -12,7 +12,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'init',
@@ -20,7 +20,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'new',
@@ -28,7 +28,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'clear',
@@ -36,7 +36,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'sessions',
@@ -44,7 +44,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'resume',
@@ -52,7 +52,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'continue',
@@ -60,7 +60,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'models',
@@ -68,7 +68,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'themes',
@@ -76,7 +76,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'share',
@@ -84,7 +84,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'unshare',
@@ -92,7 +92,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'export',
@@ -100,7 +100,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'compact',
@@ -108,7 +108,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'summarize',
@@ -116,7 +116,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'undo',
@@ -124,7 +124,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'redo',
@@ -132,7 +132,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'details',
@@ -140,7 +140,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   },
   {
     name: 'editor',
@@ -148,7 +148,7 @@ const BUILTIN_COMMANDS: CommandType[] = [
     template: '',
     agent: '',
     model: '',
-    subtask: false
+    hints: []
   }
 ]
 

@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite'
 import type { Repo, CreateRepoInput } from '../types/repo'
 import { getReposPath } from '@opencode-manager/shared/config/env'
+import { getErrorMessage } from '../utils/error-utils'
 import path from 'path'
 
 export interface RepoRow {
@@ -68,8 +69,9 @@ export function createRepo(db: Database, repo: CreateRepoInput): Repo {
       throw new Error(`Failed to retrieve newly created repo with id ${result.lastInsertRowid}`)
     }
     return newRepo
-  } catch (error: any) {
-    if (error.message?.includes('UNIQUE constraint failed') || error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error)
+    if (errorMessage.includes('UNIQUE constraint failed') || (error && typeof error === 'object' && 'code' in error && error.code === 'SQLITE_CONSTRAINT_UNIQUE')) {
       const conflictRepo = repo.isLocal 
         ? getRepoByLocalPath(db, normalizedPath)
         : getRepoByUrlAndBranch(db, repo.repoUrl!, repo.branch)
@@ -82,7 +84,7 @@ export function createRepo(db: Database, repo: CreateRepoInput): Repo {
       throw new Error(`Repository with ${identifier} already exists but could not be retrieved. This may indicate database corruption.`)
     }
     
-    throw new Error(`Failed to create repository: ${error.message}`)
+    throw new Error(`Failed to create repository: ${errorMessage}`)
   }
 }
 
@@ -120,11 +122,39 @@ export function getRepoByLocalPath(db: Database, localPath: string): Repo | null
   return row ? rowToRepo(row) : null
 }
 
-export function listRepos(db: Database): Repo[] {
+export function listRepos(db: Database, repoOrder?: number[]): Repo[] {
   const stmt = db.prepare('SELECT * FROM repos ORDER BY cloned_at DESC')
   const rows = stmt.all() as RepoRow[]
-  
-  return rows.map(rowToRepo)
+  const repos = rows.map(rowToRepo)
+
+  if (!repoOrder || repoOrder.length === 0) {
+    return repos
+  }
+
+  const orderMap = new Map(repoOrder.map((id, index) => [id, index]))
+  const orderedRepos = repos
+    .filter((repo) => orderMap.has(repo.id))
+    .sort((a, b) => {
+      const indexA = orderMap.get(a.id)!
+      const indexB = orderMap.get(b.id)!
+      return indexA - indexB
+    })
+
+  const remainingRepos = repos
+    .filter((repo) => !orderMap.has(repo.id))
+    .sort((a, b) => {
+      const nameA = getRepoName(a).toLowerCase()
+      const nameB = getRepoName(b).toLowerCase()
+      return nameA.localeCompare(nameB)
+    })
+
+  return [...orderedRepos, ...remainingRepos]
+}
+
+function getRepoName(repo: Repo): string {
+  return repo.repoUrl
+    ? repo.repoUrl.split('/').slice(-1)[0]?.replace('.git', '') || repo.localPath
+    : repo.localPath
 }
 
 export function updateRepoStatus(db: Database, id: number, cloneStatus: Repo['cloneStatus']): void {
@@ -140,6 +170,11 @@ export function updateRepoConfigName(db: Database, id: number, configName: strin
 export function updateLastPulled(db: Database, id: number): void {
   const stmt = db.prepare('UPDATE repos SET last_pulled = ? WHERE id = ?')
   stmt.run(Date.now(), id)
+}
+
+export function updateRepoBranch(db: Database, id: number, branch: string): void {
+  const stmt = db.prepare('UPDATE repos SET branch = ? WHERE id = ?')
+  stmt.run(branch, id)
 }
 
 export function deleteRepo(db: Database, id: number): void {

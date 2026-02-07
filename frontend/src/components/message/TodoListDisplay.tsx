@@ -123,7 +123,7 @@ export function TodoListDisplay({
       {/* Scrollable content area - optimized height for visibility */}
       <div 
         ref={scrollRef}
-        className={`max-h-[160px] sm:max-h-[280px] overflow-y-auto ${scrollCurrentOnly ? 'scroll-smooth' : ''} p-1.5 sm:p-2`}
+        className={`max-h-[80px] sm:max-h-[160px] overflow-y-auto ${scrollCurrentOnly ? 'scroll-smooth' : ''} p-1.5 sm:p-2`}
       >
         {renderGroup('In Progress', inProgress)}
         {renderGroup('Pending', pending)}

@@ -8,12 +8,35 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import type { Permission, PermissionResponse } from '@/api/types'
+import type { PermissionRequest, PermissionResponse } from '@/api/types'
+import type { components } from '@/api/opencode-types'
 import { cn } from '@/lib/utils'
 import { showToast } from '@/lib/toast'
 
+type PermissionConfig = components['schemas']['PermissionConfig']
+type KnownPermissionType = keyof Exclude<PermissionConfig, string> & string
+
+const PERMISSION_LABELS: Record<KnownPermissionType, string> = {
+  read: 'Read File',
+  edit: 'Edit File',
+  glob: 'Search Files',
+  grep: 'Search Content',
+  list: 'List Directory',
+  bash: 'Run Command',
+  task: 'Run Task',
+  external_directory: 'External Access',
+  todowrite: 'Write Todo',
+  todoread: 'Read Todo',
+  question: 'Ask Question',
+  webfetch: 'Fetch URL',
+  websearch: 'Web Search',
+  codesearch: 'Code Search',
+  lsp: 'LSP Action',
+  doom_loop: 'Repeated Action',
+}
+
 interface PermissionRequestDialogProps {
-  permission: Permission | null
+  permission: PermissionRequest | null
   pendingCount: number
   isFromDifferentSession?: boolean
   sessionTitle?: string
@@ -24,28 +47,16 @@ interface PermissionRequestDialogProps {
 }
 
 function getPermissionTypeLabel(type: string): string {
-  switch (type) {
-    case 'bash':
-      return 'Run Command'
-    case 'edit':
-      return 'Edit File'
-    case 'write':
-      return 'Write File'
-    case 'webfetch':
-      return 'Fetch URL'
-    case 'external_directory':
-      return 'External Access'
-    case 'doom_loop':
-      return 'Repeated Action'
-    default:
-      return type.charAt(0).toUpperCase() + type.slice(1)
+  if (type in PERMISSION_LABELS) {
+    return PERMISSION_LABELS[type as KnownPermissionType]
   }
+  return type.charAt(0).toUpperCase() + type.slice(1)
 }
 
-function getPermissionDetails(permission: Permission): { primary: string; secondary?: string } {
+function getPermissionDetails(permission: PermissionRequest): { primary: string; secondary?: string } {
   const metadata = permission.metadata || {}
   
-  switch (permission.type) {
+  switch (permission.permission) {
     case 'bash': {
       const command = metadata.command as string | undefined
       if (command) {
@@ -96,11 +107,7 @@ function getPermissionDetails(permission: Permission): { primary: string; second
     }
   }
   
-  const patterns = Array.isArray(permission.pattern) 
-    ? permission.pattern 
-    : permission.pattern 
-      ? [permission.pattern] 
-      : []
+  const patterns = permission.patterns || []
   
   if (patterns.length > 0) {
     return { primary: patterns.join('\n') }
@@ -130,16 +137,15 @@ export function PermissionRequestDialog({
     setLoadingAction(response)
     try {
       await onRespond(permission.id, permission.sessionID, response)
-    } catch (error) {
-      console.error('Failed to respond to permission:', error)
-      showToast.error('Permission request expired or session ended. Dismissed.')
+    } catch {
+      showToast.error('Failed to respond to permission. Please try again.')
     } finally {
       setIsLoading(false)
       setLoadingAction(null)
     }
   }
 
-  const typeLabel = getPermissionTypeLabel(permission.type)
+  const typeLabel = getPermissionTypeLabel(permission.permission)
   const details = getPermissionDetails(permission)
   const hasMultiple = pendingCount > 1
   const displaySessionName = sessionTitle || `Session ${permission.sessionID.slice(0, 8)}...`
@@ -157,7 +163,7 @@ export function PermissionRequestDialog({
             )}
           </DialogTitle>
           <DialogDescription className="break-all">
-            {permission.title || `Allow ${typeLabel.toLowerCase()}?`}
+            {`Allow ${typeLabel.toLowerCase()}?`}
           </DialogDescription>
         </DialogHeader>
 
@@ -187,7 +193,7 @@ export function PermissionRequestDialog({
           <div className="text-xs text-muted-foreground space-y-1">
             {repoDirectory && (
               <div className="truncate">
-                Repo: <span className="font-medium">{repoDirectory.split('/').pop() || repoDirectory}</span>
+                Repo: <span className="font-medium">{repoDirectory.split('/').pop() ?? repoDirectory}</span>
               </div>
             )}
             {isFromDifferentSession ? (

@@ -75,52 +75,56 @@ install_from_fork() {
   cd "$ORIG_DIR"
 }
 
-install_official() {
-  echo "Installing official OpenCode..."
-  # Unset GITHUB_ACTIONS to prevent the install script from trying to write to $GITHUB_PATH
-  # which doesn't exist inside Docker containers even when running in CI
-  GITHUB_ACTIONS= curl -fsSL https://opencode.ai/install | bash
-}
-
-echo "Checking OpenCode installation..."
-
 MIN_OPENCODE_VERSION="1.0.137"
 
 version_gte() {
   printf '%s\n%s\n' "$2" "$1" | sort -V -C
 }
 
-if [ -n "$OPENCODE_FORK_REPO" ]; then
-  install_from_fork
-elif ! command -v opencode >/dev/null 2>&1; then
-  echo "OpenCode not found. Installing..."
-  install_official
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "⚠️  OpenCode not found. Installing..."
+  curl -fsSL https://opencode.ai/install | bash
   
   if ! command -v opencode >/dev/null 2>&1; then
-    echo "Failed to install OpenCode. Exiting."
+    echo "❌ Failed to install OpenCode. Exiting."
     exit 1
   fi
-  echo "OpenCode installed successfully"
+  echo "✅ OpenCode installed successfully"
 fi
 
-if command -v opencode >/dev/null 2>&1; then
-  OPENCODE_VERSION=$(opencode --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-  echo "OpenCode is installed (version: $OPENCODE_VERSION)"
+OPENCODE_VERSION=$(opencode --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+echo "✅ OpenCode is installed (version: $OPENCODE_VERSION)"
 
-  if [ -z "$OPENCODE_FORK_REPO" ] && [ "$OPENCODE_VERSION" != "unknown" ]; then
-    if version_gte "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
-      echo "OpenCode version meets minimum requirement (>=$MIN_OPENCODE_VERSION)"
-    else
-      echo "OpenCode version $OPENCODE_VERSION is below minimum required version $MIN_OPENCODE_VERSION"
-      echo "Upgrading OpenCode..."
-      opencode upgrade || install_official
-      
-      OPENCODE_VERSION=$(opencode --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-      echo "OpenCode upgraded to version: $OPENCODE_VERSION"
-    fi
+if [ "$OPENCODE_VERSION" != "unknown" ]; then
+  if version_gte "$OPENCODE_VERSION" "$MIN_OPENCODE_VERSION"; then
+    echo "✅ OpenCode version meets minimum requirement (>=$MIN_OPENCODE_VERSION)"
+  else
+    echo "⚠️  OpenCode version $OPENCODE_VERSION is below minimum required version $MIN_OPENCODE_VERSION"
+    echo "🔄 Upgrading OpenCode..."
+    opencode upgrade || curl -fsSL https://opencode.ai/install | bash
+    
+    OPENCODE_VERSION=$(opencode --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+    echo "✅ OpenCode upgraded to version: $OPENCODE_VERSION"
   fi
 fi
 
-echo "Starting OpenCode Manager Backend..."
+echo "🚀 Starting OpenCode Manager Backend..."
+
+if [ -z "$AUTH_SECRET" ]; then
+  echo "❌ AUTH_SECRET is required but not set"
+  echo ""
+  echo "Please set AUTH_SECRET environment variable with a secure random string."
+  echo "Generate one with: openssl rand -base64 32"
+  echo ""
+  echo "Example in docker-compose.yml:"
+  echo "  environment:"
+  echo "    - AUTH_SECRET=your-secure-random-secret-here"
+  echo ""
+  echo "Example with Docker run:"
+  echo "  docker run -e AUTH_SECRET=\$(openssl rand -base64 32) ..."
+  echo ""
+  exit 1
+fi
 
 exec "$@"
+

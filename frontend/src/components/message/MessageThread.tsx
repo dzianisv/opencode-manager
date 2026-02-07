@@ -1,10 +1,16 @@
-import { memo, useMemo, useState, useCallback } from 'react'
+import { memo, useMemo, useState, useCallback, useEffect } from 'react'
+import { Pencil } from 'lucide-react'
 import { MessagePart } from './MessagePart'
-import { MessageActionButtons } from './MessageActionButtons'
 import { UserMessageActionButtons } from './UserMessageActionButtons'
 import { EditableUserMessage, ClickableUserMessage } from './EditableUserMessage'
+import { SessionTodoDisplay } from './SessionTodoDisplay'
+import { MessageError } from './MessageError'
 import type { MessageWithParts } from '@/api/types'
 import { useSessionStatusForSession } from '@/stores/sessionStatusStore'
+import { useSessionTodos } from '@/stores/sessionTodosStore'
+import type { components } from '@/api/opencode-types'
+import type { Todo } from '@/components/message/SessionTodoDisplay'
+import type { OpenCodeError } from '@/lib/opencode-errors'
 
 function getMessageTextContent(msg: MessageWithParts): string {
   return msg.parts
@@ -23,7 +29,6 @@ interface MessageThreadProps {
   onChildSessionClick?: (sessionId: string) => void
   onUndoMessage?: (restoredPrompt: string) => void
   model?: string
-  agent?: string
 }
 
 const isMessageStreaming = (msg: MessageWithParts): boolean => {
@@ -33,6 +38,13 @@ const isMessageStreaming = (msg: MessageWithParts): boolean => {
 
 function isSessionInRetry(sessionStatus: { type?: string }): boolean {
   return sessionStatus?.type === 'retry'
+}
+
+const compareMessageIds = (id1: string, id2: string): number => {
+  const num1 = parseInt(id1, 10)
+  const num2 = parseInt(id2, 10)
+  if (!isNaN(num1) && !isNaN(num2)) return num1 - num2
+  return id1.localeCompare(id2)
 }
 
 const findLastMessageByRole = (
@@ -57,8 +69,7 @@ export const MessageThread = memo(function MessageThread({
   onFileClick, 
   onChildSessionClick,
   onUndoMessage,
-  model,
-  agent
+  model
 }: MessageThreadProps) {
   const [editingUserMessageId, setEditingUserMessageId] = useState<string | null>(null)
   const [editingForAssistantId, setEditingForAssistantId] = useState<string | null>(null)
@@ -69,17 +80,52 @@ export const MessageThread = memo(function MessageThread({
     return findLastMessageByRole(messages, 'assistant', isMessageStreaming)
   }, [messages])
 
-  const lastAssistantId = useMemo(() => {
-    if (!messages) return undefined
-    return findLastMessageByRole(messages, 'assistant')
-  }, [messages])
-
   const lastUserMessageId = useMemo(() => {
     if (!messages) return undefined
     return findLastMessageByRole(messages, 'user')
   }, [messages])
 
   const isSessionBusy = !!pendingAssistantId || isSessionInRetry(sessionStatus)
+  const setSessionTodos = useSessionTodos((state) => state.setTodos)
+
+  useEffect(() => {
+    if (!messages || messages.length === 0) return
+
+    const latestTodoPart = messages
+      .flatMap(msg => msg.parts)
+      .filter((part): part is components['schemas']['ToolPart'] => part.type === 'tool' && (part.tool === 'todowrite' || part.tool === 'todoread'))
+      .filter(part => part.state.status === 'completed' && 'time' in part.state)
+      .sort((a, b) => {
+        const aState = a.state as { time?: { end?: number } }
+        const bState = b.state as { time?: { end?: number } }
+        const aEndTime = aState.time?.end ?? 0
+        const bEndTime = bState.time?.end ?? 0
+        return bEndTime - aEndTime
+      })[0]
+
+if (latestTodoPart) {
+const state = latestTodoPart.state
+      let todos: Todo[] = []
+
+      if ('metadata' in state && state.metadata?.todos && Array.isArray(state.metadata.todos)) {
+        todos = state.metadata.todos as Todo[]
+      } else if ('output' in state && state.output) {
+        try {
+          const parsed = JSON.parse(state.output)
+          todos = Array.isArray(parsed)
+            ? parsed as Todo[]
+            : parsed?.todos ? parsed.todos as Todo[]
+            : []
+        } catch (_) {
+          console.warn('Failed to parse todo output:', _)
+        }
+      }
+
+      if (todos.length > 0) {
+        setSessionTodos(sessionID, todos)
+      }
+    }
+  }, [messages, sessionID, setSessionTodos])
 
   const handleStartEditUserMessage = useCallback((userMessageId: string, assistantMessageId: string) => {
     setEditingUserMessageId(userMessageId)
@@ -103,22 +149,25 @@ export const MessageThread = memo(function MessageThread({
     <div className="flex flex-col space-y-2 p-2 overflow-x-hidden">
       {messages.map((msg, index) => {
         const streaming = isMessageStreaming(msg)
-        const isQueued = msg.info.role === 'user' && pendingAssistantId && msg.info.id > pendingAssistantId
+        const isQueued = msg.info.role === 'user' && pendingAssistantId && compareMessageIds(msg.info.id, pendingAssistantId) > 0
         const isLastUserMessage = msg.info.role === 'user' && msg.info.id === lastUserMessageId
         const messageTextContent = getMessageTextContent(msg)
-        
+
         const nextAssistantMessage = messages.slice(index + 1).find(m => m.info.role === 'assistant')
         const isUserBeforeAssistant = msg.info.role === 'user' && nextAssistantMessage
-        const canEditUserMessage = isUserBeforeAssistant && nextAssistantMessage?.info.id === lastAssistantId && !isSessionBusy
+        const canEditUserMessage = isLastUserMessage && isUserBeforeAssistant && !isSessionBusy
         const canUndoUserMessage = isLastUserMessage && nextAssistantMessage && !isSessionBusy && onUndoMessage
 
         const isEditingThisMessage = editingUserMessageId === msg.info.id
-        
+
         return (
           <div
             key={msg.info.id}
             className="flex flex-col group"
           >
+            {msg.info.role === 'assistant' && streaming && (
+              <SessionTodoDisplay sessionID={sessionID} />
+            )}
             <div
               className={`w-full rounded-lg p-1.5 ${
                 msg.info.role === 'user'
@@ -140,6 +189,15 @@ export const MessageThread = memo(function MessageThread({
                       {new Date(msg.info.time.created).toLocaleTimeString()}
                     </span>
                   )}
+                  {canEditUserMessage && nextAssistantMessage && (
+                    <button
+                      onClick={() => handleStartEditUserMessage(msg.info.id, nextAssistantMessage.info.id)}
+                      className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      title="Edit message"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   {isQueued && (
                     <span className="text-xs font-semibold bg-amber-500 text-amber-950 px-1.5 py-0.5 rounded">
                       QUEUED
@@ -147,16 +205,7 @@ export const MessageThread = memo(function MessageThread({
                   )}
                 </div>
                 
-                {msg.info.role === 'assistant' && !streaming && !isSessionBusy && !isSessionInRetry(sessionStatus) && (
-                  <MessageActionButtons
-                    opcodeUrl={opcodeUrl}
-                    sessionId={sessionID}
-                    directory={directory}
-                    message={msg}
-                  />
-                )}
-                
-                {canUndoUserMessage && (
+                {msg.info.role === 'user' && canUndoUserMessage && (
                   <UserMessageActionButtons
                     opcodeUrl={opcodeUrl}
                     sessionId={sessionID}
@@ -178,19 +227,18 @@ export const MessageThread = memo(function MessageThread({
                     assistantMessageId={editingForAssistantId}
                     onCancel={handleCancelEdit}
                     model={model}
-                    agent={agent}
                   />
                 ) : msg.info.role === 'user' && canEditUserMessage && nextAssistantMessage ? (
                   <ClickableUserMessage
                     content={messageTextContent}
                     onClick={() => handleStartEditUserMessage(msg.info.id, nextAssistantMessage.info.id)}
-                    isEditable={true}
+                    isEditable={false}
                   />
                 ) : (
                   msg.parts.map((part, partIndex) => (
                     <div key={`${msg.info.id}-${part.id}-${partIndex}`}>
-                      <MessagePart 
-                        part={part} 
+                      <MessagePart
+                        part={part}
                         role={msg.info.role}
                         allParts={msg.parts}
                         partIndex={partIndex}
@@ -200,6 +248,9 @@ export const MessageThread = memo(function MessageThread({
                       />
                     </div>
                   ))
+                )}
+                {msg.info.role === 'assistant' && 'error' in msg.info && msg.info.error && (
+                  <MessageError error={msg.info.error as OpenCodeError} />
                 )}
               </div>
             </div>
