@@ -136,7 +136,7 @@ jobs:
         run: |
           echo "Waiting for STT server to be ready..."
           for i in {1..60}; do
-            if curl -sf http://localhost:5003/api/stt/status | grep -q '"running":true'; then
+            if curl -sf http://localhost:5003/api/health | grep -q '"running":true'; then
               echo "STT is ready!"
               break
             fi
@@ -237,7 +237,7 @@ jobs:
         run: |
           echo "Waiting for STT server to be ready..."
           for i in {1..60}; do
-            if curl -sf http://localhost:5003/api/stt/status | grep -q '"running":true'; then
+            if curl -sf http://localhost:5003/api/health | grep -q '"running":true'; then
               echo "STT is ready!"
               break
             fi

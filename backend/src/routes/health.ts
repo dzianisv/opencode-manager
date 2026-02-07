@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Database } from 'bun:sqlite'
 import { opencodeServerManager } from '../services/opencode-single-server'
-import { telegramService } from '../services/telegram'
+import { whisperServerManager } from '../services/whisper'
 
 export function createHealthRoutes(db: Database) {
   const app = new Hono()
@@ -11,6 +11,7 @@ export function createHealthRoutes(db: Database) {
       const dbCheck = db.prepare('SELECT 1').get()
       const opencodeHealthy = await opencodeServerManager.checkHealth()
       const startupError = opencodeServerManager.getLastStartupError()
+      const whisperStatus = whisperServerManager.getStatus()
 
       const status = startupError && !opencodeHealthy
         ? 'unhealthy'
@@ -24,7 +25,13 @@ export function createHealthRoutes(db: Database) {
         opencodePort: opencodeServerManager.getPort(),
         opencodeVersion: opencodeServerManager.getVersion(),
         opencodeMinVersion: opencodeServerManager.getMinVersion(),
-        opencodeVersionSupported: opencodeServerManager.isVersionSupported()
+        opencodeVersionSupported: opencodeServerManager.isVersionSupported(),
+        stt: {
+          running: whisperStatus.running,
+          port: whisperStatus.port,
+          model: whisperStatus.model,
+          error: whisperStatus.error
+        }
       }
 
       if (startupError && !opencodeHealthy) {
