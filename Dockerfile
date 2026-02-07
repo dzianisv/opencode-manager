@@ -122,3 +122,4 @@ USER node
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["bun", "backend/src/index.ts"]
 
+FROM runner AS runner-slim
