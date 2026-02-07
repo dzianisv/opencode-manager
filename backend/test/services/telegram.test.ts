@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+vi.mock('bun:sqlite', () => ({
+  Database: vi.fn()
+}))
+
 vi.mock('grammy', () => ({
   Bot: vi.fn().mockImplementation(() => ({
     on: vi.fn(),
