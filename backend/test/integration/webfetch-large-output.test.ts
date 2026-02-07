@@ -20,7 +20,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 
 const SKIP_INTEGRATION = !process.env.RUN_INTEGRATION_TESTS && !process.env.OPENCODE_MANAGER_URL
-import axios, { AxiosInstance } from 'axios'
 
 const OPENCODE_MANAGER_URL = process.env.OPENCODE_MANAGER_URL || 'http://localhost:5003'
 const OPENCODE_API_URL = `${OPENCODE_MANAGER_URL}/api/opencode`
@@ -59,8 +58,40 @@ interface Message {
   parts: MessagePart[]
 }
 
+function getAuthHeaders(): HeadersInit {
+  if (AUTH_USER && AUTH_PASS) {
+    const credentials = Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString('base64')
+    return { 'Authorization': `Basic ${credentials}` }
+  }
+  return {}
+}
+
+async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...getAuthHeaders(),
+    ...options.headers,
+  }
+  const response = await fetch(url, { ...options, headers })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  }
+  return response.json() as Promise<T>
+}
+
+async function fetchNoContent(url: string, options: RequestInit = {}): Promise<void> {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...getAuthHeaders(),
+    ...options.headers,
+  }
+  const response = await fetch(url, { ...options, headers })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  }
+}
+
 describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () => {
-  let client: AxiosInstance
   let sessionID: string
   let directory: string
 
@@ -69,29 +100,10 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
     if (AUTH_USER) {
       console.log(`Using Basic Auth: ${AUTH_USER}:****`)
     }
-    
-    const axiosConfig: any = {
-      baseURL: OPENCODE_API_URL,
-      timeout: 30000
-    }
-    
-    if (AUTH_USER && AUTH_PASS) {
-      axiosConfig.auth = {
-        username: AUTH_USER,
-        password: AUTH_PASS
-      }
-    }
-    
-    client = axios.create(axiosConfig)
 
     try {
-      const healthConfig: any = { timeout: 10000 }
-      if (AUTH_USER && AUTH_PASS) {
-        healthConfig.auth = { username: AUTH_USER, password: AUTH_PASS }
-      }
-      const healthResponse = await axios.get(`${OPENCODE_MANAGER_URL}/api/health`, healthConfig)
-      expect(healthResponse.status).toBe(200)
-      console.log('Health check passed:', healthResponse.data)
+      const healthResponse = await fetchJson<{ status: string }>(`${OPENCODE_MANAGER_URL}/api/health`)
+      console.log('Health check passed:', healthResponse)
     } catch (error) {
       console.error(`Failed to connect to ${OPENCODE_MANAGER_URL}`)
       console.error('Make sure the OpenCode Manager is running.')
@@ -100,12 +112,7 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
     }
 
     try {
-      const reposConfig: any = { timeout: 10000 }
-      if (AUTH_USER && AUTH_PASS) {
-        reposConfig.auth = { username: AUTH_USER, password: AUTH_PASS }
-      }
-      const reposResponse = await axios.get(`${OPENCODE_MANAGER_URL}/api/repos`, reposConfig)
-      const repos = reposResponse.data
+      const repos = await fetchJson<Array<{ fullPath?: string; path?: string }>>(`${OPENCODE_MANAGER_URL}/api/repos`)
       if (repos.length === 0) {
         console.warn('No repositories available. Using default workspace...')
         directory = '/workspace'
@@ -117,17 +124,14 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
       console.warn('Could not get repos, using default workspace')
       directory = '/workspace'
     }
-
-    client.interceptors.request.use((config) => {
-      config.params = { ...config.params, directory }
-      return config
-    })
   })
 
   afterAll(async () => {
     if (sessionID) {
       try {
-        await client.delete(`/session/${sessionID}`)
+        await fetchNoContent(`${OPENCODE_API_URL}/session/${sessionID}?directory=${encodeURIComponent(directory)}`, {
+          method: 'DELETE'
+        })
         console.log('Cleaned up test session:', sessionID)
       } catch (e) {
         console.warn('Failed to cleanup session:', e)
@@ -140,10 +144,10 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
   })
 
   async function sendMessageAsync(sid: string, text: string): Promise<void> {
-    const response = await client.post(`/session/${sid}/prompt_async`, {
-      parts: [{ type: 'text', text }]
+    await fetchNoContent(`${OPENCODE_API_URL}/session/${sid}/prompt_async?directory=${encodeURIComponent(directory)}`, {
+      method: 'POST',
+      body: JSON.stringify({ parts: [{ type: 'text', text }] })
     })
-    expect(response.status).toBe(204)
   }
 
   async function waitForSessionIdle(sid: string, maxWaitMs: number = 120000): Promise<void> {
@@ -153,8 +157,10 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
     
     while (Date.now() - startTime < maxWaitMs) {
       try {
-        const statusResponse = await client.get<Record<string, SessionStatus>>('/session/status')
-        const status = statusResponse.data[sid]
+        const statusData = await fetchJson<Record<string, SessionStatus>>(
+          `${OPENCODE_API_URL}/session/status?directory=${encodeURIComponent(directory)}`
+        )
+        const status = statusData[sid]
         
         if (!status || status.type === 'idle') {
           if (lastStatus === 'busy') {
@@ -189,8 +195,7 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
   }
 
   async function getMessages(sid: string): Promise<Message[]> {
-    const messagesResponse = await client.get<Message[]>(`/session/${sid}/message`)
-    return messagesResponse.data
+    return fetchJson<Message[]>(`${OPENCODE_API_URL}/session/${sid}/message?directory=${encodeURIComponent(directory)}`)
   }
 
   async function getLastAssistantMessage(sid: string): Promise<Message | undefined> {
@@ -199,8 +204,11 @@ describe.skipIf(SKIP_INTEGRATION)('WebFetch Large Output Integration Test', () =
   }
 
   async function createTestSession(title: string): Promise<string> {
-    const createResponse = await client.post('/session', { title })
-    return createResponse.data.id
+    const data = await fetchJson<{ id: string }>(`${OPENCODE_API_URL}/session?directory=${encodeURIComponent(directory)}`, {
+      method: 'POST',
+      body: JSON.stringify({ title })
+    })
+    return data.id
   }
 
   function findWebFetchPart(message: Message): MessagePart | undefined {
@@ -281,8 +289,10 @@ Then tell me the first 3 maintainers listed in the file. Just list their names.`
     const startTime = Date.now()
     
     while (Date.now() - startTime < TEST_TIMEOUT) {
-      const statusResponse = await client.get<Record<string, SessionStatus>>('/session/status')
-      const status = statusResponse.data[sessionID]
+      const statusData = await fetchJson<Record<string, SessionStatus>>(
+        `${OPENCODE_API_URL}/session/status?directory=${encodeURIComponent(directory)}`
+      )
+      const status = statusData[sessionID]
       
       if (status?.type === 'retry') {
         retryCount++
