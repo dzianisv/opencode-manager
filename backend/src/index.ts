@@ -19,6 +19,7 @@ import { createOAuthRoutes } from './routes/oauth'
 import { createTitleRoutes } from './routes/title'
 import { createSSERoutes } from './routes/sse'
 import { createNotificationRoutes } from './routes/notifications'
+import { createServicesRoutes } from './routes/services'
 import { createAuthRoutes, createAuthInfoRoutes, syncAdminFromEnv } from './routes/auth'
 import { createAuth } from './auth'
 import { createAuthMiddleware } from './auth/middleware'
@@ -457,6 +458,7 @@ protectedApi.route('/stt', createSTTRoutes(db))
 protectedApi.route('/generate-title', createTitleRoutes())
 protectedApi.route('/sse', createSSERoutes())
 protectedApi.route('/notifications', createNotificationRoutes(notificationService))
+protectedApi.route('/services', createServicesRoutes(db))
 
 app.route('/api', protectedApi)
 

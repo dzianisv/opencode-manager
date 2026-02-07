@@ -138,6 +138,8 @@ Usage: opencode-manager <command> [options]
 
 Commands:
   start              Start the OpenCode Manager server
+  stop [service]     Stop a service (stt, tts, opencode, all)
+  restart [service]  Restart a service (stt, tts, opencode, all)
   status             Check status of locally running service
   install-service    Install as a user service (macOS/Linux)
   uninstall-service  Remove the user service
@@ -149,6 +151,12 @@ Start Options:
   --tunnel, -t       Start a Cloudflare tunnel for public access
   --port, -p <port>  Backend API port (default: 5001)
   --no-auth          Disable basic authentication
+
+Stop/Restart Options:
+  --port, -p <port>  Backend API port to connect to (default: 5001)
+  
+  Services: stt, tts, opencode, all
+  Note: 'tunnel' cannot be stopped/restarted via API - restart the main process
 
 Status Options:
   --port, -p <port>  Backend API port to check (default: 5001)
@@ -164,6 +172,9 @@ Examples:
   opencode-manager start
   opencode-manager start --tunnel
   opencode-manager status
+  opencode-manager stop stt
+  opencode-manager restart tts
+  opencode-manager restart all
   opencode-manager install-service
   opencode-manager install-service --no-tunnel
 `)
@@ -1003,6 +1014,156 @@ async function commandHealth(args: string[]): Promise<void> {
   process.exit(coreHealthy ? 0 : 1)
 }
 
+type ValidService = 'stt' | 'tts' | 'opencode' | 'all'
+
+function isValidService(service: string): service is ValidService {
+  return ['stt', 'tts', 'opencode', 'all'].includes(service)
+}
+
+interface ServiceActionResult {
+  success: boolean
+  error?: string
+  results?: Array<{ service: string; success: boolean; error?: string }>
+}
+
+async function callServiceAPI(
+  port: number, 
+  service: ValidService, 
+  action: 'start' | 'stop' | 'restart',
+  auth: AuthConfig | null
+): Promise<ServiceActionResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+  if (auth?.username && auth?.password) {
+    headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`
+  }
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/services/${service}/${action}`, {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(120000) // 2 minute timeout for service operations
+    })
+
+    if (response.status === 401) {
+      return { success: false, error: 'Authentication required. Check credentials in ~/.local/run/opencode-manager/auth.json' }
+    }
+
+    const data = await response.json() as ServiceActionResult
+    return data
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'Operation timed out after 2 minutes' }
+    }
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
+
+async function commandStop(args: string[]): Promise<void> {
+  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
+  
+  // Filter out port arguments to get the service
+  const serviceArgs = portIdx >= 0 
+    ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
+    : args
+  const service = serviceArgs[0] || 'all'
+  
+  if (!isValidService(service)) {
+    console.error(`Invalid service: ${service}`)
+    console.error('Valid services: stt, tts, opencode, all')
+    process.exit(1)
+  }
+
+  // Load auth credentials
+  let auth: AuthConfig | null = null
+  if (fs.existsSync(AUTH_FILE)) {
+    try {
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+    } catch {}
+  }
+
+  console.log(`\nStopping ${service === 'all' ? 'all services' : service}...`)
+
+  const result = await callServiceAPI(port, service, 'stop', auth)
+
+  if (result.success) {
+    if (result.results) {
+      console.log('\nResults:')
+      for (const r of result.results) {
+        const status = r.success ? '✓' : '✗'
+        console.log(`  ${status} ${r.service}: ${r.success ? 'stopped' : r.error || 'failed'}`)
+      }
+    } else {
+      console.log(`✓ ${service} stopped successfully`)
+    }
+    process.exit(0)
+  } else {
+    console.error(`\n✗ Failed to stop ${service}: ${result.error}`)
+    if (result.results) {
+      console.log('\nPartial results:')
+      for (const r of result.results) {
+        const status = r.success ? '✓' : '✗'
+        console.log(`  ${status} ${r.service}: ${r.success ? 'stopped' : r.error || 'failed'}`)
+      }
+    }
+    process.exit(1)
+  }
+}
+
+async function commandRestart(args: string[]): Promise<void> {
+  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
+  
+  // Filter out port arguments to get the service
+  const serviceArgs = portIdx >= 0 
+    ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
+    : args
+  const service = serviceArgs[0] || 'all'
+  
+  if (!isValidService(service)) {
+    console.error(`Invalid service: ${service}`)
+    console.error('Valid services: stt, tts, opencode, all')
+    process.exit(1)
+  }
+
+  // Load auth credentials
+  let auth: AuthConfig | null = null
+  if (fs.existsSync(AUTH_FILE)) {
+    try {
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+    } catch {}
+  }
+
+  console.log(`\nRestarting ${service === 'all' ? 'all services' : service}...`)
+
+  const result = await callServiceAPI(port, service, 'restart', auth)
+
+  if (result.success) {
+    if (result.results) {
+      console.log('\nResults:')
+      for (const r of result.results) {
+        const status = r.success ? '✓' : '✗'
+        console.log(`  ${status} ${r.service}: ${r.success ? 'restarted' : r.error || 'failed'}`)
+      }
+    } else {
+      console.log(`✓ ${service} restarted successfully`)
+    }
+    process.exit(0)
+  } else {
+    console.error(`\n✗ Failed to restart ${service}: ${result.error}`)
+    if (result.results) {
+      console.log('\nPartial results:')
+      for (const r of result.results) {
+        const status = r.success ? '✓' : '✗'
+        console.log(`  ${status} ${r.service}: ${r.success ? 'restarted' : r.error || 'failed'}`)
+      }
+    }
+    process.exit(1)
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0] || 'help'
@@ -1011,6 +1172,12 @@ async function main(): Promise<void> {
   switch (command) {
     case 'start':
       await commandStart(commandArgs)
+      break
+    case 'stop':
+      await commandStop(commandArgs)
+      break
+    case 'restart':
+      await commandRestart(commandArgs)
       break
     case 'status':
       await commandHealth(commandArgs)
