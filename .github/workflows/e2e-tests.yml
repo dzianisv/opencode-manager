@@ -102,6 +102,7 @@ jobs:
         run: |
           docker run -d --name opencode-manager \
             -p 5003:5003 \
+            -e AUTH_SECRET=ci-test-secret-$(openssl rand -hex 16) \
             -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
             -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
             opencode-manager:test
@@ -199,6 +200,7 @@ jobs:
         run: |
           docker run -d --name opencode-manager \
             -p 5003:5003 \
+            -e AUTH_SECRET=ci-test-secret-$(openssl rand -hex 16) \
             -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
             -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
             opencode-manager:test
