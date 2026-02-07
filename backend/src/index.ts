@@ -29,6 +29,9 @@ import { opencodeServerManager } from './services/opencode-single-server'
 import { cleanupOrphanedDirectories, cleanupStaleRepoEntries, registerExternalDirectory, syncProjectsFromOpenCode } from './services/repo'
 import { proxyRequest } from './services/proxy'
 import { NotificationService } from './services/notification'
+import { whisperServerManager } from './services/whisper'
+import { chatterboxServerManager } from './services/chatterbox'
+import { coquiServerManager } from './services/coqui'
 import { logger } from './utils/logger'
 import { 
   getWorkspacePath, 
@@ -413,6 +416,30 @@ try {
   await opencodeServerManager.start()
   logger.info(`OpenCode server running on port ${opencodeServerManager.getPort()}`)
 
+  try {
+    await whisperServerManager.start()
+    logger.info(`Whisper STT server running on port ${whisperServerManager.getPort()}`)
+  } catch (error) {
+    logger.warn('Whisper server failed to start (STT will be unavailable):', error)
+  }
+
+  try {
+    const ttsSettings = settingsService.getSettings('default').preferences.tts
+    if (ttsSettings?.enabled) {
+      if (ttsSettings.provider === 'coqui') {
+        logger.info('TTS is enabled with Coqui provider, starting Coqui TTS server...')
+        await coquiServerManager.start()
+        logger.info(`Coqui TTS server running on port ${coquiServerManager.getPort()}`)
+      } else if (ttsSettings.provider === 'chatterbox') {
+        logger.info('TTS is enabled with Chatterbox provider, starting Chatterbox server...')
+        await chatterboxServerManager.start()
+        logger.info(`Chatterbox server running on port ${chatterboxServerManager.getPort()}`)
+      }
+    }
+  } catch (error) {
+    logger.warn('TTS server failed to start:', error)
+  }
+
   await syncAdminFromEnv(auth, db)
 } catch (error) {
   logger.error('Failed to initialize workspace:', error)
@@ -546,6 +573,12 @@ const shutdown = async (signal: string) => {
       ipcServer.dispose()
       logger.info('Git IPC server stopped')
     }
+    await whisperServerManager.stop()
+    logger.info('Whisper server stopped')
+    await chatterboxServerManager.stop()
+    logger.info('Chatterbox server stopped')
+    await coquiServerManager.stop()
+    logger.info('Coqui TTS server stopped')
     await opencodeServerManager.stop()
     logger.info('OpenCode server stopped')
   } catch (error) {

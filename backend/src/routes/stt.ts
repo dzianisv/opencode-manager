@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import { mkdir, readFile, writeFile, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { SettingsService } from '../services/settings'
+import { whisperServerManager } from '../services/whisper'
 import { logger } from '../utils/logger'
 import { getWorkspacePath } from '@opencode-manager/shared/config/env'
 
@@ -283,11 +284,14 @@ export function createSTTRoutes(db: Database) {
     const settings = settingsService.getSettings(userId)
     const sttConfig = settings.preferences.stt as STTConfigExtended | undefined
 
+    const serverStatus = await whisperServerManager.syncStatus()
+
     return c.json({
       enabled: sttConfig?.enabled || false,
       configured: !!sttConfig?.endpoint,
       provider: sttConfig?.provider || 'builtin',
       model: sttConfig?.model || 'whisper-1',
+      server: serverStatus,
     })
   })
 
