@@ -32,6 +32,12 @@ export function createSTTRoutes(db: Database) {
         return c.json({ error: 'STT is not enabled' }, 400)
       }
 
+      const provider = sttConfig.provider || 'faster-whisper'
+
+      if (provider === 'builtin') {
+        return c.json({ error: 'Builtin STT is handled client-side via Web Speech API' }, 400)
+      }
+
       const status = await whisperServerManager.syncStatus()
       if (!status.running) {
         return c.json({ error: 'Whisper server is not running' }, 503)
@@ -94,6 +100,7 @@ export function createSTTRoutes(db: Database) {
     return c.json({
       enabled: sttConfig?.enabled || false,
       configured: true,
+      provider: sttConfig?.provider || 'faster-whisper',
       server: {
         running: serverStatus.running,
         port: serverStatus.port,

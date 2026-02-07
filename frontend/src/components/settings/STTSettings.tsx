@@ -27,6 +27,7 @@ const LANGUAGES = [
 
 const sttFormSchema = z.object({
   enabled: z.boolean(),
+  provider: z.enum(['faster-whisper', 'builtin']),
   model: z.string(),
   language: z.string().optional(),
   autoSubmit: z.boolean(),
@@ -36,6 +37,7 @@ type STTFormValues = z.infer<typeof sttFormSchema>
 
 const DEFAULT_STT_CONFIG = {
   enabled: false,
+  provider: 'faster-whisper' as const,
   model: 'base',
   language: '',
   autoSubmit: false,
@@ -72,6 +74,7 @@ export function STTSettings() {
     if (preferences?.stt) {
       reset({
         enabled: preferences.stt.enabled ?? DEFAULT_STT_CONFIG.enabled,
+        provider: preferences.stt.provider ?? DEFAULT_STT_CONFIG.provider,
         model: preferences.stt.model ?? DEFAULT_STT_CONFIG.model,
         language: preferences.stt.language ?? DEFAULT_STT_CONFIG.language,
         autoSubmit: preferences.stt.autoSubmit ?? DEFAULT_STT_CONFIG.autoSubmit,
