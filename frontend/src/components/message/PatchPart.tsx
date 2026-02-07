@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { components } from '@/api/opencode-types'
 import { getRelativePath } from './FileToolRender'
 import { ChevronDown, ChevronUp } from 'lucide-react'

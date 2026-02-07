@@ -368,77 +368,6 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string,
         setError('Connection lost. Reconnecting...')
       }
     }
-    
-    const connectSSE = () => {
-      if (!mountedRef.current) return
-      
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-        reconnectTimeoutRef.current = null
-      }
-
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-        eventSourceRef.current = null
-      }
-
-      try {
-        const eventSource = new EventSource(eventSourceUrl)
-        eventSourceRef.current = eventSource
-
-        eventSource.onopen = async () => {
-          if (!mountedRef.current) return
-          setIsConnected(true)
-          setError(null)
-          resetReconnectDelay()
-          
-          try {
-            const statuses = await client.getSessionStatuses()
-            if (statuses && mountedRef.current) {
-              Object.entries(statuses).forEach(([sessionID, status]) => {
-                setSessionStatus(sessionID, status)
-              })
-            }
-          } catch (err) {
-            console.error('Failed to fetch initial session statuses:', err)
-          }
-        }
-
-        eventSource.onerror = () => {
-          if (!mountedRef.current) return
-          
-          setIsConnected(false)
-          setError('Connection lost. Reconnecting...')
-          
-          if (eventSourceRef.current) {
-            eventSourceRef.current.close()
-            eventSourceRef.current = null
-          }
-          
-          scheduleReconnect(connectSSE)
-        }
-
-        eventSource.onmessage = (event) => {
-          try {
-            const data: SSEEvent = JSON.parse(event.data)
-            handleSSEEvent(data)
-          } catch (err) {
-            console.error('Failed to parse SSE event:', err)
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to connect')
-        setIsConnected(false)
-        scheduleReconnect(connectSSE)
-      }
-    }
-
-    const handleReconnect = () => {
-      if (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED) {
-        resetReconnectDelay()
-        connectSSE()
-      }
-    }
 
     const directoryCleanup = directory ? addSSEDirectory(directory) : undefined
 
@@ -453,9 +382,6 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string,
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', handleReconnect)
-    window.addEventListener('online', handleReconnect)
-
     window.addEventListener('focus', handleReconnect)
     window.addEventListener('online', handleReconnect)
 

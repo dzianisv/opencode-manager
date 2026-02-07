@@ -50,7 +50,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     { id: 'shortcuts', icon: Keyboard, label: 'Keyboard Shortcuts', description: 'Customize keyboard shortcuts' },
     { id: 'opencode', icon: Code, label: 'OpenCode Config', description: 'Manage OpenCode configurations, commands, and agents' },
     { id: 'providers', icon: Key, label: 'Providers', description: 'Manage AI provider API keys' },
-    { id: 'tunnel', icon: Cloud, label: 'Tunnel', description: 'Cloudflare tunnel status and metrics' },
   ]
 
   const handleClose = () => {
@@ -99,9 +98,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <TabsTrigger value="providers" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
                   Providers
                 </TabsTrigger>
-                <TabsTrigger value="tunnel" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
-                  Tunnel
-                </TabsTrigger>
               </TabsList>
             </div>
 
@@ -115,7 +111,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <TabsContent value="shortcuts" className="mt-0"><KeyboardShortcuts /></TabsContent>
                 <TabsContent value="opencode" className="mt-0"><OpenCodeConfigManager /></TabsContent>
                 <TabsContent value="providers" className="mt-0"><ProviderSettings /></TabsContent>
-                <TabsContent value="tunnel" className="mt-0"><TunnelSettings /></TabsContent>
               </div>
             </div>
           </Tabs>
@@ -179,7 +174,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             {mobileView === 'shortcuts' && <KeyboardShortcuts />}
             {mobileView === 'opencode' && <OpenCodeConfigManager />}
             {mobileView === 'providers' && <ProviderSettings />}
-            {mobileView === 'tunnel' && <TunnelSettings />}
           </div>
         </div>
       </DialogContent>

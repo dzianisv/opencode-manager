@@ -10,7 +10,6 @@ import { Header } from "@/components/ui/header";
 import { SessionList } from "@/components/session/SessionList";
 
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
-import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";

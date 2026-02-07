@@ -1,44 +1,6 @@
 import { z } from "zod";
 import { NotificationPreferencesSchema, DEFAULT_NOTIFICATION_PREFERENCES } from "./notifications";
 
-const ALLOWED_TTS_HOSTS = [
-  'api.openai.com',
-  'api.anthropic.com',
-  'api.elevenlabs.io',
-  'api.deepgram.com',
-  'localhost',
-  '127.0.0.1',
-];
-
-const isAllowedTTSEndpoint = (endpoint: string): boolean => {
-  if (!endpoint) return true;
-  try {
-    const url = new URL(endpoint);
-    const hostname = url.hostname.toLowerCase();
-    if (ALLOWED_TTS_HOSTS.includes(hostname)) return true;
-    if (hostname.endsWith('.openai.com')) return true;
-    if (hostname.endsWith('.anthropic.com')) return true;
-    if (hostname.endsWith('.elevenlabs.io')) return true;
-    if (hostname.endsWith('.deepgram.com')) return true;
-    if (url.protocol !== 'https:' && !hostname.startsWith('localhost') && hostname !== '127.0.0.1') {
-      return false;
-    }
-    const privateRanges = [
-      /^10\./,
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
-      /^192\.168\./,
-      /^169\.254\./,
-      /^0\./,
-    ];
-    if (privateRanges.some(range => range.test(hostname))) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 export const CustomCommandSchema = z.object({
   name: z.string(),
   description: z.string(),

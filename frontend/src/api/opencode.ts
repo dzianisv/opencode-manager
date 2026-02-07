@@ -71,11 +71,6 @@ export class OpenCodeClient {
     })
   }
 
-  async updateSession(sessionID: string, data: { title?: string }) {
-    const response = await this.client.patch(`/session/${sessionID}`, data)
-    return response.data
-  }
-
   async forkSession(sessionID: string, messageID?: string) {
     return fetchWrapper<SessionResponse>(`${this.baseURL}/session/${sessionID}/fork`, {
       method: 'POST',
@@ -118,14 +113,6 @@ export class OpenCodeClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ providerID, modelID }),
     })
-  }
-
-  async summarizeSession(sessionID: string, providerID: string, modelID: string) {
-    const response = await this.client.post(`/session/${sessionID}/summarize`, {
-      providerID,
-      modelID
-    })
-    return response.data
   }
 
   async getConfig() {
@@ -236,31 +223,6 @@ export class OpenCodeClient {
     return fetchWrapper<Record<string, { type: 'idle' } | { type: 'busy' } | { type: 'retry'; attempt: number; message: string; next: number }>>(`${this.baseURL}/session/status`, {
       params: this.getParams(),
     })
-  }
-
-  async respondToPermission(sessionID: string, permissionID: string, response: 'once' | 'always' | 'reject') {
-    const result = await this.client.post(`/session/${sessionID}/permissions/${permissionID}`, { response })
-    return result.data
-  }
-
-  async listAgents() {
-    const response = await this.client.get<AgentListResponse>('/agent')
-    return response.data
-  }
-
-  async revertMessage(sessionID: string, data: { messageID: string, partID?: string }) {
-    const response = await this.client.post(`/session/${sessionID}/revert`, data)
-    return response.data
-  }
-
-  async unrevertSession(sessionID: string) {
-    const response = await this.client.post(`/session/${sessionID}/unrevert`)
-    return response.data
-  }
-
-  async getSessionStatuses() {
-    const response = await this.client.get<Record<string, { type: 'idle' } | { type: 'busy' } | { type: 'retry'; attempt: number; message: string; next: number }>>('/session/status')
-    return response.data
   }
 
   getEventSourceURL() {

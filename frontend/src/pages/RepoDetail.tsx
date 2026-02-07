@@ -228,7 +228,6 @@ export function RepoDetail() {
             opcodeUrl={opcodeUrl}
             directory={repoDirectory}
             onSelectSession={handleSelectSession}
-            repoId={repoId}
           />
         )}
       </div>
@@ -254,13 +253,6 @@ export function RepoDetail() {
         onClose={() => setSourceControlOpen(false)}
         currentBranch={currentBranch}
         repoName={repoName}
-      />
-
-      <RepoMcpDialog
-        open={mcpDialogOpen}
-        onOpenChange={setMcpDialogOpen}
-        config={settings}
-        directory={repoDirectory}
       />
 
 {repo && (

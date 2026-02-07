@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { RepoList } from "@/components/repo/RepoList";
 import { AddRepoDialog } from "@/components/repo/AddRepoDialog";
 import { FileBrowserSheet } from "@/components/file-browser/FileBrowserSheet";
@@ -9,10 +8,8 @@ import { Plus, FolderOpen } from "lucide-react";
 import { PendingActionsGroup } from "@/components/notifications/PendingActionsGroup";
 
 export function Repos() {
-  const navigate = useNavigate();
   const [addRepoOpen, setAddRepoOpen] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
-  const openSwitcher = useSessionSwitcherStore((state) => state.open);
 
   const handleCloseFileBrowser = () => {
     setFileBrowserOpen(false);

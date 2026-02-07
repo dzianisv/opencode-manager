@@ -1,41 +1,11 @@
-import { useState, useEffect } from 'react'
 import { useSettings } from '@/hooks/useSettings'
 import { Loader2 } from 'lucide-react'
-import { settingsApi } from '@/api/settings'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
 export function GeneralSettings() {
-  const { preferences, isLoading, updateSettings, updateSettingsAsync, isUpdating } = useSettings()
-  const [gitToken, setGitToken] = useState('')
-  const [isValidatingToken, setIsValidatingToken] = useState(false)
-
-  useEffect(() => {
-    if (preferences) {
-      setGitToken(preferences.gitToken || '')
-    }
-  }, [preferences])
-
-  const validateGitToken = async (token: string): Promise<boolean> => {
-    if (!token) return true
-    
-    setIsValidatingToken(true)
-    try {
-      const result = await settingsApi.validateGitToken(token)
-      if (!result.valid) {
-        showToast.error(result.message, { id: 'validate-token' })
-        return false
-      }
-      showToast.success('GitHub token validated successfully', { id: 'validate-token' })
-      return true
-    } catch {
-      showToast.error('Failed to validate GitHub token - please try again', { id: 'validate-token' })
-      return false
-    } finally {
-      setIsValidatingToken(false)
-    }
-  }
+  const { preferences, isLoading, updateSettings, isUpdating } = useSettings()
 
   if (isLoading) {
     return (
@@ -132,26 +102,6 @@ export function GeneralSettings() {
             <span>Saving...</span>
           </div>
         )}
-      </div>
-
-      <div className="mt-6">
-        <TTSSettings />
-      </div>
-
-      <div className="mt-6">
-        <STTSettings />
-      </div>
-
-      <div className="mt-6">
-        <TalkModeSettings />
-      </div>
-
-      <div className="mt-6">
-        <NotificationSettings />
-      </div>
-
-      <div className="mt-6">
-        <SessionPruneSettings />
       </div>
     </div>
   )

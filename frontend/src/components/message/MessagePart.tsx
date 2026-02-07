@@ -115,7 +115,7 @@ export const MessagePart = memo(function MessagePart({ part, role, allParts, par
           return null
         }
       }
-      return <TextPart part={part} showTTSButton={role === 'assistant'} />
+      return <TextPart part={part} />
     case 'patch':
       return <PatchPart part={part} onFileClick={onFileClick} />
     case 'tool':
