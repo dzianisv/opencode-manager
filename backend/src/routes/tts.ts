@@ -7,6 +7,8 @@ import { join } from 'path'
 import { SettingsService } from '../services/settings'
 import { logger } from '../utils/logger'
 import { getWorkspacePath } from '@opencode-manager/shared/config/env'
+import { coquiServerManager } from '../services/coqui'
+import { chatterboxServerManager } from '../services/chatterbox'
 
 const TTS_CACHE_DIR = join(getWorkspacePath(), 'cache', 'tts')
 const DISCOVERY_CACHE_DIR = join(getWorkspacePath(), 'cache', 'discovery')
@@ -325,13 +327,13 @@ export function createTTSRoutes(db: Database) {
       if (!ttsConfig?.enabled) {
         return c.json({ error: 'TTS is not enabled' }, 400)
       }
-      
-      if (!ttsConfig.apiKey) {
-        return c.json({ error: 'TTS API key is not configured' }, 400)
+
+      if (ttsConfig.provider === 'builtin') {
+        return c.json({ error: 'Browser TTS is handled client-side, not via server API' }, 400)
       }
       
-      const { endpoint, apiKey, voice, model, speed } = ttsConfig
-      const cacheKey = generateCacheKey(text, voice, model, speed)
+      const { voice, model, speed } = ttsConfig
+      const cacheKey = generateCacheKey(text, voice, model || 'default', speed)
       
       await ensureCacheDir()
       
@@ -349,8 +351,57 @@ export function createTTSRoutes(db: Database) {
       if (abortController.signal.aborted) {
         return new Response(null, { status: 499 })
       }
+
+      if (ttsConfig.provider === 'coqui') {
+        const serverStatus = coquiServerManager.getStatus()
+        if (!serverStatus.running) {
+          return c.json({ error: 'Local Coqui TTS server is not running' }, 503)
+        }
+
+        logger.info(`TTS synthesis via local Coqui: voice=${voice}, speed=${speed}`)
+        const audioBuffer = await coquiServerManager.synthesize(text, { voice, speed })
+        
+        await cacheAudio(cacheKey, audioBuffer)
+        logger.info(`TTS audio cached: ${cacheKey.substring(0, 8)}...`)
+        
+        return new Response(audioBuffer, {
+          headers: {
+            'Content-Type': 'audio/mpeg',
+            'X-Cache': 'MISS',
+          },
+        })
+      }
+
+      if (ttsConfig.provider === 'chatterbox') {
+        const serverStatus = chatterboxServerManager.getStatus()
+        if (!serverStatus.running) {
+          return c.json({ error: 'Local Chatterbox TTS server is not running' }, 503)
+        }
+
+        logger.info(`TTS synthesis via local Chatterbox: voice=${voice}`)
+        const audioBuffer = await chatterboxServerManager.synthesize(text, { voice })
+        
+        await cacheAudio(cacheKey, audioBuffer)
+        logger.info(`TTS audio cached: ${cacheKey.substring(0, 8)}...`)
+        
+        return new Response(audioBuffer, {
+          headers: {
+            'Content-Type': 'audio/mpeg',
+            'X-Cache': 'MISS',
+          },
+        })
+      }
+
+      if (ttsConfig.provider !== 'external') {
+        return c.json({ error: `Unknown TTS provider: ${ttsConfig.provider}` }, 400)
+      }
+
+      if (!ttsConfig.apiKey) {
+        return c.json({ error: 'TTS API key is not configured' }, 400)
+      }
       
-      logger.info(`TTS cache miss, calling API: ${cacheKey.substring(0, 8)}...`)
+      const { endpoint, apiKey } = ttsConfig
+      logger.info(`TTS cache miss, calling external API: ${cacheKey.substring(0, 8)}...`)
       
       const baseUrl = normalizeToBaseUrl(endpoint)
       const speechEndpoint = `${baseUrl}/v1/audio/speech`
@@ -524,14 +575,27 @@ export function createTTSRoutes(db: Database) {
     const settings = settingsService.getSettings(userId)
     const ttsConfig = settings.preferences.tts
     const cacheStats = await getCacheStats()
+    const coquiStatus = coquiServerManager.getStatus()
+    const chatterboxStatus = chatterboxServerManager.getStatus()
+    
+    const isConfigured = ttsConfig?.provider === 'coqui' 
+      ? coquiStatus.running 
+      : ttsConfig?.provider === 'chatterbox' 
+        ? chatterboxStatus.running 
+        : !!(ttsConfig?.apiKey)
     
     return c.json({
       enabled: ttsConfig?.enabled || false,
-      configured: !!(ttsConfig?.apiKey),
+      configured: isConfigured,
+      provider: ttsConfig?.provider || 'external',
       cache: {
         ...cacheStats,
         maxSizeMB: MAX_CACHE_SIZE_MB,
         ttlHours: CACHE_TTL_MS / (60 * 60 * 1000)
+      },
+      servers: {
+        coqui: coquiStatus,
+        chatterbox: chatterboxStatus
       }
     })
   })

@@ -9,7 +9,7 @@ import { getWorkspacePath } from '@opencode-manager/shared/config/env'
 
 type STTConfigExtended = {
   enabled: boolean
-  provider: 'external' | 'builtin'
+  provider: 'external' | 'builtin' | 'faster-whisper'
   endpoint: string
   apiKey: string
   model: string
@@ -137,12 +137,8 @@ export function createSTTRoutes(db: Database) {
         return c.json({ error: 'STT is not enabled' }, 400)
       }
 
-      if (sttConfig.provider !== 'external') {
-        return c.json({ error: 'External STT provider is not selected' }, 400)
-      }
-
-      if (!sttConfig.endpoint) {
-        return c.json({ error: 'STT endpoint is not configured' }, 400)
+      if (sttConfig.provider === 'builtin') {
+        return c.json({ error: 'Browser STT is handled client-side, not via server API' }, 400)
       }
 
       const formData = await c.req.formData()
@@ -150,6 +146,36 @@ export function createSTTRoutes(db: Database) {
 
       if (!audioFile || !(audioFile instanceof File)) {
         return c.json({ error: 'No audio file provided' }, 400)
+      }
+
+      if (sttConfig.provider === 'faster-whisper') {
+        const serverStatus = whisperServerManager.getStatus()
+        if (!serverStatus.running) {
+          return c.json({ error: 'Local Whisper server is not running' }, 503)
+        }
+
+        const audioBuffer = Buffer.from(await audioFile.arrayBuffer())
+        const language = sttConfig.language && sttConfig.language !== 'auto' 
+          ? sttConfig.language.split('-')[0] 
+          : undefined
+
+        logger.info(`STT transcription via local Whisper: model=${sttConfig.model || serverStatus.model || 'base'}, language=${language || 'auto'}, size=${audioBuffer.length}`)
+
+        const result = await whisperServerManager.transcribe(audioBuffer, {
+          model: sttConfig.model || serverStatus.model || undefined,
+          language,
+        })
+
+        logger.info(`STT transcription successful: ${result.text.substring(0, 50)}...`)
+        return c.json({ text: result.text })
+      }
+
+      if (sttConfig.provider !== 'external') {
+        return c.json({ error: `Unknown STT provider: ${sttConfig.provider}` }, 400)
+      }
+
+      if (!sttConfig.endpoint) {
+        return c.json({ error: 'STT endpoint is not configured' }, 400)
       }
 
       const endpoint = sttConfig.endpoint

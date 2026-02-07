@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import fs from 'fs'
+import os from 'os'
 import { logger } from '../utils/logger'
 import { getWorkspacePath } from '@opencode-manager/shared/config/env'
 import path from 'path'
@@ -11,6 +12,8 @@ const __dirname = path.dirname(__filename)
 const WHISPER_PORT = parseInt(process.env.WHISPER_PORT || '5552')
 const WHISPER_HOST = process.env.WHISPER_HOST || '127.0.0.1'
 const WHISPER_DEFAULT_MODEL = process.env.WHISPER_DEFAULT_MODEL || 'base'
+// Unified whisper venv location - shared with opencode-plugins
+const DEFAULT_WHISPER_VENV = path.join(os.homedir(), '.local', 'lib', 'whisper', 'venv')
 
 interface WhisperServerStatus {
   running: boolean
@@ -122,8 +125,10 @@ class WhisperServerManager {
       PYTHONUNBUFFERED: '1'
     }
 
-    const venvPath = process.env.WHISPER_VENV
-    const pythonBin = venvPath ? path.join(venvPath, 'bin', 'python') : 'python3'
+    const venvPath = process.env.WHISPER_VENV || DEFAULT_WHISPER_VENV
+    const pythonBin = fs.existsSync(path.join(venvPath, 'bin', 'python')) 
+      ? path.join(venvPath, 'bin', 'python') 
+      : 'python3'
 
     logger.info(`Using Python: ${pythonBin}`)
 

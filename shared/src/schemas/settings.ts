@@ -9,7 +9,7 @@ export const CustomCommandSchema = z.object({
 
 export const TTSConfigSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(['external', 'builtin']).default('external'),
+  provider: z.enum(['external', 'builtin', 'coqui', 'chatterbox']).default('external'),
   endpoint: z.string(),
   apiKey: z.string(),
   voice: z.string(),
@@ -23,7 +23,7 @@ export const TTSConfigSchema = z.object({
 
 export const STTConfigSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(['external', 'builtin']).default('builtin'),
+  provider: z.enum(['external', 'builtin', 'faster-whisper']).default('builtin'),
   endpoint: z.string(),
   apiKey: z.string(),
   model: z.string(),
@@ -40,7 +40,7 @@ export const CustomAgentSchema = z.object({
 
 export type TTSConfig = {
   enabled: boolean;
-  provider: 'external' | 'builtin';
+  provider: 'external' | 'builtin' | 'coqui' | 'chatterbox';
   endpoint: string;
   apiKey: string;
   voice: string;
@@ -54,7 +54,7 @@ export type TTSConfig = {
 
 export type STTConfig = {
   enabled: boolean;
-  provider: 'external' | 'builtin';
+  provider: 'external' | 'builtin' | 'faster-whisper';
   endpoint: string;
   apiKey: string;
   model: string;

@@ -12,7 +12,8 @@ const __dirname = path.dirname(__filename)
 const CHATTERBOX_PORT = parseInt(process.env.CHATTERBOX_PORT || '5553')
 const CHATTERBOX_HOST = process.env.CHATTERBOX_HOST || '127.0.0.1'
 const CHATTERBOX_DEVICE = process.env.CHATTERBOX_DEVICE || 'auto'
-const DEFAULT_VENV_DIR = path.join(os.homedir(), '.opencode-manager', 'chatterbox-venv')
+// Unified TTS venv location - shared with opencode-plugins and personal scripts
+const DEFAULT_VENV_DIR = path.join(os.homedir(), '.local', 'lib', 'tts', 'chatterbox', 'venv')
 
 interface ChatterboxServerStatus {
   running: boolean

@@ -12,7 +12,8 @@ const COQUI_PORT = parseInt(process.env.COQUI_PORT || '5554')
 const COQUI_HOST = process.env.COQUI_HOST || '127.0.0.1'
 const COQUI_DEVICE = process.env.COQUI_DEVICE || 'auto'
 const COQUI_MODEL = process.env.COQUI_MODEL || 'tts_models/en/jenny/jenny'
-const DEFAULT_VENV_DIR = path.join(os.homedir(), '.opencode-manager', 'coqui-venv')
+// Unified TTS venv location - shared with opencode-plugins and personal scripts
+const DEFAULT_VENV_DIR = path.join(os.homedir(), '.local', 'lib', 'tts', 'coqui', 'venv')
 
 interface CoquiServerStatus {
   running: boolean
