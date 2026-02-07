@@ -13,6 +13,7 @@ import { createSettingsRoutes } from './routes/settings'
 import { createHealthRoutes } from './routes/health'
 import { createTTSRoutes, cleanupExpiredCache } from './routes/tts'
 import { createSTTRoutes } from './routes/stt'
+import { createTunnelRoutes } from './routes/tunnel'
 import { createFileRoutes } from './routes/files'
 import { createProvidersRoutes } from './routes/providers'
 import { createOAuthRoutes } from './routes/oauth'
@@ -444,6 +445,42 @@ app.route('/api/auth', createAuthRoutes(auth))
 app.route('/api/auth-info', createAuthInfoRoutes(auth, db))
 
 app.route('/api/health', createHealthRoutes(db))
+app.route('/api/tunnel', createTunnelRoutes())
+
+const sttStatusRouter = new Hono()
+sttStatusRouter.get('/status', async (c) => {
+  const userId = c.req.query('userId') || 'default'
+  const settingsService = new SettingsService(db)
+  const settings = settingsService.getSettings(userId)
+  type STTConfig = { enabled?: boolean; endpoint?: string; provider?: string; model?: string }
+  const sttConfig = settings.preferences.stt as STTConfig | undefined
+  return c.json({
+    server: {
+      running: sttConfig?.enabled && !!sttConfig?.endpoint,
+      model: sttConfig?.model || 'whisper-1',
+    },
+    enabled: sttConfig?.enabled || false,
+    configured: !!sttConfig?.endpoint,
+    provider: sttConfig?.provider || 'builtin',
+  })
+})
+app.route('/api/stt', sttStatusRouter)
+
+const ttsStatusRouter = new Hono()
+ttsStatusRouter.get('/status', async (c) => {
+  const userId = c.req.query('userId') || 'default'
+  const settingsService = new SettingsService(db)
+  const settings = settingsService.getSettings(userId)
+  type TTSConfig = { enabled?: boolean; apiKey?: string; endpoint?: string }
+  const ttsConfig = settings.preferences.tts as TTSConfig | undefined
+  const configured = !!(ttsConfig?.apiKey && ttsConfig?.endpoint)
+  return c.json({
+    enabled: ttsConfig?.enabled || false,
+    configured,
+    provider: 'external',
+  })
+})
+app.route('/api/tts', ttsStatusRouter)
 
 const protectedApi = new Hono()
 protectedApi.use('/*', requireAuth)
