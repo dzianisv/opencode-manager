@@ -1,11 +1,8 @@
 name: Docker Build
 
 on:
-  push:
-    branches: [main]
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,22 +12,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-      
-      - name: Show available disk space
-        run: df -h
-      
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Get latest tool versions
+        id: versions
+        run: |
+          UV_VERSION=$(git ls-remote --tags --sort=-v:refname https://github.com/astral-sh/uv.git 'refs/tags/[0-9]*' | head -1 | sed 's/.*refs\/tags\///')
+          OPENCODE_VERSION=$(curl -s https://api.github.com/repos/anomalyco/opencode/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          echo "uv=${UV_VERSION}" >> $GITHUB_OUTPUT
+          echo "opencode=${OPENCODE_VERSION}" >> $GITHUB_OUTPUT
+          echo "Detected versions: uv=${UV_VERSION}, opencode=${OPENCODE_VERSION}"
 
       - name: Docker meta
         id: meta
@@ -38,11 +30,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=ref,event=branch
-            type=sha,prefix=
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -61,10 +52,13 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            UV_VERSION=${{ steps.versions.outputs.uv }}
+            OPENCODE_VERSION=${{ steps.versions.outputs.opencode }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           target: runner

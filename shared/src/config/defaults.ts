@@ -16,7 +16,7 @@ export const DEFAULTS = {
   },
 
   DATABASE: {
-    PATH: '', // Will be resolved to ~/.local/run/opencode-manager/opencode.db
+    PATH: './data/opencode.db',
   },
 
   WORKSPACE: {
@@ -42,6 +42,13 @@ export const DEFAULTS = {
     DEBUG: false,
     LOG_LEVEL: 'info',
   },
+
+  SSE: {
+    RECONNECT_DELAY_MS: 1000,
+    MAX_RECONNECT_DELAY_MS: 30000,
+    IDLE_GRACE_PERIOD_MS: 5000,
+    HEARTBEAT_INTERVAL_MS: 60000,
+  },
 } as const
 
 export const ALLOWED_MIME_TYPES = [
@@ -58,6 +65,7 @@ export const ALLOWED_MIME_TYPES = [
   'image/svg+xml',
   'application/pdf',
   'application/zip',
+  'text/markdown',
 ] as const
 
 export const GIT_PROVIDERS = {

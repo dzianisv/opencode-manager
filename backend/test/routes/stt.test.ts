@@ -1,51 +1,52 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import * as fs from 'fs/promises'
 
-const mockWhisperManager = vi.hoisted(() => ({
-  syncStatus: vi.fn(),
-  transcribe: vi.fn(),
-  getModels: vi.fn(),
-  getStatus: vi.fn(),
-  getPort: vi.fn(),
-  getHost: vi.fn(),
-  getBaseUrl: vi.fn()
+vi.mock('fs/promises', () => ({
+  mkdir: vi.fn(),
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  stat: vi.fn(),
+  unlink: vi.fn(),
 }))
 
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn(),
 }))
 
-vi.mock('../../src/utils/logger', async () => {
-  return {
-    logger: {
-      info: vi.fn(),
-      error: vi.fn(),
-      warn: vi.fn(),
-      debug: vi.fn(),
-    },
-  }
-})
+const mockGetSettings = vi.fn()
+const mockUpdateSettings = vi.fn()
 
 vi.mock('../../src/services/settings', () => ({
   SettingsService: vi.fn().mockImplementation(() => ({
-    getSettings: vi.fn().mockReturnValue({
-      preferences: {
-        stt: {
-          enabled: true,
-          model: 'base',
-          language: 'auto',
-          autoSubmit: false
-        }
-      }
-    })
-  }))
+    getSettings: mockGetSettings,
+    updateSettings: mockUpdateSettings,
+  })),
 }))
 
-vi.mock('../../src/services/whisper', () => ({
-  whisperServerManager: mockWhisperManager
+vi.mock('../../src/utils/logger', () => ({
+  logger: {
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+  },
 }))
+
+vi.mock('@opencode-manager/shared/config/env', () => ({
+  getWorkspacePath: () => '/test/workspace',
+  ENV: {
+    WORKSPACE: {
+      BASE_PATH: '/test/workspace',
+    },
+  },
+}))
+
+const mockMkdir = fs.mkdir as any
+const mockReadFile = fs.readFile as any
+const mockWriteFile = fs.writeFile as any
+const mockStat = fs.stat as any
+const mockUnlink = fs.unlink as any
 
 import { createSTTRoutes } from '../../src/routes/stt'
-import { SettingsService } from '../../src/services/settings'
 
 describe('STT Routes', () => {
   let mockDb: any
@@ -55,295 +56,533 @@ describe('STT Routes', () => {
     vi.clearAllMocks()
     mockDb = {} as any
     
-    mockWhisperManager.syncStatus.mockResolvedValue({
-      running: true,
-      port: 5552,
-      host: '127.0.0.1',
-      model: 'base',
-      error: null
+    mockGetSettings.mockReturnValue({
+      preferences: {
+        stt: {
+          enabled: true,
+          provider: 'external',
+          apiKey: 'test-api-key',
+          endpoint: 'https://api.openai.com',
+          model: 'whisper-1',
+          language: 'en-US',
+        },
+      },
     })
-    mockWhisperManager.transcribe.mockResolvedValue({
-      text: 'Hello world',
-      language: 'en',
-      language_probability: 0.98,
-      duration: 2.5
-    })
-    mockWhisperManager.getModels.mockResolvedValue({
-      models: ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'],
-      current: 'base',
-      default: 'base'
-    })
-    mockWhisperManager.getStatus.mockReturnValue({
-      running: true,
-      port: 5552,
-      host: '127.0.0.1',
-      model: 'base',
-      error: null
-    })
-    mockWhisperManager.getPort.mockReturnValue(5552)
-    mockWhisperManager.getHost.mockReturnValue('127.0.0.1')
-    mockWhisperManager.getBaseUrl.mockReturnValue('http://127.0.0.1:5552')
     
     sttApp = createSTTRoutes(mockDb)
   })
 
-  describe('GET /status', () => {
-    it('should return STT status with server running', async () => {
-      const res = await sttApp.request('/status')
-      const data = await res.json()
-
-      expect(res.status).toBe(200)
-      expect(data.enabled).toBe(true)
-      expect(data.configured).toBe(true)
-      expect(data.server.running).toBe(true)
-      expect(data.server.port).toBe(5552)
-      expect(data.server.model).toBe('base')
-      expect(data.config.model).toBe('base')
-      expect(data.config.language).toBe('auto')
-    })
-
-    it('should return server not running status', async () => {
-      mockWhisperManager.syncStatus.mockResolvedValueOnce({
-        running: false,
-        port: 5552,
-        host: '127.0.0.1',
-        model: null,
-        error: 'Connection refused'
-      })
-
-      const res = await sttApp.request('/status')
-      const data = await res.json()
-
-      expect(res.status).toBe(200)
-      expect(data.server.running).toBe(false)
-      expect(data.server.error).toBe('Connection refused')
-    })
-
-    it('should return STT disabled when settings say so', async () => {
-      const MockSettingsService = SettingsService as unknown as ReturnType<typeof vi.fn>
-      MockSettingsService.mockImplementationOnce(() => ({
-        getSettings: vi.fn().mockReturnValue({
-          preferences: {
-            stt: {
-              enabled: false,
-              model: 'base',
-              language: 'auto'
-            }
-          }
-        })
-      }))
-
-      const disabledApp = createSTTRoutes(mockDb)
-      const res = await disabledApp.request('/status')
-      const data = await res.json()
-
-      expect(res.status).toBe(200)
-      expect(data.enabled).toBe(false)
+  describe('createSTTRoutes', () => {
+    it('should create a Hono app with routes', () => {
+      expect(sttApp).toBeDefined()
+      expect(typeof sttApp.fetch).toBe('function')
     })
   })
 
-  describe('GET /models', () => {
-    it('should return available Whisper models', async () => {
-      const res = await sttApp.request('/models')
-      const data = await res.json()
+  describe('GET /status', () => {
+    it('should return status with correct structure', async () => {
+      const req = new Request('http://localhost/status?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
       expect(res.status).toBe(200)
-      expect(data.models).toContain('tiny')
-      expect(data.models).toContain('base')
-      expect(data.models).toContain('small')
-      expect(data.models).toContain('medium')
-      expect(data.models).toContain('large-v2')
-      expect(data.models).toContain('large-v3')
-      expect(data.current).toBe('base')
-      expect(data.default).toBe('base')
+      expect(json).toHaveProperty('enabled')
+      expect(json).toHaveProperty('configured')
+      expect(json).toHaveProperty('provider')
+      expect(json).toHaveProperty('model')
     })
 
-    it('should handle model fetch errors gracefully', async () => {
-      mockWhisperManager.getModels.mockRejectedValueOnce(new Error('Server error'))
+    it('should return enabled true when STT is enabled', async () => {
+      const req = new Request('http://localhost/status?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
-      const res = await sttApp.request('/models')
-      const data = await res.json()
+      expect(json.enabled).toBe(true)
+      expect(json.configured).toBe(true)
+      expect(json.provider).toBe('external')
+      expect(json.model).toBe('whisper-1')
+    })
 
-      expect(res.status).toBe(500)
-      expect(data.error).toBe('Failed to fetch models')
+    it('should return enabled false when STT is disabled', async () => {
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: false,
+            provider: 'builtin',
+            apiKey: '',
+            endpoint: '',
+            model: '',
+            language: 'en-US',
+          },
+        },
+      })
+
+      const req = new Request('http://localhost/status?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(json.enabled).toBe(false)
+      expect(json.configured).toBe(false)
+    })
+
+    it('should handle missing STT config gracefully', async () => {
+      mockGetSettings.mockReturnValue({
+        preferences: {},
+      })
+
+      const req = new Request('http://localhost/status?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(200)
+      expect(json.enabled).toBe(false)
+      expect(json.provider).toBe('builtin')
     })
   })
 
   describe('POST /transcribe', () => {
-    const validBase64Audio = Buffer.from('fake audio data').toString('base64')
-
-    it('should transcribe audio successfully', async () => {
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio,
-          format: 'webm'
-        })
-      })
-      const data = await res.json()
-
-      expect(res.status).toBe(200)
-      expect(data.text).toBe('Hello world')
-      expect(data.language).toBe('en')
-      expect(data.language_probability).toBe(0.98)
-      expect(data.duration).toBe(2.5)
-    })
-
-    it('should handle data URL format audio', async () => {
-      const dataUrl = `data:audio/webm;base64,${validBase64Audio}`
-      
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: dataUrl,
-          format: 'webm'
-        })
-      })
-      const data = await res.json()
-
-      expect(res.status).toBe(200)
-      expect(data.text).toBe('Hello world')
-    })
-
     it('should reject when STT is disabled', async () => {
-      const MockSettingsService = SettingsService as unknown as ReturnType<typeof vi.fn>
-      MockSettingsService.mockImplementationOnce(() => ({
-        getSettings: vi.fn().mockReturnValue({
-          preferences: {
-            stt: {
-              enabled: false,
-              model: 'base',
-              language: 'auto'
-            }
-          }
-        })
-      }))
-
-      const disabledApp = createSTTRoutes(mockDb)
-      const res = await disabledApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio,
-          format: 'webm'
-        })
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: false,
+            provider: 'external',
+            apiKey: 'test-key',
+            endpoint: 'https://api.openai.com',
+            model: 'whisper-1',
+          },
+        },
       })
-      const data = await res.json()
+
+      const audioBlob = new Blob(['fake audio'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'test.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
       expect(res.status).toBe(400)
-      expect(data.error).toBe('STT is not enabled')
+      expect(json.error).toBe('STT is not enabled')
     })
 
-    it('should reject when Whisper server is not running', async () => {
-      mockWhisperManager.syncStatus.mockResolvedValueOnce({
-        running: false,
-        port: 5552,
-        host: '127.0.0.1',
-        model: null,
-        error: 'Not running'
+    it('should reject when provider is builtin', async () => {
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'builtin',
+            apiKey: 'test-key',
+            endpoint: 'https://api.openai.com',
+            model: 'whisper-1',
+          },
+        },
       })
 
-      const res = await sttApp.request('/transcribe', {
+      const audioBlob = new Blob(['fake audio'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'test.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio,
-          format: 'webm'
-        })
+        body: formData,
       })
-      const data = await res.json()
-
-      expect(res.status).toBe(503)
-      expect(data.error).toBe('Whisper server is not running')
-    })
-
-    it('should reject empty audio data', async () => {
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: '',
-          format: 'webm'
-        })
-      })
-      const data = await res.json()
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
       expect(res.status).toBe(400)
-      expect(data.error).toBe('Invalid request')
+      expect(json.error).toBe('External STT provider is not selected')
     })
 
-    it('should reject invalid JSON body', async () => {
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: 'invalid json'
+    it('should reject when endpoint is missing', async () => {
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: 'test-key',
+            endpoint: '',
+            model: 'whisper-1',
+          },
+        },
       })
-      const data = await res.json()
 
-      expect(res.status).toBe(500)
-      expect(data.error).toBe('Transcription failed')
+      const audioBlob = new Blob(['fake audio'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'test.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(400)
+      expect(json.error).toBe('STT endpoint is not configured')
     })
 
-    it('should use custom model and language from request', async () => {
-      const res = await sttApp.request('/transcribe', {
+    it('should reject when no audio file provided', async () => {
+      const formData = new FormData()
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio,
-          format: 'webm',
-          model: 'small',
-          language: 'en'
-        })
+        body: formData,
       })
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(400)
+      expect(json.error).toBe('No audio file provided')
+    })
+
+    it('should successfully transcribe when API returns success', async () => {
+      const originalFetch = globalThis.fetch
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ text: 'Hello, world!' }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
       expect(res.status).toBe(200)
-      expect(mockWhisperManager.transcribe).toHaveBeenCalledWith(
-        expect.any(Buffer),
+      expect(json.text).toBe('Hello, world!')
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
         expect.objectContaining({
-          model: 'small',
-          language: 'en',
-          format: 'webm'
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer test-api-key',
+          },
         })
       )
+
+      globalThis.fetch = originalFetch
     })
 
-    it('should handle transcription errors', async () => {
-      mockWhisperManager.transcribe.mockRejectedValueOnce(new Error('Transcription failed'))
-
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio,
-          format: 'webm'
-        })
+    it('should handle API errors gracefully', async () => {
+      const originalFetch = globalThis.fetch
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ error: { message: 'Invalid API key' } }),
       })
-      const data = await res.json()
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(401)
+      expect(json.error).toBe('STT API request failed')
+      expect(json.details).toBe('Invalid API key')
+
+      globalThis.fetch = originalFetch
+    })
+
+    it('should handle response with missing text field', async () => {
+      const originalFetch = globalThis.fetch
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: 'test-api-key',
+            endpoint: 'https://api.openai.com',
+            model: 'whisper-1',
+            language: 'en-US',
+          },
+        },
+      })
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ error: 'some error', text: undefined }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
 
       expect(res.status).toBe(500)
-      expect(data.error).toBe('Transcription failed')
-      expect(data.details).toBe('Transcription failed')
+      expect(json.error).toBe('STT API returned invalid response')
+      expect(json.details).toContain('Response missing text field')
+
+      globalThis.fetch = originalFetch
     })
 
-    it('should use settings defaults when model/language not specified', async () => {
-      const res = await sttApp.request('/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio: validBase64Audio
-        })
+    it('should successfully transcribe without API key', async () => {
+      const originalFetch = globalThis.fetch
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: '',
+            endpoint: 'https://api.openai.com',
+            model: 'whisper-1',
+            language: 'en-US',
+          },
+        },
       })
 
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ text: 'Hello, world!' }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
       expect(res.status).toBe(200)
-      expect(mockWhisperManager.transcribe).toHaveBeenCalledWith(
-        expect.any(Buffer),
+      expect(json.text).toBe('Hello, world!')
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
         expect.objectContaining({
-          model: 'base',
-          language: 'auto'
+          headers: expect.not.objectContaining({
+            'Authorization': expect.any(String),
+          }),
         })
       )
+
+      globalThis.fetch = originalFetch
+    })
+  })
+
+  describe('GET /models', () => {
+    it('should reject when STT not configured', async () => {
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: '',
+            endpoint: '',
+            model: '',
+          },
+        },
+      })
+
+      const req = new Request('http://localhost/models?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(400)
+      expect(json.error).toBe('STT not configured')
+    })
+
+    it('should return cached models when available', async () => {
+      mockStat.mockResolvedValue({
+        mtimeMs: Date.now() - 1000,
+      })
+      mockReadFile.mockResolvedValue(JSON.stringify(['whisper-1', 'whisper-large']))
+
+      const req = new Request('http://localhost/models?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(200)
+      expect(json.models).toEqual(['whisper-1', 'whisper-large'])
+      expect(json.cached).toBe(true)
+    })
+
+    it('should fetch models from API when cache is expired', async () => {
+      const originalFetch = globalThis.fetch
+      mockStat.mockResolvedValue({
+        mtimeMs: Date.now() - 2 * 60 * 60 * 1000,
+      })
+      mockUnlink.mockResolvedValue(undefined)
+      mockMkdir.mockResolvedValue(undefined)
+      mockWriteFile.mockResolvedValue(undefined)
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'whisper-1' },
+            { id: 'gpt-4' },
+            { id: 'whisper-large-v3' },
+          ],
+        }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const req = new Request('http://localhost/models?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(200)
+      expect(json.models).toEqual(['whisper-1', 'whisper-large-v3'])
+      expect(json.cached).toBe(false)
+
+      globalThis.fetch = originalFetch
+    })
+
+    it('should return default model when API fetch fails', async () => {
+      const originalFetch = globalThis.fetch
+      mockStat.mockRejectedValue(new Error('File not found'))
+      mockMkdir.mockResolvedValue(undefined)
+      mockWriteFile.mockResolvedValue(undefined)
+
+      const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const req = new Request('http://localhost/models?userId=test')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(200)
+      expect(json.models).toEqual(['whisper-1'])
+
+      globalThis.fetch = originalFetch
+    })
+
+    it('should force refresh when refresh=true', async () => {
+      const originalFetch = globalThis.fetch
+      mockMkdir.mockResolvedValue(undefined)
+      mockWriteFile.mockResolvedValue(undefined)
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'whisper-1' }],
+        }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const req = new Request('http://localhost/models?userId=test&refresh=true')
+      const res = await sttApp.fetch(req)
+      const json = await res.json() as Record<string, unknown>
+
+      expect(res.status).toBe(200)
+      expect(json.cached).toBe(false)
+      expect(mockFetch).toHaveBeenCalled()
+
+      globalThis.fetch = originalFetch
+    })
+  })
+
+  describe('URL normalization', () => {
+    it('should normalize endpoint with trailing path', async () => {
+      const originalFetch = globalThis.fetch
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: 'test-api-key',
+            endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+            model: 'whisper-1',
+            language: 'en-US',
+          },
+        },
+      })
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ text: 'Test' }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      await sttApp.fetch(req)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
+        expect.anything()
+      )
+
+      globalThis.fetch = originalFetch
+    })
+
+    it('should handle endpoint with trailing slash', async () => {
+      const originalFetch = globalThis.fetch
+      mockGetSettings.mockReturnValue({
+        preferences: {
+          stt: {
+            enabled: true,
+            provider: 'external',
+            apiKey: 'test-api-key',
+            endpoint: 'https://api.openai.com/',
+            model: 'whisper-1',
+            language: 'en-US',
+          },
+        },
+      })
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ text: 'Test' }),
+      })
+      globalThis.fetch = mockFetch as unknown as typeof fetch
+
+      const audioBlob = new Blob(['fake audio data'], { type: 'audio/webm' })
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
+
+      const req = new Request('http://localhost/transcribe?userId=test', {
+        method: 'POST',
+        body: formData,
+      })
+
+      await sttApp.fetch(req)
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
+        expect.anything()
+      )
+
+      globalThis.fetch = originalFetch
     })
   })
 })

@@ -14,7 +14,7 @@ import {
   listDirectory 
 } from './file-operations'
 import { getReposPath, FILE_LIMITS } from '@opencode-manager/shared/config/env'
-import { ALLOWED_MIME_TYPES } from '@opencode-manager/shared'
+import { ALLOWED_MIME_TYPES, type AllowedMimeType } from '@opencode-manager/shared'
 import type { ChunkedFileInfo, PatchOperation } from '@opencode-manager/shared'
 
 const SHARED_WORKSPACE_BASE = getReposPath()
@@ -106,11 +106,11 @@ export async function getFile(userPath: string): Promise<FileInfo> {
     } else {
       // It's a file - get content
       let content = ''
-      let mimeType = getMimeType(validatedPath, new Uint8Array())
+      const mimeType = getMimeType(validatedPath)
       
       if (stats.size < FILE_LIMITS.MAX_SIZE_BYTES) {
         try {
-          const mimeType = getMimeType(validatedPath, new Uint8Array())
+          const mimeType = getMimeType(validatedPath)
           
           if (mimeType.startsWith('image/') || !mimeType.startsWith('text/')) {
             content = await readFileAsBase64(validatedPath)
@@ -144,8 +144,8 @@ export async function uploadFile(userPath: string, file: File, relativePath?: st
     throw new Error('File too large')
   }
   
-  const mimeType = file.type || getMimeType(file.name, new Uint8Array())
-  if (!ALLOWED_MIME_TYPES.includes(mimeType as any) && !mimeType.startsWith('text/')) {
+  const mimeType = (file.type || getMimeType(file.name)) as AllowedMimeType
+  if (!ALLOWED_MIME_TYPES.includes(mimeType) && !mimeType.startsWith('text/')) {
     throw new Error('File type not allowed')
   }
   
@@ -246,10 +246,10 @@ function validatePath(userPath: string): string {
   return resolved
 }
 
-function getMimeType(filePath: string, _content: Uint8Array): string {
+function getMimeType(filePath: string): AllowedMimeType {
   const ext = path.extname(filePath).toLowerCase()
   
-  const mimeTypes: Record<string, string> = {
+  const mimeTypes: Record<string, AllowedMimeType> = {
     '.txt': 'text/plain',
     '.html': 'text/html',
     '.css': 'text/css',
@@ -267,41 +267,31 @@ function getMimeType(filePath: string, _content: Uint8Array): string {
     '.svg': 'image/svg+xml',
     '.pdf': 'application/pdf',
     '.zip': 'application/zip',
+    '.md': 'text/markdown',
+    '.mdx': 'text/markdown',
   }
   
   return mimeTypes[ext] || 'text/plain'
 }
 
-async function countFileLines(filePath: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let lineCount = 0
-    const stream = createReadStream(filePath, { encoding: 'utf8' })
-    const rl = createInterface({ input: stream, crlfDelay: Infinity })
-    
-    rl.on('line', () => { lineCount++ })
-    rl.on('close', () => resolve(lineCount))
-    rl.on('error', reject)
-  })
-}
-
-async function readFileLines(filePath: string, startLine: number, endLine: number): Promise<string[]> {
+async function readFileLinesAndCount(
+  filePath: string,
+  startLine: number,
+  endLine: number
+): Promise<{ lines: string[]; totalLines: number }> {
   return new Promise((resolve, reject) => {
     const lines: string[] = []
     let currentLine = 0
     const stream = createReadStream(filePath, { encoding: 'utf8' })
     const rl = createInterface({ input: stream, crlfDelay: Infinity })
-    
+
     rl.on('line', (line) => {
       if (currentLine >= startLine && currentLine < endLine) {
         lines.push(line)
       }
       currentLine++
-      if (currentLine >= endLine) {
-        rl.close()
-        stream.destroy()
-      }
     })
-    rl.on('close', () => resolve(lines))
+    rl.on('close', () => resolve({ lines, totalLines: currentLine }))
     rl.on('error', reject)
   })
 }
@@ -320,10 +310,9 @@ export async function getFileRange(userPath: string, startLine: number, endLine:
     throw { message: 'Path is a directory', statusCode: 400 }
   }
   
-  const totalLines = await countFileLines(validatedPath)
+  const { lines, totalLines } = await readFileLinesAndCount(validatedPath, startLine, endLine)
   const clampedEnd = Math.min(endLine, totalLines)
-  const lines = await readFileLines(validatedPath, startLine, clampedEnd)
-  const mimeType = getMimeType(validatedPath, new Uint8Array())
+  const mimeType = getMimeType(validatedPath)
   
   return {
     name: path.basename(validatedPath),
@@ -338,15 +327,6 @@ export async function getFileRange(userPath: string, startLine: number, endLine:
     hasMore: clampedEnd < totalLines,
     lastModified: stats.lastModified,
   }
-}
-
-export async function getFileTotalLines(userPath: string): Promise<number> {
-  const validatedPath = validatePath(userPath)
-  const exists = await fileExists(validatedPath)
-  if (!exists) {
-    throw { message: 'File does not exist', statusCode: 404 }
-  }
-  return countFileLines(validatedPath)
 }
 
 export async function applyFilePatches(userPath: string, patches: PatchOperation[]): Promise<{ success: boolean; totalLines: number }> {

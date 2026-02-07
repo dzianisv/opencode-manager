@@ -1,182 +1,161 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { useSettings } from './useSettings'
-import { showToast } from '@/lib/toast'
+import { useCallback, useEffect, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { notificationsApi } from "@/api/notifications";
+import { useSettings } from "@/hooks/useSettings";
+import {
+  getServiceWorkerRegistration,
+  urlBase64ToUint8Array,
+} from "@/lib/serviceWorker";
+import type { NotificationPreferences } from "@/api/types/settings";
+import { DEFAULT_NOTIFICATION_PREFERENCES } from "@opencode-manager/shared/schemas";
 
-type NotificationPermission = 'default' | 'granted' | 'denied'
+type PermissionState = NotificationPermission | "unsupported";
 
-interface NotificationOptions {
-  title: string
-  body: string
-  tag?: string
-  requireInteraction?: boolean
-  onClick?: () => void
+function getPermissionState(): PermissionState {
+  if (!("Notification" in window)) return "unsupported";
+  return Notification.permission;
 }
 
-const NOTIFICATION_SOUND_URL = '/notification.mp3'
-
 export function useNotifications() {
-  const { preferences, updateSettings } = useSettings()
-  const notificationConfig = preferences?.notifications
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const queryClient = useQueryClient();
+  const { preferences, updateSettings } = useSettings();
+  const [permission, setPermission] = useState<PermissionState>(getPermissionState);
+
+  const notificationPrefs: NotificationPreferences =
+    preferences?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      audioRef.current = new Audio(NOTIFICATION_SOUND_URL)
-      audioRef.current.volume = 0.5
-    }
-  }, [])
+    setPermission(getPermissionState());
+  }, []);
 
-  const getPermission = useCallback((): NotificationPermission => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      return 'denied'
-    }
-    return Notification.permission as NotificationPermission
-  }, [])
+  const { data: vapidData } = useQuery({
+    queryKey: ["notifications", "vapid-public-key"],
+    queryFn: notificationsApi.getVapidPublicKey,
+    staleTime: Infinity,
+    retry: false,
+  });
 
-  const requestPermission = useCallback(async (): Promise<boolean> => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      showToast.error('Notifications are not supported in this browser')
-      return false
-    }
+  const { data: subscriptionsData, isLoading: isLoadingSubscriptions } =
+    useQuery({
+      queryKey: ["notifications", "subscriptions"],
+      queryFn: () => notificationsApi.getSubscriptions(),
+      enabled: notificationPrefs.enabled && permission === "granted",
+    });
 
-    try {
-      const permission = await Notification.requestPermission()
-      const granted = permission === 'granted'
-      
-      if (granted) {
-        await updateSettings({
-          notifications: {
-            ...notificationConfig,
-            enabled: true,
-            sessionComplete: true,
-            permissionRequests: true,
-            sound: false,
-          },
-        })
-        showToast.success('Notifications enabled')
-      } else if (permission === 'denied') {
-        showToast.error('Notification permission denied. Enable in browser settings.')
-      }
-      
-      return granted
-    } catch (error) {
-      console.error('Failed to request notification permission:', error)
-      showToast.error('Failed to request notification permission')
-      return false
-    }
-  }, [notificationConfig, updateSettings])
+  const subscribeMutation = useMutation({
+    mutationFn: async (deviceName?: string) => {
+      const reg = await getServiceWorkerRegistration();
+      if (!reg) throw new Error("Service worker not registered");
+      if (!vapidData?.publicKey) throw new Error("VAPID key not available");
 
-  const playSound = useCallback(() => {
-    if (audioRef.current && notificationConfig?.sound) {
-      audioRef.current.currentTime = 0
-      audioRef.current.play().catch(() => {})
-    }
-  }, [notificationConfig?.sound])
-
-  const sendNotification = useCallback(
-    (options: NotificationOptions) => {
-      if (!notificationConfig?.enabled) return
-
-      playSound()
-
-      if (getPermission() !== 'granted') {
-        showToast.info(options.title, {
-          description: options.body,
-          action: options.onClick ? { label: 'View', onClick: options.onClick } : undefined,
-        })
-        return
+      const existingSub = await reg.pushManager.getSubscription();
+      if (existingSub) {
+        const json = existingSub.toJSON();
+        return notificationsApi.subscribe(json, deviceName);
       }
 
-      try {
-        const notification = new Notification(options.title, {
-          body: options.body,
-          tag: options.tag,
-          icon: '/favicon.svg',
-          requireInteraction: options.requireInteraction ?? false,
-        })
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidData.publicKey).buffer as ArrayBuffer,
+      });
 
-        if (options.onClick) {
-          notification.onclick = () => {
-            window.focus()
-            options.onClick?.()
-            notification.close()
-          }
+      const json = subscription.toJSON();
+      return notificationsApi.subscribe(json, deviceName);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "subscriptions"],
+      });
+    },
+  });
+
+  const unsubscribeMutation = useMutation({
+    mutationFn: async () => {
+      const reg = await getServiceWorkerRegistration();
+      if (reg) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await notificationsApi.unsubscribe(sub.endpoint);
+          await sub.unsubscribe();
         }
-      } catch (error) {
-        console.error('Failed to send notification:', error)
-        showToast.info(options.title, {
-          description: options.body,
-        })
       }
     },
-    [notificationConfig?.enabled, getPermission, playSound]
-  )
-
-  const notifySessionComplete = useCallback(
-    (sessionId: string, repoId?: string, sessionTitle?: string) => {
-      if (!notificationConfig?.enabled || !notificationConfig?.sessionComplete) return
-
-      sendNotification({
-        title: 'Session Complete',
-        body: sessionTitle ? `"${sessionTitle}" has finished` : 'Your session has finished processing',
-        tag: `session-complete-${sessionId}`,
-        onClick: repoId ? () => {
-          window.location.href = `/repos/${encodeURIComponent(repoId)}/sessions/${sessionId}`
-        } : undefined,
-      })
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "subscriptions"],
+      });
     },
-    [notificationConfig?.enabled, notificationConfig?.sessionComplete, sendNotification]
-  )
+  });
 
-  const notifyPermissionRequest = useCallback(
-    (sessionId: string, repoId?: string, toolName?: string) => {
-      if (!notificationConfig?.enabled || !notificationConfig?.permissionRequests) return
-
-      sendNotification({
-        title: 'Permission Required',
-        body: `${toolName || 'A tool'} requires your approval`,
-        tag: `permission-${sessionId}`,
-        requireInteraction: true,
-        onClick: repoId ? () => {
-          window.location.href = `/repos/${encodeURIComponent(repoId)}/sessions/${sessionId}`
-        } : undefined,
-      })
+  const removeDeviceMutation = useMutation({
+    mutationFn: (id: number) => notificationsApi.removeSubscription(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "subscriptions"],
+      });
     },
-    [notificationConfig?.enabled, notificationConfig?.permissionRequests, sendNotification]
-  )
+  });
 
-  const testNotification = useCallback(() => {
-    playSound()
+  const testMutation = useMutation({
+    mutationFn: () => notificationsApi.sendTest(),
+  });
 
-    if (getPermission() !== 'granted') {
-      showToast.info('Test Notification', {
-        description: 'This is a test notification. Grant permission for system notifications.',
-      })
-      return
+  const requestPermissionAndSubscribe = useCallback(async (): Promise<boolean> => {
+    if (!("Notification" in window)) return false;
+
+    const result = await Notification.requestPermission();
+    setPermission(result);
+
+    if (result !== "granted") return false;
+
+    const reg = await getServiceWorkerRegistration();
+    if (reg) {
+      await subscribeMutation.mutateAsync(undefined);
     }
+    return true;
+  }, [subscribeMutation]);
 
-    try {
-      new Notification('Test Notification', {
-        body: 'Notifications and sound are working correctly!',
-        icon: '/favicon.svg',
-      })
-    } catch (error) {
-      console.error('Failed to send test notification:', error)
-      showToast.info('Test Notification', {
-        description: 'This is a test notification (system notification failed)',
-      })
-    }
-  }, [getPermission, playSound])
+  const enable = useCallback(async () => {
+    const granted = await requestPermissionAndSubscribe();
+    if (!granted) return;
+    updateSettings({
+      notifications: { ...notificationPrefs, enabled: true },
+    });
+  }, [requestPermissionAndSubscribe, updateSettings, notificationPrefs]);
+
+  const disable = useCallback(async () => {
+    await unsubscribeMutation.mutateAsync();
+    updateSettings({
+      notifications: { ...notificationPrefs, enabled: false },
+    });
+  }, [unsubscribeMutation, updateSettings, notificationPrefs]);
+
+  const updateEventPreference = useCallback(
+    (key: keyof NotificationPreferences["events"], value: boolean) => {
+      updateSettings({
+        notifications: {
+          ...notificationPrefs,
+          events: { ...notificationPrefs.events, [key]: value },
+        },
+      });
+    },
+    [updateSettings, notificationPrefs]
+  );
 
   return {
-    isSupported: typeof window !== 'undefined' && 'Notification' in window,
-    permission: getPermission(),
-    isEnabled: notificationConfig?.enabled ?? false,
-    config: notificationConfig,
-    requestPermission,
-    sendNotification,
-    notifySessionComplete,
-    notifyPermissionRequest,
-    testNotification,
-  }
+    isSupported: "Notification" in window && "serviceWorker" in navigator,
+    isAvailable: !!vapidData?.publicKey,
+    permission,
+    isEnabled: notificationPrefs.enabled,
+    preferences: notificationPrefs,
+    subscriptions: subscriptionsData?.subscriptions ?? [],
+    isLoadingSubscriptions,
+    enable,
+    disable,
+    updateEventPreference,
+    removeDevice: removeDeviceMutation.mutate,
+    sendTest: testMutation.mutate,
+    isSubscribing: subscribeMutation.isPending,
+    isTesting: testMutation.isPending,
+  };
 }

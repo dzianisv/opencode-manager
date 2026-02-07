@@ -61,8 +61,7 @@ export const useSessionStatus = create<SessionStatusStore>((set, get) => ({
 }))
 
 export const useSessionStatusForSession = (sessionID: string | undefined): SessionStatusType => {
-  const status = useSessionStatus((state) => 
-    sessionID ? state.statuses.get(sessionID) : undefined
+  return useSessionStatus((state) => 
+    sessionID ? (state.statuses.get(sessionID) ?? DEFAULT_STATUS) : DEFAULT_STATUS
   )
-  return status || DEFAULT_STATUS
 }

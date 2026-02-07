@@ -18,8 +18,13 @@ import type { components } from './opencode-types'
 export type Message = components['schemas']['Message']
 export type Part = components['schemas']['Part']
 export type Session = components['schemas']['Session']
-export type Permission = components['schemas']['Permission']
+export type PermissionRequest = components['schemas']['PermissionRequest']
 export type PermissionResponse = 'once' | 'always' | 'reject'
+
+export type QuestionOption = components['schemas']['QuestionOption']
+export type QuestionInfo = components['schemas']['QuestionInfo']
+export type QuestionRequest = components['schemas']['QuestionRequest']
+export type QuestionAnswer = components['schemas']['QuestionAnswer']
 
 export type MessageWithParts = {
   info: Message
@@ -88,9 +93,9 @@ export interface SSETodoUpdatedEvent {
   }
 }
 
-export interface SSEPermissionUpdatedEvent {
-  type: 'permission.updated'
-  properties: Permission
+export interface SSEPermissionAskedEvent {
+  type: 'permission.asked'
+  properties: PermissionRequest
 }
 
 export interface SSEPermissionRepliedEvent {
@@ -99,6 +104,28 @@ export interface SSEPermissionRepliedEvent {
     sessionID: string
     permissionID: string
     response: string
+  }
+}
+
+export interface SSEQuestionAskedEvent {
+  type: 'question.asked'
+  properties: QuestionRequest
+}
+
+export interface SSEQuestionRepliedEvent {
+  type: 'question.replied'
+  properties: {
+    sessionID: string
+    requestID: string
+    answers: QuestionAnswer[]
+  }
+}
+
+export interface SSEQuestionRejectedEvent {
+  type: 'question.rejected'
+  properties: {
+    sessionID: string
+    requestID: string
   }
 }
 
@@ -140,6 +167,18 @@ export interface SSESessionStatusEvent {
   }
 }
 
+export interface SSESessionErrorEvent {
+  type: 'session.error'
+  properties: {
+    sessionID?: string
+    error?: components['schemas']['ProviderAuthError'] 
+      | components['schemas']['UnknownError'] 
+      | components['schemas']['MessageOutputLengthError'] 
+      | components['schemas']['MessageAbortedError'] 
+      | components['schemas']['APIError']
+  }
+}
+
 export type SSEEvent =
   | SSEMessagePartUpdatedEvent
   | SSEMessageUpdatedEvent
@@ -150,9 +189,13 @@ export type SSEEvent =
   | SSESessionCompactedEvent
   | SSESessionIdleEvent
   | SSESessionStatusEvent
+  | SSESessionErrorEvent
   | SSETodoUpdatedEvent
-  | SSEPermissionUpdatedEvent
+  | SSEPermissionAskedEvent
   | SSEPermissionRepliedEvent
+  | SSEQuestionAskedEvent
+  | SSEQuestionRepliedEvent
+  | SSEQuestionRejectedEvent
   | SSEInstallationUpdatedEvent
   | SSEInstallationUpdateAvailableEvent
 

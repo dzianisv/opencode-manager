@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import type { components } from '@/api/opencode-types'
 import { useSettings } from '@/hooks/useSettings'
 import { useUserBash } from '@/stores/userBashStore'
-import { usePermissionContext } from '@/contexts/PermissionContext'
+import { usePermissions, useQuestions } from '@/contexts/EventContext'
 import { detectFileReferences } from '@/lib/fileReferences'
-import { ExternalLink, Loader2, HelpCircle } from 'lucide-react'
+import { ExternalLink, Loader2 } from 'lucide-react'
 import { CopyButton } from '@/components/ui/copy-button'
 import { TodoListDisplay } from './TodoListDisplay'
 import { getToolSpecificRender } from './FileToolRender'
@@ -72,7 +72,8 @@ function parseTodoOutput(output: string): Todo[] | null {
 export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCallPartProps) {
   const { preferences } = useSettings()
   const { userBashCommands } = useUserBash()
-  const { getPermissionForCallID } = usePermissionContext()
+  const { getForCallID: getPermissionForCallID } = usePermissions()
+  const { getForCallID: getQuestionForCallID } = useQuestions()
   const outputRef = useRef<HTMLDivElement>(null)
   const isUserBashCommand = part.tool === 'bash' &&
     part.state.status === 'completed' &&
@@ -83,7 +84,8 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
 
   const pendingPermission = getPermissionForCallID(part.callID, part.sessionID)
   const isWaitingPermission = part.state.status === 'running' && !!pendingPermission
-  const isQuestionTool = part.tool === 'question'
+  const pendingQuestion = getQuestionForCallID(part.callID, part.sessionID)
+  const isWaitingQuestion = part.state.status === 'running' && !!pendingQuestion
 
   useEffect(() => {
     if (part.tool === 'bash' && expanded && outputRef.current) {
@@ -98,7 +100,9 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
       case 'error':
         return 'text-red-600 dark:text-red-400'
       case 'running':
-        return isWaitingPermission ? 'text-orange-600 dark:text-orange-400' : 'text-yellow-600 dark:text-yellow-400'
+        if (isWaitingPermission) return 'text-orange-600 dark:text-orange-400'
+        if (isWaitingQuestion) return 'text-blue-600 dark:text-blue-400'
+        return 'text-yellow-600 dark:text-yellow-400'
       default:
         return 'text-muted-foreground'
     }
@@ -206,13 +210,8 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
 
     if (part.state.status === 'completed') {
       return (
-        <div className="my-2">
-          <TodoListDisplay
-            todos={todoData || []}
-            title="Task List"
-            showCompleted={true}
-            scrollCurrentOnly={true}
-          />
+        <div className="my-2 text-xs text-muted-foreground">
+          Task list updated
         </div>
       )
     }
@@ -226,71 +225,6 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
     }
 
     return null
-  }
-
-  if (isQuestionTool) {
-    const input = part.state.input as { questions?: Array<{ question: string; header: string; options?: Array<{ label: string; description?: string }> }> } | undefined
-    const questions = input?.questions || []
-
-    if (part.state.status === 'running') {
-      return (
-        <div className="my-2 border border-blue-500/50 rounded-lg overflow-hidden shadow-sm shadow-blue-500/10">
-          <div className="px-4 py-2 bg-blue-500/10 flex items-center gap-2">
-            <HelpCircle className="w-4 h-4 text-blue-500" />
-            <span className="font-medium text-foreground">Question awaiting your answer</span>
-            <span className="text-xs text-blue-500 ml-auto">Click the dialog to respond</span>
-          </div>
-          <div className="p-4 bg-card space-y-3">
-            {questions.map((q, idx) => (
-              <div key={idx} className="space-y-2">
-                <div className="text-sm text-muted-foreground">{q.header}</div>
-                <div className="text-foreground">{q.question}</div>
-                {q.options && q.options.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {q.options.map((opt, optIdx) => (
-                      <span key={optIdx} className="px-2 py-1 text-xs bg-muted rounded border border-border">
-                        {opt.label}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (part.state.status === 'completed') {
-      const output = part.state.output
-      return (
-        <div className="my-2 border border-green-500/30 rounded-lg overflow-hidden">
-          <div className="px-4 py-2 bg-green-500/10 flex items-center gap-2">
-            <span className="text-green-500">✓</span>
-            <span className="font-medium text-foreground">Question answered</span>
-          </div>
-          {output && (
-            <div className="p-3 bg-card text-sm">
-              <pre className="text-muted-foreground whitespace-pre-wrap">{output}</pre>
-            </div>
-          )}
-        </div>
-      )
-    }
-
-    if (part.state.status === 'error') {
-      return (
-        <div className="my-2 border border-red-500/30 rounded-lg overflow-hidden">
-          <div className="px-4 py-2 bg-red-500/10 flex items-center gap-2">
-            <span className="text-red-500">✗</span>
-            <span className="font-medium text-foreground">Question rejected</span>
-          </div>
-          <div className="p-3 bg-card text-sm text-red-400">
-            {part.state.error || 'Question was skipped or rejected'}
-          </div>
-        </div>
-      )
-    }
   }
 
   const toolSpecificRender = getToolSpecificRender(part, onFileClick)
@@ -313,11 +247,12 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
             </span>
           )}
         </div>
-        <pre className="bg-accent p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap cursor-pointer hover:bg-accent/80 transition-colors"
-             onClick={() => navigator.clipboard.writeText(output)}
-             title="Click to copy output">
-          {output}
-        </pre>
+        <div className="relative">
+          <pre className="bg-accent p-3 rounded text-xs overflow-x-auto whitespace-pre-wrap">
+            {output}
+          </pre>
+          <CopyButton content={output} title="Copy output" className="absolute top-2 right-2" />
+        </div>
       </div>
     )
   }
@@ -325,7 +260,9 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
   const getBorderStyle = () => {
     switch (part.state.status) {
       case 'running':
-        return isWaitingPermission ? 'border-orange-500/50 shadow-sm shadow-orange-500/20' : 'border-yellow-500/50 shadow-sm shadow-yellow-500/10'
+        if (isWaitingPermission) return 'border-orange-500/50 shadow-sm shadow-orange-500/20'
+        if (isWaitingQuestion) return 'border-blue-500/50 shadow-sm shadow-blue-500/20'
+        return 'border-yellow-500/50 shadow-sm shadow-yellow-500/10'
       case 'pending':
         return 'border-blue-500/30'
       case 'error':
@@ -382,7 +319,7 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
             </span>
           ) : null
         })()}
-         <span className="text-muted-foreground text-xs ml-auto">({isWaitingPermission ? 'waiting' : part.state.status})</span>
+         <span className="text-muted-foreground text-xs ml-auto">({isWaitingPermission ? 'awaiting permission' : isWaitingQuestion ? 'awaiting answer' : part.state.status})</span>
       </button>
 
       {expanded && (
@@ -453,11 +390,14 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
               )}
               <div className="text-sm">
                 <div className="text-muted-foreground mb-1">Output:</div>
-                <pre className="bg-accent p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap break-all cursor-pointer hover:bg-accent/80 transition-colors"
-                     onClick={() => part.state.status === 'completed' && navigator.clipboard.writeText(part.state.output)}
-                     title="Click to copy output">
-                  {part.state.status === 'completed' ? part.state.output : ''}
-                </pre>
+                <div className="relative">
+                  <pre className="bg-accent p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap break-all">
+                    {part.state.status === 'completed' ? part.state.output : ''}
+                  </pre>
+                  {part.state.status === 'completed' && part.state.output && (
+                    <CopyButton content={part.state.output} title="Copy output" className="absolute top-1 right-1" iconSize="sm" />
+                  )}
+                </div>
               </div>
               {part.state.time && (
                 <div className="text-xs text-muted-foreground">

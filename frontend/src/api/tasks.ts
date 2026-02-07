@@ -1,4 +1,5 @@
-import { apiClient } from './client'
+import { API_BASE_URL } from '@/config'
+import { fetchWrapper } from './fetchWrapper'
 
 export interface ScheduledTask {
   id: number
@@ -45,37 +46,43 @@ export interface TaskRunResult {
 }
 
 export async function getTasks(): Promise<ScheduledTask[]> {
-  const response = await apiClient.get('/api/tasks')
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks`)
 }
 
 export async function getTask(id: number): Promise<ScheduledTask> {
-  const response = await apiClient.get(`/api/tasks/${id}`)
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks/${id}`)
 }
 
 export async function createTask(input: CreateTaskInput): Promise<ScheduledTask> {
-  const response = await apiClient.post('/api/tasks', input)
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }
 
 export async function updateTask(id: number, input: UpdateTaskInput): Promise<ScheduledTask> {
-  const response = await apiClient.put(`/api/tasks/${id}`, input)
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
 }
 
 export async function deleteTask(id: number): Promise<void> {
-  await apiClient.delete(`/api/tasks/${id}`)
+  await fetchWrapper(`${API_BASE_URL}/api/tasks/${id}`, {
+    method: 'DELETE',
+  })
 }
 
 export async function toggleTask(id: number): Promise<ScheduledTask> {
-  const response = await apiClient.post(`/api/tasks/${id}/toggle`)
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks/${id}/toggle`, {
+    method: 'POST',
+  })
 }
 
 export async function runTaskNow(id: number): Promise<TaskRunResult> {
-  const response = await apiClient.post(`/api/tasks/${id}/run`)
-  return response.data
+  return fetchWrapper(`${API_BASE_URL}/api/tasks/${id}/run`, {
+    method: 'POST',
+  })
 }
 
 export function parseCommandConfig(configString: string): CommandConfig {

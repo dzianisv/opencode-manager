@@ -1,5 +1,5 @@
-import axios from 'axios'
 import { API_BASE_URL } from '@/config'
+import { fetchWrapper, fetchWrapperBlob } from './fetchWrapper'
 
 export interface TTSModelsResponse {
   models: string[]
@@ -25,36 +25,30 @@ export interface TTSStatusResponse {
 
 export const ttsApi = {
   getModels: async (userId = 'default', forceRefresh = false): Promise<TTSModelsResponse> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/tts/models`, {
+    return fetchWrapper(`${API_BASE_URL}/api/tts/models`, {
       params: { userId, ...(forceRefresh && { refresh: 'true' }) },
     })
-    return data
   },
 
   getVoices: async (userId = 'default', forceRefresh = false): Promise<TTSVoicesResponse> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/tts/voices`, {
+    return fetchWrapper(`${API_BASE_URL}/api/tts/voices`, {
       params: { userId, ...(forceRefresh && { refresh: 'true' }) },
     })
-    return data
   },
 
   getStatus: async (userId = 'default'): Promise<TTSStatusResponse> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/tts/status`, {
+    return fetchWrapper(`${API_BASE_URL}/api/tts/status`, {
       params: { userId },
     })
-    return data
   },
 
   synthesize: async (text: string, userId = 'default', signal?: AbortSignal): Promise<Blob> => {
-    const { data } = await axios.post(
-      `${API_BASE_URL}/api/tts/synthesize`,
-      { text },
-      {
-        params: { userId },
-        responseType: 'blob',
-        signal,
-      }
-    )
-    return data
+    return fetchWrapperBlob(`${API_BASE_URL}/api/tts/synthesize`, {
+      method: 'POST',
+      params: { userId },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal,
+    })
   },
 }

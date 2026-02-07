@@ -1,0 +1,27 @@
+import { Bell, HelpCircle } from 'lucide-react'
+import { PendingActionBadge } from '@/components/ui/pending-action-badge'
+import { usePermissions, useQuestions } from '@/contexts/EventContext'
+
+export function PendingActionsGroup() {
+  const { pendingCount: permissionCount, setShowDialog } = usePermissions()
+  const { pendingCount: questionCount, navigateToCurrent } = useQuestions()
+
+  return (
+    <>
+      <PendingActionBadge
+        count={permissionCount}
+        icon={Bell}
+        color="orange"
+        onClick={() => setShowDialog(true)}
+        label="permission"
+      />
+      <PendingActionBadge
+        count={questionCount}
+        icon={HelpCircle}
+        color="blue"
+        onClick={navigateToCurrent}
+        label="question"
+      />
+    </>
+  )
+}

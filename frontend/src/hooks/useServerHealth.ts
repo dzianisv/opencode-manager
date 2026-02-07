@@ -1,8 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { settingsApi } from '@/api/settings'
-import { useMutation } from '@tanstack/react-query'
-import { useQueryClient } from '@tanstack/react-query'
+import { invalidateConfigCaches, invalidateSettingsCaches } from '@/lib/queryInvalidation'
 
 interface HealthResponse {
   status: 'healthy' | 'degraded' | 'unhealthy'
@@ -31,19 +30,18 @@ export function useServerHealth(enabled = true) {
 
   const restartMutation = useMutation({
     mutationFn: async () => {
-      return await settingsApi.restartOpenCodeServer()
+      return await settingsApi.reloadOpenCodeConfig()
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['health'] })
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
-      toast.success('Server restarted successfully')
+      invalidateConfigCaches(queryClient)
+      toast.success('Server configuration reloaded successfully')
     },
     onError: (error: unknown) => {
       const errorMessage = error && typeof error === 'object' && 'response' in error
         ? ((error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.details
            || (error as { response?: { data?: { details?: string; error?: string } } }).response?.data?.error
-           || 'Failed to restart server')
-        : 'Failed to restart server'
+           || 'Failed to reload configuration')
+        : 'Failed to reload configuration'
       toast.error(errorMessage)
     },
   })
@@ -53,9 +51,7 @@ export function useServerHealth(enabled = true) {
       return await settingsApi.rollbackOpenCodeConfig()
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['health'] })
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      queryClient.invalidateQueries({ queryKey: ['opencode', 'agents'] })
+      invalidateSettingsCaches(queryClient)
       toast.success(data.message)
     },
     onError: () => {
@@ -81,7 +77,7 @@ export function useServerHealth(enabled = true) {
       toast.error(health.error || 'OpenCode server is currently unhealthy', {
         duration: Infinity,
         action: {
-          label: 'Restart',
+          label: 'Reload',
           onClick: () => restartMutation.mutate(),
         },
       })

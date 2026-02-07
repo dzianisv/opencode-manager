@@ -1,252 +1,288 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useNotifications } from '@/hooks/useNotifications'
-import { useSettings } from '@/hooks/useSettings'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
-import { Bell, BellOff, BellRing, Send, Loader2 } from 'lucide-react'
-import { DEFAULT_NOTIFICATION_CONFIG } from '@opencode-manager/shared'
-import { 
-  subscribePushNotifications, 
-  unsubscribePushNotifications, 
-  isPushSubscribed,
-  testPushNotification,
-} from '@/api/push'
-import { showToast } from '@/lib/toast'
+import { useNotifications } from "@/hooks/useNotifications";
+import { Loader2, BellOff, Trash2, Send, Monitor } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { showToast } from "@/lib/toast";
+import { formatDistanceToNow } from "date-fns";
 
 export function NotificationSettings() {
-  const { preferences, updateSettings } = useSettings()
-  const { isSupported, permission, requestPermission, testNotification } = useNotifications()
-  const [pushSubscribed, setPushSubscribed] = useState(false)
-  const [isSubscribing, setIsSubscribing] = useState(false)
-  const [isTesting, setIsTesting] = useState(false)
-  
-  const notificationConfig = preferences?.notifications ?? DEFAULT_NOTIFICATION_CONFIG
+  const {
+    isSupported,
+    isAvailable,
+    permission,
+    isEnabled,
+    preferences,
+    subscriptions,
+    isLoadingSubscriptions,
+    enable,
+    disable,
+    updateEventPreference,
+    removeDevice,
+    sendTest,
+    isSubscribing,
+    isTesting,
+  } = useNotifications();
 
-  useEffect(() => {
-    isPushSubscribed().then(setPushSubscribed)
-  }, [])
+  if (!isSupported) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">
+          Push Notifications
+        </h2>
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <BellOff className="h-5 w-5" />
+          <p className="text-sm">
+            Push notifications are not supported in this browser.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-  const handleChange = (updates: Partial<typeof notificationConfig>) => {
-    updateSettings({
-      notifications: {
-        ...notificationConfig,
-        ...updates,
+  if (!isAvailable) {
+    return (
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">
+          Push Notifications
+        </h2>
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <BellOff className="h-5 w-5" />
+          <p className="text-sm">
+            Push notifications are not configured on the server. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY environment
+            variables to enable.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (permission === "denied") {
+    return (
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">
+          Push Notifications
+        </h2>
+        <div className="flex items-center gap-3 text-yellow-500">
+          <BellOff className="h-5 w-5" />
+          <p className="text-sm">
+            Notification permission was denied. Please enable notifications in
+            your browser settings for this site.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const handleEnable = async () => {
+    try {
+      await enable();
+      showToast.success("Push notifications enabled");
+    } catch {
+      showToast.error("Failed to enable push notifications");
+    }
+  };
+
+  const handleDisable = async () => {
+    try {
+      await disable();
+      showToast.success("Push notifications disabled");
+    } catch {
+      showToast.error("Failed to disable push notifications");
+    }
+  };
+
+  const handleTest = () => {
+    sendTest(undefined, {
+      onSuccess: (data) => {
+        showToast.success(
+          `Test notification sent to ${data.devicesNotified} device(s)`
+        );
       },
-    })
-  }
-
-  const handlePushSubscribe = useCallback(async () => {
-    setIsSubscribing(true)
-    try {
-      if (pushSubscribed) {
-        await unsubscribePushNotifications()
-        setPushSubscribed(false)
-        showToast.success('Push notifications disabled')
-      } else {
-        const subscription = await subscribePushNotifications()
-        if (subscription) {
-          setPushSubscribed(true)
-          showToast.success('Push notifications enabled')
-        } else {
-          showToast.error('Failed to enable push notifications')
-        }
-      }
-    } catch (error) {
-      console.error('Push subscription error:', error)
-      showToast.error('Failed to toggle push notifications')
-    } finally {
-      setIsSubscribing(false)
-    }
-  }, [pushSubscribed])
-
-  const handleTestPush = useCallback(async () => {
-    setIsTesting(true)
-    try {
-      const result = await testPushNotification()
-      if (result.success) {
-        showToast.success('Test notification sent')
-      } else {
-        showToast.error(result.message || 'Failed to send test notification')
-      }
-    } catch (error) {
-      console.error('Test push error:', error)
-      showToast.error('Failed to send test notification')
-    } finally {
-      setIsTesting(false)
-    }
-  }, [])
-
-  const getPermissionStatus = () => {
-    if (!isSupported) return { icon: BellOff, text: 'Not supported', color: 'text-muted-foreground' }
-    if (permission === 'granted') return { icon: Bell, text: 'Allowed', color: 'text-green-500' }
-    if (permission === 'denied') return { icon: BellOff, text: 'Blocked', color: 'text-red-500' }
-    return { icon: BellRing, text: 'Not requested', color: 'text-yellow-500' }
-  }
-
-  const status = getPermissionStatus()
-  const StatusIcon = status.icon
-
-  const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window
+      onError: () => {
+        showToast.error("Failed to send test notification");
+      },
+    });
+  };
 
   return (
-    <div className="bg-card border border-border rounded-lg p-6">
-      <h2 className="text-lg font-semibold text-foreground mb-6">Notifications</h2>
-      
-      <div className="space-y-6">
-        <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-          <div className="space-y-0.5">
-            <Label className="text-base">Browser Permission</Label>
-            <p className="text-sm text-muted-foreground flex items-center gap-2">
-              <StatusIcon className={`h-4 w-4 ${status.color}`} />
-              <span className={status.color}>{status.text}</span>
-            </p>
-          </div>
-          {isSupported && permission !== 'granted' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={requestPermission}
-              disabled={permission === 'denied'}
-            >
-              {permission === 'denied' ? 'Blocked in browser' : 'Enable notifications'}
-            </Button>
-          )}
-        </div>
+    <div className="space-y-6">
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-6">
+          Push Notifications
+        </h2>
 
-        {permission === 'denied' && (
-          <p className="text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
-            Notifications are blocked. To enable them, click the lock icon in your browser's address bar and allow notifications for this site.
-          </p>
-        )}
-
-        {isPushSupported && permission === 'granted' && (
-          <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4 bg-primary/5">
+        <div className="space-y-6">
+          <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
             <div className="space-y-0.5">
-              <Label className="text-base">Push Notifications (Background)</Label>
+              <Label htmlFor="notificationsEnabled" className="text-base">
+                Enable push notifications
+              </Label>
               <p className="text-sm text-muted-foreground">
-                Receive notifications even when the browser tab is closed
+                Receive notifications when the app is in the background
               </p>
-              {pushSubscribed && (
-                <p className="text-xs text-green-500 mt-1">
-                  Subscribed to push notifications
-                </p>
-              )}
             </div>
-            <div className="flex gap-2">
-              {pushSubscribed && (
+            <Switch
+              id="notificationsEnabled"
+              checked={isEnabled}
+              disabled={isSubscribing}
+              onCheckedChange={(checked) =>
+                checked ? handleEnable() : handleDisable()
+              }
+            />
+          </div>
+
+          {isEnabled && (
+            <>
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-foreground">
+                  Notification Events
+                </h3>
+
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+                  <div className="space-y-0.5">
+                    <Label
+                      htmlFor="notifPermission"
+                      className="text-base"
+                    >
+                      Permission requests
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      When the agent needs approval to proceed
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifPermission"
+                    checked={preferences.events.permissionAsked}
+                    onCheckedChange={(checked) =>
+                      updateEventPreference("permissionAsked", checked)
+                    }
+                  />
+                </div>
+
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="notifQuestion" className="text-base">
+                      Agent questions
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      When the agent has a question for you
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifQuestion"
+                    checked={preferences.events.questionAsked}
+                    onCheckedChange={(checked) =>
+                      updateEventPreference("questionAsked", checked)
+                    }
+                  />
+                </div>
+
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="notifError" className="text-base">
+                      Session errors
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      When a session encounters an error
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifError"
+                    checked={preferences.events.sessionError}
+                    onCheckedChange={(checked) =>
+                      updateEventPreference("sessionError", checked)
+                    }
+                  />
+                </div>
+
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="notifIdle" className="text-base">
+                      Session completion
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      When a session finishes processing
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifIdle"
+                    checked={preferences.events.sessionIdle}
+                    onCheckedChange={(checked) =>
+                      updateEventPreference("sessionIdle", checked)
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleTestPush}
-                  disabled={isTesting}
+                  onClick={handleTest}
+                  disabled={isTesting || subscriptions.length === 0}
                 >
                   {isTesting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : (
-                    <>
-                      <Send className="h-4 w-4 mr-1" />
-                      Test
-                    </>
+                    <Send className="h-4 w-4 mr-2" />
                   )}
+                  Send test notification
                 </Button>
-              )}
-              <Button
-                variant={pushSubscribed ? 'destructive' : 'default'}
-                size="sm"
-                onClick={handlePushSubscribe}
-                disabled={isSubscribing}
-              >
-                {isSubscribing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : pushSubscribed ? (
-                  'Disable'
-                ) : (
-                  'Enable Push'
-                )}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-          <div className="space-y-0.5">
-            <Label htmlFor="notificationsEnabled" className="text-base">Enable Notifications</Label>
-            <p className="text-sm text-muted-foreground">
-              Receive notifications when you're away from the tab
-            </p>
-          </div>
-          <Switch
-            id="notificationsEnabled"
-            checked={notificationConfig.enabled}
-            onCheckedChange={(checked) => handleChange({ enabled: checked })}
-            disabled={!isSupported || permission !== 'granted'}
-          />
+              </div>
+            </>
+          )}
         </div>
-
-        {notificationConfig.enabled && permission === 'granted' && (
-          <>
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="sessionComplete" className="text-base">Session Complete</Label>
-                <p className="text-sm text-muted-foreground">
-                  Notify when a session finishes processing
-                </p>
-              </div>
-              <Switch
-                id="sessionComplete"
-                checked={notificationConfig.sessionComplete}
-                onCheckedChange={(checked) => handleChange({ sessionComplete: checked })}
-              />
-            </div>
-
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="permissionRequests" className="text-base">Permission Requests</Label>
-                <p className="text-sm text-muted-foreground">
-                  Notify when a tool needs your approval
-                </p>
-              </div>
-              <Switch
-                id="permissionRequests"
-                checked={notificationConfig.permissionRequests}
-                onCheckedChange={(checked) => handleChange({ permissionRequests: checked })}
-              />
-            </div>
-
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="notificationSound" className="text-base">Sound</Label>
-                <p className="text-sm text-muted-foreground">
-                  Play a sound when notifications arrive
-                </p>
-              </div>
-              <Switch
-                id="notificationSound"
-                checked={notificationConfig.sound}
-                onCheckedChange={(checked) => handleChange({ sound: checked })}
-              />
-            </div>
-
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
-              <div className="space-y-0.5">
-                <Label className="text-base">Test Notification</Label>
-                <p className="text-sm text-muted-foreground">
-                  Send a test notification to verify everything works
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={testNotification}
-              >
-                <Bell className="h-4 w-4 mr-1" />
-                Test
-              </Button>
-            </div>
-          </>
-        )}
       </div>
+
+      {isEnabled && (
+        <div className="bg-card border border-border rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Registered Devices
+          </h2>
+
+          {isLoadingSubscriptions ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : subscriptions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No devices registered for push notifications.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {subscriptions.map((sub) => (
+                <div
+                  key={sub.id}
+                  className="flex items-center justify-between rounded-lg border border-border p-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Monitor className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {sub.deviceName ?? (sub.endpoint.length > 60 ? sub.endpoint.slice(0, 60) + "..." : sub.endpoint)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {sub.lastUsedAt
+                          ? `Last used ${formatDistanceToNow(sub.lastUsedAt, { addSuffix: true })}`
+                          : `Added ${formatDistanceToNow(sub.createdAt, { addSuffix: true })}`}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-destructive flex-shrink-0"
+                    onClick={() => removeDevice(sub.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
-  )
+  );
 }

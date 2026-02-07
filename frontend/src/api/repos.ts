@@ -12,7 +12,6 @@ export async function createRepo(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ repoUrl, localPath, branch, openCodeConfigName, useWorktree }),
-    credentials: 'include', // Ensure credentials (cookies) are sent
   })
 
   if (!response.ok) {
@@ -24,9 +23,7 @@ export async function createRepo(
 }
 
 export async function listRepos(): Promise<Repo[]> {
-  const response = await fetch(`${API_BASE_URL}/api/repos`, {
-    credentials: 'include', // Ensure credentials (cookies) are sent
-  })
+  const response = await fetch(`${API_BASE_URL}/api/repos`)
 
   if (!response.ok) {
     throw new Error('Failed to list repos')
@@ -36,9 +33,7 @@ export async function listRepos(): Promise<Repo[]> {
 }
 
 export async function getRepo(id: number): Promise<Repo> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${id}`, {
-    credentials: 'include', // Ensure credentials (cookies) are sent
-  })
+  const response = await fetch(`${API_BASE_URL}/api/repos/${id}`)
 
   if (!response.ok) {
     throw new Error('Failed to get repo')
@@ -100,9 +95,7 @@ export async function pullRepo(id: number): Promise<Repo> {
 }
 
 export async function getServerLogs(id: number): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/server/logs`, {
-    credentials: 'include', // Ensure credentials (cookies) are sent
-  })
+  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/server/logs`)
 
   if (!response.ok) {
     throw new Error('Failed to get server logs')
@@ -155,10 +148,18 @@ export async function switchBranch(id: number, branch: string): Promise<Repo> {
   return response.json()
 }
 
-export async function listBranches(id: number): Promise<{ local: string[], all: string[], current: string | null }> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/branches`, {
-    credentials: 'include', // Ensure credentials (cookies) are sent
-  })
+interface GitBranch {
+  name: string
+  type: 'local' | 'remote'
+  current: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  isWorktree?: boolean
+}
+
+export async function listBranches(id: number): Promise<{ branches: GitBranch[], status: { ahead: number, behind: number } }> {
+  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/git/branches`)
 
   if (!response.ok) {
     throw new Error('Failed to list branches')
@@ -172,7 +173,6 @@ export async function createBranch(id: number, branch: string): Promise<Repo> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ branch }),
-    credentials: 'include', // Ensure credentials (cookies) are sent
   })
 
   if (!response.ok) {
@@ -186,10 +186,18 @@ export async function createBranch(id: number, branch: string): Promise<Repo> {
   return response.json()
 }
 
-export async function downloadRepo(id: number, repoName: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/download`, {
-    credentials: 'include', // Ensure credentials (cookies) are sent
-  })
+export interface DownloadOptions {
+  includeGit?: boolean
+  includePaths?: string[]
+}
+
+export async function downloadRepo(id: number, repoName: string, options?: DownloadOptions): Promise<void> {
+  const params = new URLSearchParams()
+  if (options?.includeGit) params.append('includeGit', 'true')
+  if (options?.includePaths?.length) params.append('includePaths', options.includePaths.join(','))
+
+  const url = `${API_BASE_URL}/api/repos/${id}/download${params.toString() ? '?' + params.toString() : ''}`
+  const response = await fetch(url)
 
   if (!response.ok) {
     const error = await response.json()
@@ -197,48 +205,36 @@ export async function downloadRepo(id: number, repoName: string): Promise<void> 
   }
 
   const blob = await response.blob()
-  const url = window.URL.createObjectURL(blob)
+  const urlObj = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url
+  a.href = urlObj
   a.download = `${repoName}.zip`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  window.URL.revokeObjectURL(url)
+  window.URL.revokeObjectURL(urlObj)
 }
 
-export interface SessionSummariesResponse {
-  summaries: Record<string, string | null>
-  sessionCount: number
-}
-
-export async function getSessionSummaries(repoId: number): Promise<SessionSummariesResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${repoId}/sessions/summaries`, {
-    credentials: 'include',
+export async function updateRepoOrder(order: number[]): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/repos/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order }),
   })
 
   if (!response.ok) {
-    throw new Error('Failed to get session summaries')
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to update repo order')
   }
-
-  return response.json()
 }
 
-export interface SummarizeSessionResponse {
-  sessionId: string
-  summary: string
-  cached: boolean
-}
-
-export async function summarizeSession(repoId: number, sessionId: string): Promise<SummarizeSessionResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/repos/${repoId}/sessions/${sessionId}/summarize`, {
+export async function resetRepoPermissions(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/repos/${id}/reset-permissions`, {
     method: 'POST',
-    credentials: 'include',
   })
 
   if (!response.ok) {
-    throw new Error('Failed to summarize session')
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to reset permissions')
   }
-
-  return response.json()
 }

@@ -13,10 +13,14 @@ interface VirtualizedTextViewProps {
   className?: string
   initialLineNumber?: number
   lineWrap?: boolean
+  onContentLoaded?: (content: string) => void
 }
 
 export interface VirtualizedTextViewHandle {
   save: () => Promise<void>
+  loadAll: () => Promise<void>
+  getFullContent: () => string | null
+  isFullyLoaded: () => boolean
 }
 
 const LINE_HEIGHT = 20
@@ -107,7 +111,7 @@ const VirtualizedLine = memo(function VirtualizedLine({
           type="text"
           value={content}
           onChange={(e) => onLineChange(lineNum, e.target.value)}
-          className={`flex-1 bg-transparent outline-none pl-2 ${
+          className={`flex-1 bg-transparent outline-none pl-2 text-[16px] md:text-sm ${
             isEdited ? 'bg-yellow-500/10' : ''
           } ${
             lineWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'
@@ -138,29 +142,22 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
   className = '',
   initialLineNumber,
   lineWrap = false,
+  onContentLoaded,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const scrollTopRef = useRef(0)
-  const [renderTrigger, setRenderTrigger] = useState(0)
+  const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(600)
   const [containerWidth, setContainerWidth] = useState(0)
   const [highlightedLine, setHighlightedLine] = useState<number | undefined>(initialLineNumber)
-  const loadedBufferRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const heightCacheRef = useRef<Map<number, number>>(new Map())
   const lineOffsetsRef = useRef<{ offsets: Map<number, { height: number; top: number }>; totalHeight: number } | null>(null)
   const lastContainerWidthRef = useRef(0)
   const lastTotalLinesRef = useRef(0)
-  const lastVisibleRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
-  const currentVisibleRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 200 })
   const scrollRafRef = useRef<number | null>(null)
   const isMobile = useMobile()
   
-  void renderTrigger
-  
-  const chunkSize = isMobile && lineWrap ? 800 : 400
+  const chunkSize = isMobile && lineWrap ? 1500 : 1000
   const overscan = isMobile && lineWrap ? 200 : 100
-  const bufferMultiplier = 4
-  const preRenderMultiplier = 3
   
   const {
     lines,
@@ -174,6 +171,9 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
     saveEdits,
     isSaving,
     hasUnsavedChanges,
+    loadAll,
+    fullContent,
+    isFullyLoaded,
   } = useVirtualizedContent({
     filePath,
     chunkSize,
@@ -187,7 +187,12 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
   }, [hasUnsavedChanges, onSaveStateChange])
   
   useEffect(() => {
-    loadedBufferRef.current = { start: 0, end: 0 }
+    if (isFullyLoaded && fullContent && onContentLoaded) {
+      onContentLoaded(fullContent)
+    }
+  }, [isFullyLoaded, fullContent, onContentLoaded])
+  
+  useEffect(() => {
     heightCacheRef.current.clear()
     lineOffsetsRef.current = null
   }, [filePath])
@@ -261,14 +266,15 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
     return result
   }, [lineWrap, containerWidth, totalLines, lines, editedLines, lineHeight])
   
-  const totalHeight = lineOffsets?.totalHeight ?? totalLines * lineHeight
+  const displayLineCount = totalLines > 0 ? totalLines : chunkSize
+  const totalHeight = lineOffsets?.totalHeight ?? displayLineCount * lineHeight
   
   const lineOffsetsForCalcRef = useRef(lineOffsets)
   lineOffsetsForCalcRef.current = lineOffsets
   
   const calculateVisibleRange = useCallback((scrollTop: number) => {
     const currentLineOffsets = lineOffsetsForCalcRef.current
-    if (currentLineOffsets) {
+    if (currentLineOffsets && totalLines > 0) {
       const searchTop = scrollTop - overscan * lineHeight
       const searchBottom = scrollTop + viewportHeight + overscan * lineHeight
       
@@ -313,66 +319,26 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
   }, [viewportHeight, lineHeight, getVisibleRange, totalLines, overscan])
   
   const visibleRange = useMemo(() => {
-    const range = calculateVisibleRange(scrollTopRef.current)
-    currentVisibleRangeRef.current = range
-    return range
-  }, [calculateVisibleRange])
+    return calculateVisibleRange(scrollTop)
+  }, [calculateVisibleRange, scrollTop])
   
   useEffect(() => {
     const { start, end } = visibleRange
-    const buffer = loadedBufferRef.current
-    const visibleCount = end - start
-    const desiredBuffer = visibleCount * bufferMultiplier
-    
-    const needsLoadBefore = start < buffer.start + visibleCount
-    const needsLoadAfter = end > buffer.end - visibleCount
-    
-    if (needsLoadBefore || needsLoadAfter || buffer.start === 0 && buffer.end === 0) {
-      const newStart = Math.max(0, start - desiredBuffer)
-      const newEnd = Math.min(totalLines, end + desiredBuffer)
-      
-      loadedBufferRef.current = { start: newStart, end: newEnd }
-      loadRange(newStart, newEnd)
-    }
-  }, [visibleRange, loadRange, totalLines, bufferMultiplier])
-
-  const lastRenderTimeRef = useRef(0)
-  const pendingRenderRef = useRef(false)
-  const RENDER_THROTTLE_MS = 32
+    if (start >= end) return
+    loadRange(start, end)
+  }, [visibleRange, loadRange])
   
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const newScrollTop = e.currentTarget.scrollTop
-    scrollTopRef.current = newScrollTop
     
     if (scrollRafRef.current) {
       cancelAnimationFrame(scrollRafRef.current)
     }
     
     scrollRafRef.current = requestAnimationFrame(() => {
-      const newRange = calculateVisibleRange(newScrollTop)
-      const currentRange = currentVisibleRangeRef.current
-      
-      const rangeChanged = newRange.start !== currentRange.start || newRange.end !== currentRange.end
-      if (!rangeChanged) return
-      
-      currentVisibleRangeRef.current = newRange
-      
-      const now = performance.now()
-      const timeSinceLastRender = now - lastRenderTimeRef.current
-      
-      if (timeSinceLastRender >= RENDER_THROTTLE_MS) {
-        lastRenderTimeRef.current = now
-        setRenderTrigger(t => t + 1)
-      } else if (!pendingRenderRef.current) {
-        pendingRenderRef.current = true
-        setTimeout(() => {
-          pendingRenderRef.current = false
-          lastRenderTimeRef.current = performance.now()
-          setRenderTrigger(t => t + 1)
-        }, RENDER_THROTTLE_MS - timeSinceLastRender)
-      }
+      setScrollTop(newScrollTop)
     })
-  }, [calculateVisibleRange])
+  }, [])
   
   const handleLineChange = useCallback((lineNum: number, value: string) => {
     setLineContent(lineNum, value)
@@ -382,14 +348,17 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
     try {
       await saveEdits()
       onSave?.()
-    } catch (err) {
-      console.error('Failed to save:', err)
+    } catch {
+      void 0
     }
   }, [saveEdits, onSave])
   
   useImperativeHandle(ref, () => ({
     save: handleSave,
-  }), [handleSave])
+    loadAll,
+    getFullContent: () => fullContent,
+    isFullyLoaded: () => isFullyLoaded,
+  }), [handleSave, loadAll, fullContent, isFullyLoaded])
   
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -416,25 +385,9 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
   
   const visibleLines = useMemo(() => {
     const result: Array<{ lineNum: number; content: string; isEdited: boolean; height: number; top: number; isLoaded: boolean }> = []
+    const upperBound = totalLines > 0 ? totalLines : visibleRange.end
     
-    const lastRange = lastVisibleRangeRef.current
-    const visibleCount = visibleRange.end - visibleRange.start
-    const maxExpansion = visibleCount * preRenderMultiplier
-    
-    const expandedStart = Math.max(
-      0,
-      visibleRange.start - maxExpansion,
-      Math.min(visibleRange.start, lastRange.start)
-    )
-    const expandedEnd = Math.min(
-      totalLines,
-      visibleRange.end + maxExpansion,
-      Math.max(visibleRange.end, lastRange.end)
-    )
-    
-    lastVisibleRangeRef.current = visibleRange
-    
-    for (let i = expandedStart; i < expandedEnd; i++) {
+    for (let i = visibleRange.start; i < Math.min(visibleRange.end, upperBound); i++) {
       const editedContent = editedLines.get(i)
       const lineData = lines.get(i)
       const isLoaded = lineData?.loaded === true || editedContent !== undefined
@@ -455,7 +408,7 @@ export const VirtualizedTextView = forwardRef<VirtualizedTextViewHandle, Virtual
     }
     
     return result
-  }, [visibleRange, lines, editedLines, lineOffsets, lineHeight, totalLines, preRenderMultiplier])
+  }, [visibleRange, lines, editedLines, lineOffsets, lineHeight, totalLines])
   
   if (error) {
     return (

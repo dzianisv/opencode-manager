@@ -3,12 +3,12 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { basicAuth } from 'hono/basic-auth'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { Server as SocketIOServer } from 'socket.io'
 import os from 'os'
 import path from 'path'
 import { initializeDatabase } from './db/schema'
 import { createRepoRoutes } from './routes/repos'
-import { createSessionRoutes } from './routes/sessions'
+import { createIPCServer, type IPCServer } from './ipc/ipcServer'
+import { GitAuthService } from './services/git-auth'
 import { createSettingsRoutes } from './routes/settings'
 import { createHealthRoutes } from './routes/health'
 import { createTTSRoutes, cleanupExpiredCache } from './routes/tts'
@@ -16,26 +16,20 @@ import { createSTTRoutes } from './routes/stt'
 import { createFileRoutes } from './routes/files'
 import { createProvidersRoutes } from './routes/providers'
 import { createOAuthRoutes } from './routes/oauth'
-import { createTerminalRoutes, registerTerminalSocketIO } from './routes/terminal'
-import { createPushRoutes } from './routes/push'
-import { createTaskRoutes } from './routes/tasks'
-import { createTelegramRoutes } from './routes/telegram'
-import { createTunnelRoutes } from './routes/tunnel'
-import { terminalService } from './services/terminal'
-import { schedulerService } from './services/scheduler'
-import { telegramService } from './services/telegram'
-import { whisperServerManager } from './services/whisper'
+import { createTitleRoutes } from './routes/title'
+import { createSSERoutes } from './routes/sse'
+import { createNotificationRoutes } from './routes/notifications'
+import { createAuthRoutes, createAuthInfoRoutes, syncAdminFromEnv } from './routes/auth'
+import { createAuth } from './auth'
+import { createAuthMiddleware } from './auth/middleware'
+import { sseAggregator } from './services/sse-aggregator'
 import { ensureDirectoryExists, writeFileContent, fileExists, readFileContent } from './services/file-operations'
 import { SettingsService } from './services/settings'
 import { opencodeServerManager } from './services/opencode-single-server'
 import { cleanupOrphanedDirectories, cleanupStaleRepoEntries, registerExternalDirectory, syncProjectsFromOpenCode } from './services/repo'
 import { proxyRequest } from './services/proxy'
+import { NotificationService } from './services/notification'
 import { logger } from './utils/logger'
-import { chatterboxServerManager } from './services/chatterbox'
-import { coquiServerManager } from './services/coqui'
-import { startGlobalSSEListener, stopGlobalSSEListener } from './services/global-sse'
-import { autoPruneOnStartup } from './services/session-prune'
-import { startLogMaintenance } from './utils/log-maintenance'
 import { 
   getWorkspacePath, 
   getReposPath, 
@@ -46,6 +40,7 @@ import {
   ENV
 } from '@opencode-manager/shared/config/env'
 import { OpenCodeConfigSchema } from '@opencode-manager/shared/schemas'
+import stripJsonComments from 'strip-json-comments'
 
 const { PORT, HOST } = ENV.SERVER
 const DB_PATH = getDatabasePath()
@@ -53,10 +48,15 @@ const DB_PATH = getDatabasePath()
 const app = new Hono()
 
 app.use('/*', cors({
-  origin: (origin) => origin || '', // Reflect the origin to support credentials
-  credentials: true,
+  origin: (origin) => {
+    const trustedOrigins = ENV.AUTH.TRUSTED_ORIGINS.split(',').map(o => o.trim())
+    if (!origin) return trustedOrigins[0]
+    if (trustedOrigins.includes(origin)) return origin
+    return trustedOrigins[0]
+  },
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'x-forwarded-proto', 'x-forwarded-host'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 }))
 
 function getBasicAuthCredentials(): { username: string; password: string } | null {
@@ -91,6 +91,112 @@ if (authCredentials) {
 }
 
 const db = initializeDatabase(DB_PATH)
+const auth = createAuth(db)
+const requireAuth = createAuthMiddleware(auth)
+
+import { DEFAULT_AGENTS_MD } from './constants'
+
+let ipcServer: IPCServer | undefined
+const gitAuthService = new GitAuthService()
+
+async function ensureDefaultConfigExists(): Promise<void> {
+  const settingsService = new SettingsService(db)
+  const workspaceConfigPath = getOpenCodeConfigFilePath()
+  
+  if (await fileExists(workspaceConfigPath)) {
+    logger.info(`Found workspace config at ${workspaceConfigPath}, syncing to database...`)
+    try {
+      const rawContent = await readFileContent(workspaceConfigPath)
+      const parsed = JSON.parse(stripJsonComments(rawContent))
+      const validation = OpenCodeConfigSchema.safeParse(parsed)
+      
+      if (!validation.success) {
+        logger.warn('Workspace config has invalid structure', validation.error)
+      } else {
+        const existingDefault = settingsService.getOpenCodeConfigByName('default')
+        if (existingDefault) {
+          settingsService.updateOpenCodeConfig('default', {
+            content: rawContent,
+            isDefault: true,
+          })
+          logger.info('Updated database config from workspace file')
+        } else {
+          settingsService.createOpenCodeConfig({
+            name: 'default',
+            content: rawContent,
+            isDefault: true,
+          })
+          logger.info('Created database config from workspace file')
+        }
+        return
+      }
+    } catch (error) {
+      logger.warn('Failed to read workspace config', error)
+    }
+  }
+  
+  const homeConfigPath = path.join(os.homedir(), '.config/opencode/opencode.json')
+  if (await fileExists(homeConfigPath)) {
+    logger.info(`Found home config at ${homeConfigPath}, importing...`)
+    try {
+      const rawContent = await readFileContent(homeConfigPath)
+      const parsed = JSON.parse(stripJsonComments(rawContent))
+      const validation = OpenCodeConfigSchema.safeParse(parsed)
+      
+      if (validation.success) {
+        const existingDefault = settingsService.getOpenCodeConfigByName('default')
+        if (existingDefault) {
+          settingsService.updateOpenCodeConfig('default', {
+            content: rawContent,
+            isDefault: true,
+          })
+        } else {
+          settingsService.createOpenCodeConfig({
+            name: 'default',
+            content: rawContent,
+            isDefault: true,
+          })
+        }
+        
+        await writeFileContent(workspaceConfigPath, rawContent)
+        logger.info('Imported home config to workspace')
+        return
+      }
+    } catch (error) {
+      logger.warn('Failed to import home config', error)
+    }
+  }
+  
+  const existingDbConfigs = settingsService.getOpenCodeConfigs()
+  if (existingDbConfigs.configs.length > 0) {
+    const defaultConfig = settingsService.getDefaultOpenCodeConfig()
+    if (defaultConfig) {
+      await writeFileContent(workspaceConfigPath, defaultConfig.rawContent)
+      logger.info('Wrote existing database config to workspace file')
+    }
+    return
+  }
+  
+  logger.info('No existing config found, creating minimal seed config')
+  const seedConfig = JSON.stringify({ $schema: 'https://opencode.ai/config.json' }, null, 2)
+  settingsService.createOpenCodeConfig({
+    name: 'default',
+    content: seedConfig,
+    isDefault: true,
+  })
+  await writeFileContent(workspaceConfigPath, seedConfig)
+  logger.info('Created minimal seed config')
+}
+
+async function ensureDefaultAgentsMdExists(): Promise<void> {
+  const agentsMdPath = getAgentsMdPath()
+  const exists = await fileExists(agentsMdPath)
+  
+  if (!exists) {
+    await writeFileContent(agentsMdPath, DEFAULT_AGENTS_MD)
+    logger.info(`Created default AGENTS.md at: ${agentsMdPath}`)
+  }
+}
 
 export const DEFAULT_AGENTS_MD = `# OpenCode Manager - Global Agent Instructions
 
@@ -276,7 +382,12 @@ async function ensureDefaultAgentsMdExists(): Promise<void> {
 }
 
 try {
-  startLogMaintenance()
+  if (ENV.SERVER.NODE_ENV === 'production' && !ENV.AUTH.SECRET) {
+    logger.error('AUTH_SECRET is required in production mode')
+    logger.error('Generate one with: openssl rand -base64 32')
+    logger.error('Set it as environment variable: AUTH_SECRET=your-secret')
+    process.exit(1)
+  }
 
   await ensureDirectoryExists(getWorkspacePath())
   await ensureDirectoryExists(getReposPath())
@@ -286,129 +397,70 @@ try {
   await cleanupOrphanedDirectories(db)
   logger.info('Orphaned directory cleanup completed')
 
-  logger.info('Checking for stale repo entries...')
-  const staleCleanupResult = await cleanupStaleRepoEntries(db)
-  logger.info(`Stale repo cleanup result: ${staleCleanupResult.removed} removed`)
-
   await cleanupExpiredCache()
 
   await ensureDefaultConfigExists()
-  await syncDefaultConfigToDisk()
   await ensureDefaultAgentsMdExists()
 
   const settingsService = new SettingsService(db)
   settingsService.initializeLastKnownGoodConfig()
 
+  ipcServer = await createIPCServer(process.env.STORAGE_PATH || undefined)
+  gitAuthService.initialize(ipcServer, db)
+  logger.info(`Git IPC server running at ${ipcServer.ipcHandlePath}`)
+
   opencodeServerManager.setDatabase(db)
   await opencodeServerManager.start()
   logger.info(`OpenCode server running on port ${opencodeServerManager.getPort()}`)
 
-  if (opencodeServerManager.isClientMode()) {
-    const connectedDir = opencodeServerManager.getConnectedDirectory()
-    if (connectedDir) {
-      logger.info(`Client mode: registering connected directory as workspace: ${connectedDir}`)
-      await registerExternalDirectory(db, connectedDir)
-    }
-  }
-
-  try {
-    const syncResult = await syncProjectsFromOpenCode(db)
-    logger.info(`Synced ${syncResult.added} projects from OpenCode (${syncResult.skipped} skipped)`)
-  } catch (error) {
-    logger.warn('Failed to sync projects from OpenCode:', error)
-  }
-
-  try {
-    await autoPruneOnStartup(db)
-  } catch (error) {
-    logger.warn('Auto-prune on startup failed:', error)
-  }
-
-  try {
-    startGlobalSSEListener(db)
-    logger.info('Global SSE listener started for push notifications')
-  } catch (error) {
-    logger.warn('Failed to start global SSE listener:', error)
-  }
-
-  try {
-    await whisperServerManager.start()
-    logger.info(`Whisper STT server running on port ${whisperServerManager.getPort()}`)
-  } catch (error) {
-    logger.warn('Whisper server failed to start (STT will be unavailable):', error)
-  }
-
-  // Auto-start TTS server if enabled in settings
-  try {
-    const ttsSettings = settingsService.getSettings('default').preferences.tts
-    if (ttsSettings?.enabled) {
-      if (ttsSettings.provider === 'coqui') {
-        logger.info('TTS is enabled with Coqui provider, starting Coqui TTS server...')
-        await coquiServerManager.start()
-        logger.info(`Coqui TTS server running on port ${coquiServerManager.getPort()}`)
-      } else if (ttsSettings.provider === 'chatterbox') {
-        logger.info('TTS is enabled with Chatterbox provider, starting Chatterbox TTS server...')
-        await chatterboxServerManager.start()
-        logger.info(`Chatterbox TTS server running on port ${chatterboxServerManager.getPort()}`)
-      }
-    } else {
-      logger.info('TTS is disabled in settings, skipping TTS server auto-start')
-    }
-  } catch (error) {
-    logger.warn('TTS server failed to start:', error)
-  }
-
-  // Start log maintenance routine
-  startLogMaintenance()
-
-  try {
-    schedulerService.setDatabase(db)
-    await schedulerService.initialize()
-    logger.info('Scheduler service initialized')
-  } catch (error) {
-    logger.warn('Scheduler service failed to initialize:', error)
-  }
-
-  try {
-    telegramService.setDatabase(db)
-    telegramService.seedAllowlistFromEnv()
-    
-    const telegramToken = process.env.TELEGRAM_BOT_TOKEN
-    if (telegramToken) {
-      await telegramService.start(telegramToken)
-      logger.info('Telegram bot started automatically (TELEGRAM_BOT_TOKEN detected)')
-    }
-  } catch (error) {
-    logger.warn('Telegram bot failed to start:', error)
-  }
-
-  // Chatterbox auto-start disabled - use on-demand via API
-  // try {
-  //   await chatterboxServerManager.start()
-  //   logger.info(`Chatterbox TTS server running on port ${chatterboxServerManager.getPort()}`)
-  // } catch (error) {
-  //   logger.warn('Chatterbox server failed to start (TTS will be unavailable):', error)
-  // }
+  await syncAdminFromEnv(auth, db)
 } catch (error) {
   logger.error('Failed to initialize workspace:', error)
 }
 
-app.route('/api/repos', createRepoRoutes(db))
-app.route('/api/sessions', createSessionRoutes(db))
-app.route('/api/settings', createSettingsRoutes(db))
-app.route('/api/health', createHealthRoutes(db))
-app.route('/api/files', createFileRoutes(db))
-app.route('/api/providers', createProvidersRoutes())
-app.route('/api/oauth', createOAuthRoutes())
-app.route('/api/tts', createTTSRoutes(db))
-app.route('/api/stt', createSTTRoutes(db))
-app.route('/api/terminal', createTerminalRoutes())
-app.route('/api/push', createPushRoutes(db))
-app.route('/api/tasks', createTaskRoutes(db))
-app.route('/api/telegram', createTelegramRoutes(db))
-app.route('/api/tunnel', createTunnelRoutes())
+const notificationService = new NotificationService(db)
 
-app.all('/api/opencode/*', async (c) => {
+if (ENV.VAPID.PUBLIC_KEY && ENV.VAPID.PRIVATE_KEY) {
+  if (!ENV.VAPID.SUBJECT) {
+    logger.warn('VAPID_SUBJECT is not set — push notifications require a mailto: subject (e.g. mailto:you@example.com)')
+  } else if (!ENV.VAPID.SUBJECT.startsWith('mailto:')) {
+    logger.warn(`VAPID_SUBJECT="${ENV.VAPID.SUBJECT}" does not use mailto: format — iOS/Safari push notifications will fail`)
+  }
+
+  notificationService.configureVapid({
+    publicKey: ENV.VAPID.PUBLIC_KEY,
+    privateKey: ENV.VAPID.PRIVATE_KEY,
+    subject: ENV.VAPID.SUBJECT || 'mailto:push@localhost',
+  })
+  sseAggregator.onEvent((directory, event) => {
+    notificationService.handleSSEEvent(directory, event).catch((err) => {
+      logger.error('Push notification dispatch error:', err)
+    })
+  })
+}
+
+app.route('/api/auth', createAuthRoutes(auth))
+app.route('/api/auth-info', createAuthInfoRoutes(auth, db))
+
+app.route('/api/health', createHealthRoutes(db))
+
+const protectedApi = new Hono()
+protectedApi.use('/*', requireAuth)
+
+protectedApi.route('/repos', createRepoRoutes(db, gitAuthService))
+protectedApi.route('/settings', createSettingsRoutes(db))
+protectedApi.route('/files', createFileRoutes())
+protectedApi.route('/providers', createProvidersRoutes())
+protectedApi.route('/oauth', createOAuthRoutes())
+protectedApi.route('/tts', createTTSRoutes(db))
+protectedApi.route('/stt', createSTTRoutes(db))
+protectedApi.route('/generate-title', createTitleRoutes())
+protectedApi.route('/sse', createSSERoutes())
+protectedApi.route('/notifications', createNotificationRoutes(notificationService))
+
+app.route('/api', protectedApi)
+
+app.all('/api/opencode/*', requireAuth, async (c) => {
   const request = c.req.raw
   return proxyRequest(request)
 })
@@ -455,58 +507,28 @@ if (isProduction) {
     })
   })
 
-  app.all('/*', async (c) => {
-    if (c.req.path.startsWith('/api/')) {
-      return c.notFound()
-    }
+  app.get('/api/network-info', async (c) => {
+    const os = await import('os')
+    const interfaces = os.networkInterfaces()
+    const ips = Object.values(interfaces)
+      .flat()
+      .filter(info => info && !info.internal && info.family === 'IPv4')
+      .map(info => info!.address)
     
-    try {
-      const url = new URL(c.req.url)
-      const targetUrl = `${VITE_DEV_SERVER}${url.pathname}${url.search}`
-      
-      const headers = new Headers()
-      c.req.raw.headers.forEach((value, key) => {
-        if (key.toLowerCase() !== 'host') {
-          headers.set(key, value)
-        }
-      })
-      
-      const response = await fetch(targetUrl, {
-        method: c.req.method,
-        headers,
-        body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
-      })
-      
-      const responseHeaders = new Headers()
-      response.headers.forEach((value, key) => {
-        if (key.toLowerCase() !== 'content-encoding') {
-          responseHeaders.set(key, value)
-        }
-      })
-      
-      return new Response(response.body, {
-        status: response.status,
-        headers: responseHeaders,
-      })
-    } catch (error) {
-      logger.error('Failed to proxy to Vite dev server:', error)
-      return c.json({
-        name: 'OpenCode WebUI',
-        version: '2.0.0',
-        status: 'running',
-        note: 'Vite dev server not available. Start frontend with: pnpm dev:frontend',
-        endpoints: {
-          health: '/api/health',
-          repos: '/api/repos',
-          settings: '/api/settings',
-          sessions: '/api/sessions',
-          files: '/api/files',
-          providers: '/api/providers',
-          terminal: '/api/terminal',
-          opencode_proxy: '/api/opencode/*'
-        }
-      })
-    }
+    const requestHost = c.req.header('host') || `localhost:${PORT}`
+    const protocol = c.req.header('x-forwarded-proto') || 'http'
+    
+    return c.json({
+      host: HOST,
+      port: PORT,
+      requestHost,
+      protocol,
+      availableIps: ips,
+      apiUrls: [
+        `${protocol}://localhost:${PORT}`,
+        ...ips.map(ip => `${protocol}://${ip}:${PORT}`)
+      ]
+    })
   })
 }
 
@@ -515,27 +537,19 @@ let isShuttingDown = false
 const shutdown = async (signal: string) => {
   if (isShuttingDown) return
   isShuttingDown = true
-  
+
   logger.info(`${signal} received, shutting down gracefully...`)
   try {
-    stopGlobalSSEListener()
-    logger.info('Global SSE listener stopped')
-    terminalService.destroyAllSessions()
-    logger.info('Terminal sessions destroyed')
-    await schedulerService.shutdown()
-    logger.info('Scheduler service stopped')
-    await telegramService.stop()
-    logger.info('Telegram bot stopped')
-    await whisperServerManager.stop()
-    logger.info('Whisper server stopped')
-    await chatterboxServerManager.stop()
-    logger.info('Chatterbox server stopped')
-    await coquiServerManager.stop()
-    logger.info('Coqui TTS server stopped')
+    sseAggregator.shutdown()
+    logger.info('SSE Aggregator stopped')
+    if (ipcServer) {
+      ipcServer.dispose()
+      logger.info('Git IPC server stopped')
+    }
     await opencodeServerManager.stop()
     logger.info('OpenCode server stopped')
   } catch (error) {
-    logger.error('Error stopping services:', error)
+    logger.error('Error during shutdown:', error)
   }
   process.exit(0)
 }
@@ -548,16 +562,5 @@ const server = serve({
   port: PORT,
   hostname: HOST,
 })
-
-const io = new SocketIOServer(server as any, {
-  path: '/api/terminal/socket.io',
-  cors: {
-    origin: true, // Reflect the request origin
-    credentials: true,
-    methods: ['GET', 'POST']
-  }
-})
-
-registerTerminalSocketIO(io)
 
 logger.info(`🚀 OpenCode WebUI API running on http://${HOST}:${PORT}`)

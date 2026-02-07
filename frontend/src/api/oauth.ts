@@ -1,5 +1,5 @@
-import axios from "axios"
 import { API_BASE_URL } from "@/config"
+import { fetchWrapper, FetchError } from "./fetchWrapper"
 
 export interface OAuthAuthorizeResponse {
   url: string
@@ -22,9 +22,8 @@ export interface ProviderAuthMethods {
 }
 
 function handleApiError(error: unknown, context: string): never {
-  if (axios.isAxiosError(error)) {
-    const message = error.response?.data?.error || error.message
-    throw new Error(`${context}: ${message}`)
+  if (error instanceof FetchError) {
+    throw new Error(`${context}: ${error.message}`)
   }
   throw error
 }
@@ -32,10 +31,11 @@ function handleApiError(error: unknown, context: string): never {
 export const oauthApi = {
   authorize: async (providerId: string, method: number): Promise<OAuthAuthorizeResponse> => {
     try {
-      const { data } = await axios.post(`${API_BASE_URL}/api/oauth/${providerId}/oauth/authorize`, {
-        method,
+      return fetchWrapper(`${API_BASE_URL}/api/oauth/${providerId}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method }),
       })
-      return data
     } catch (error) {
       handleApiError(error, "OAuth authorization failed")
     }
@@ -43,8 +43,11 @@ export const oauthApi = {
 
   callback: async (providerId: string, request: OAuthCallbackRequest): Promise<boolean> => {
     try {
-      const { data } = await axios.post(`${API_BASE_URL}/api/oauth/${providerId}/oauth/callback`, request)
-      return data
+      return fetchWrapper(`${API_BASE_URL}/api/oauth/${providerId}/oauth/callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      })
     } catch (error) {
       handleApiError(error, "OAuth callback failed")
     }
@@ -52,8 +55,10 @@ export const oauthApi = {
 
   getAuthMethods: async (): Promise<ProviderAuthMethods> => {
     try {
-      const { data } = await axios.get(`${API_BASE_URL}/api/oauth/auth-methods`)
-      return data.providers || data
+      const { providers, ...rest } = await fetchWrapper<{ providers?: ProviderAuthMethods } & ProviderAuthMethods>(
+        `${API_BASE_URL}/api/oauth/auth-methods`
+      )
+      return providers || rest
     } catch (error) {
       handleApiError(error, "Failed to get provider auth methods")
     }

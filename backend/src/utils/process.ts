@@ -5,12 +5,22 @@ interface ExecuteCommandOptions {
   cwd?: string
   silent?: boolean
   env?: Record<string, string>
+  ignoreExitCode?: boolean
+  timeout?: number
 }
 
 export async function executeCommand(
   args: string[],
   cwdOrOptions?: string | ExecuteCommandOptions
-): Promise<string> {
+): Promise<string>
+export async function executeCommand(
+  args: string[],
+  cwdOrOptions: string | (ExecuteCommandOptions & { ignoreExitCode: true })
+): Promise<string | { exitCode: number; stdout: string; stderr: string }>
+export async function executeCommand(
+  args: string[],
+  cwdOrOptions?: string | ExecuteCommandOptions
+): Promise<string | { exitCode: number; stdout: string; stderr: string }> {
   const options: ExecuteCommandOptions = typeof cwdOrOptions === 'string' 
     ? { cwd: cwdOrOptions } 
     : cwdOrOptions || {}
@@ -18,14 +28,33 @@ export async function executeCommand(
   return new Promise((resolve, reject) => {
     const [command, ...cmdArgs] = args
     
+    const effectiveEnv = { ...process.env, ...options.env }
+    
+    // Log key git-related environment variables
+    if (command === 'git') {
+      logger.info(`executeCommand: ${args.join(' ')}`)
+      logger.info(`  GIT_ASKPASS: ${effectiveEnv.GIT_ASKPASS || '(not set)'}`)
+      logger.info(`  VSCODE_GIT_IPC_HANDLE: ${effectiveEnv.VSCODE_GIT_IPC_HANDLE || '(not set)'}`)
+      logger.info(`  GIT_TERMINAL_PROMPT: ${effectiveEnv.GIT_TERMINAL_PROMPT || '(not set)'}`)
+    }
+    
     const proc: ChildProcess = spawn(command || '', cmdArgs, {
       cwd: options.cwd,
       shell: false,
-      env: { ...process.env, ...options.env }
+      env: effectiveEnv
     })
 
     let stdout = ''
     let stderr = ''
+    let isResolved = false
+
+    const timeoutId = options.timeout ? setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true
+        proc.kill('SIGKILL')
+        reject(new Error(`Command timed out after ${options.timeout}ms: ${args.join(' ')}`))
+      }
+    }, options.timeout) : undefined
 
     proc.stdout?.on('data', (data: Buffer) => {
       stdout += data.toString()
@@ -36,14 +65,25 @@ export async function executeCommand(
     })
 
     proc.on('error', (error: Error) => {
-      if (!options.silent) {
-        logger.error(`Command failed: ${args.join(' ')}`, error)
+      if (!isResolved) {
+        isResolved = true
+        if (timeoutId) clearTimeout(timeoutId)
+        if (!options.silent) {
+          logger.error(`Command failed: ${args.join(' ')}`, error)
+        }
+        reject(error)
       }
-      reject(error)
     })
 
     proc.on('close', (code: number | null) => {
-      if (code === 0) {
+      if (isResolved) return
+      
+      isResolved = true
+      if (timeoutId) clearTimeout(timeoutId)
+      
+      if (options.ignoreExitCode) {
+        resolve({ exitCode: code || 0, stdout, stderr })
+      } else if (code === 0) {
         resolve(stdout)
       } else {
         const error = new Error(`Command failed with code ${code}: ${stderr || stdout}`)

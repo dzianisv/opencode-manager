@@ -29,17 +29,26 @@ export function Combobox({
   allowCustomValue = true,
 }: ComboboxProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const [inputValue, setInputValue] = useState(value)
+  const [inputValue, setInputValue] = useState(() => {
+    const selectedOption = options.find(o => o.value === value)
+    return selectedOption?.label || value
+  })
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [isUserTyping, setIsUserTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    setInputValue(value)
-  }, [value])
+    if (!isUserTyping) {
+      const selectedOption = options.find(o => o.value === value)
+      setInputValue(selectedOption?.label || value)
+    }
+  }, [value, options, isUserTyping])
 
-  const filteredOptions = options.filter(option =>
+  const isExactMatch = options.some(o => o.value === value || o.label === inputValue)
+  
+  const filteredOptions = (isExactMatch && !isUserTyping) ? options : options.filter(option =>
     option.value.toLowerCase().includes(inputValue.toLowerCase()) ||
     option.label.toLowerCase().includes(inputValue.toLowerCase()) ||
     (option.description?.toLowerCase().includes(inputValue.toLowerCase()))
@@ -87,11 +96,13 @@ export function Combobox({
   }, [selectedIndex, isOpen])
 
   const handleSelect = useCallback((optionValue: string) => {
-    setInputValue(optionValue)
+    const selectedOption = options.find(o => o.value === optionValue)
+    setInputValue(selectedOption?.label || optionValue)
     onChange(optionValue)
     setIsOpen(false)
+    setIsUserTyping(false)
     inputRef.current?.blur()
-  }, [onChange])
+  }, [onChange, options])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isOpen) {
@@ -137,6 +148,7 @@ export function Combobox({
     const newValue = e.target.value
     setInputValue(newValue)
     setIsOpen(true)
+    setIsUserTyping(true)
     if (allowCustomValue) {
       onChange(newValue)
     }
@@ -161,7 +173,7 @@ export function Combobox({
           placeholder={placeholder}
           disabled={disabled}
           className={cn(
-            'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors',
+            'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-[16px] md:text-sm shadow-sm transition-colors',
             'file:border-0 file:bg-transparent file:text-sm file:font-medium',
             'placeholder:text-muted-foreground',
             'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',

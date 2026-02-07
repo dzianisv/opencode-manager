@@ -1,117 +1,81 @@
-import axios from 'axios'
 import { API_BASE_URL } from '@/config'
-
-export interface STTTranscribeResponse {
-  text: string
-  language: string
-  language_probability: number
-  duration: number
-}
+import { fetchWrapper, FetchError } from './fetchWrapper'
 
 export interface STTModelsResponse {
   models: string[]
-  current: string | null
-  default: string
+  cached: boolean
 }
 
 export interface STTStatusResponse {
   enabled: boolean
   configured: boolean
-  server: {
-    running: boolean
-    port: number
-    host: string
-    model: string | null
-    error: string | null
-  }
-  config: {
-    model: string
-    language: string
-    autoSubmit: boolean
-  }
+  provider: 'external' | 'builtin'
+  model: string
+}
+
+export interface STTTranscribeResponse {
+  text: string
+}
+
+export interface STTErrorResponse {
+  error: string
+  details?: string
 }
 
 export const sttApi = {
-  transcribe: async (
-    audioBlob: Blob,
-    userId = 'default',
-    options?: { model?: string; language?: string; signal?: AbortSignal }
-  ): Promise<STTTranscribeResponse> => {
-    const base64 = await blobToBase64(audioBlob)
-    
-    const { data } = await axios.post(
-      `${API_BASE_URL}/api/stt/transcribe`,
-      {
-        audio: base64,
-        format: getAudioFormat(audioBlob.type),
-        model: options?.model,
-        language: options?.language
-      },
-      {
-        params: { userId },
-        signal: options?.signal,
-        timeout: 120000
-      }
-    )
-    return data
-  },
-
-  transcribeBase64: async (
-    base64Audio: string,
-    format: string,
-    options?: { model?: string; language?: string; signal?: AbortSignal },
-    userId = 'default'
-  ): Promise<STTTranscribeResponse> => {
-    const { data } = await axios.post(
-      `${API_BASE_URL}/api/stt/transcribe`,
-      {
-        audio: base64Audio,
-        format,
-        model: options?.model,
-        language: options?.language
-      },
-      {
-        params: { userId },
-        signal: options?.signal,
-        timeout: 120000
-      }
-    )
-    return data
-  },
-
-  getModels: async (): Promise<STTModelsResponse> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/stt/models`, {
-      timeout: 10000
+  getModels: async (userId = 'default', forceRefresh = false): Promise<STTModelsResponse> => {
+    return fetchWrapper(`${API_BASE_URL}/api/stt/models`, {
+      params: { userId, ...(forceRefresh && { refresh: 'true' }) },
     })
-    return data
   },
 
   getStatus: async (userId = 'default'): Promise<STTStatusResponse> => {
-    const { data } = await axios.get(`${API_BASE_URL}/api/stt/status`, {
+    return fetchWrapper(`${API_BASE_URL}/api/stt/status`, {
       params: { userId },
-      timeout: 10000
     })
-    return data
-  }
-}
+  },
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const result = reader.result as string
-      resolve(result)
+  transcribe: async (
+    audioBlob: Blob,
+    userId = 'default',
+    signal?: AbortSignal
+  ): Promise<STTTranscribeResponse> => {
+    const formData = new FormData()
+
+    const extension = audioBlob.type.includes('webm') ? 'webm' :
+                      audioBlob.type.includes('ogg') ? 'ogg' :
+                      audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
+    formData.append('audio', audioBlob, `recording.${extension}`)
+
+    const urlObj = new URL(`${API_BASE_URL}/api/stt/transcribe`, window.location.origin)
+    urlObj.searchParams.set('userId', userId)
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60000)
+
+    const abortSignal = signal || controller.signal
+
+    try {
+      const response = await fetch(urlObj.toString(), {
+        method: 'POST',
+        body: formData,
+        signal: abortSignal,
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: 'Transcription failed' }))
+        throw new FetchError(data.error || 'Transcription failed', response.status)
+      }
+
+      return response.json()
+    } catch (error) {
+      clearTimeout(timeoutId)
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new FetchError('Transcription timeout', 408, 'TIMEOUT')
+      }
+      throw error
     }
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
-
-function getAudioFormat(mimeType: string): string {
-  if (mimeType.includes('webm')) return 'webm'
-  if (mimeType.includes('mp4')) return 'mp4'
-  if (mimeType.includes('ogg')) return 'ogg'
-  if (mimeType.includes('wav')) return 'wav'
-  if (mimeType.includes('mp3') || mimeType.includes('mpeg')) return 'mp3'
-  return 'webm'
+  },
 }

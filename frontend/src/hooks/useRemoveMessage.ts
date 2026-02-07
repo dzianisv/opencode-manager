@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createOpenCodeClient } from '@/api/opencode'
 import { showToast } from '@/lib/toast'
-import type { MessageListResponse } from '@/api/types'
+import type { MessageWithParts, MessageListResponse } from '@/api/types'
+import { useSessionStatus } from '@/stores/sessionStatusStore'
 
 interface UseRemoveMessageOptions {
   opcodeUrl: string | null
@@ -68,6 +69,7 @@ interface UseRefreshMessageOptions {
 export function useRefreshMessage({ opcodeUrl, sessionId, directory }: UseRefreshMessageOptions) {
   const queryClient = useQueryClient()
   const removeMessage = useRemoveMessage({ opcodeUrl, sessionId, directory })
+  const setSessionStatus = useSessionStatus((state) => state.setStatus)
 
   return useMutation({
     mutationFn: async ({ 
@@ -83,9 +85,33 @@ export function useRefreshMessage({ opcodeUrl, sessionId, directory }: UseRefres
     }) => {
       if (!opcodeUrl) throw new Error('OpenCode URL not available')
       
+      setSessionStatus(sessionId, { type: 'busy' })
+      
       await removeMessage.mutateAsync({ messageID: assistantMessageID })
       
       const client = createOpenCodeClient(opcodeUrl, directory)
+      
+      const optimisticUserID = `optimistic_user_${Date.now()}_${Math.random()}`
+      const userMessage = {
+        info: {
+          id: optimisticUserID,
+          role: 'user' as const,
+          sessionID: sessionId,
+          time: { created: Date.now() }
+        },
+        parts: [{
+          id: `${optimisticUserID}_part_0`,
+          type: 'text' as const,
+          text: userMessageContent,
+          messageID: optimisticUserID,
+          sessionID: sessionId
+        }]
+      } as MessageWithParts
+
+      queryClient.setQueryData<MessageListResponse>(
+        ['opencode', 'messages', opcodeUrl, sessionId, directory],
+        (old) => [...(old || []), userMessage]
+      )
       
       interface SendPromptRequest {
         parts: Array<{ type: 'text'; text: string }>
@@ -108,15 +134,32 @@ export function useRefreshMessage({ opcodeUrl, sessionId, directory }: UseRefres
         requestData.agent = agent
       }
       
-      return client.sendPrompt(sessionId, requestData)
+      await client.sendPrompt(sessionId, requestData)
+
+      return { optimisticUserID, userMessageContent }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ['opencode', 'messages', opcodeUrl, sessionId, directory]
       })
+      queryClient.invalidateQueries({
+        queryKey: ['opencode', 'session', opcodeUrl, sessionId, directory]
+      })
     },
-    onError: (error) => {
-      console.error('Failed to refresh message:', error)
+    onError: (_, variables) => {
+      void variables
+      setSessionStatus(sessionId, { type: 'idle' })
+      queryClient.setQueryData<MessageListResponse>(
+        ['opencode', 'messages', opcodeUrl, sessionId, directory],
+        (old) => {
+          const messages = old || []
+          const optimisticIndex = messages.findIndex((m) => m.info.id.startsWith('optimistic_user_'))
+          if (optimisticIndex !== -1) {
+            return messages.slice(0, optimisticIndex)
+          }
+          return messages
+        }
+      )
       showToast.error('Failed to refresh message')
     }
   })

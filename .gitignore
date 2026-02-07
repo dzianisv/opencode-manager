@@ -11,6 +11,8 @@ coverage/
 *.db-wal
 .vscode/
 .idea/
+*.test.js
+*.tsbuildinfo
 
 data/
 workspace/

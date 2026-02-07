@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Trash2, Download, GitBranch, FolderOpen } from "lucide-react";
+import { Loader2, Trash2, Download, GitBranch, FolderOpen, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { downloadRepo } from "@/api/repos";
 import { showToast } from "@/lib/toast";
-
-import { BranchSwitcher } from "./BranchSwitcher";
+import type { GitStatusResponse } from "@/types/git";
+import { SourceControlPanel } from "@/components/source-control/SourceControlPanel";
+import { DownloadDialog } from "@/components/ui/download-dialog";
 
 interface RepoCardProps {
   repo: {
@@ -19,11 +20,13 @@ interface RepoCardProps {
     cloneStatus: string;
     isWorktree?: boolean;
     isLocal?: boolean;
+    fullPath?: string;
   };
   onDelete: (id: number) => void;
   isDeleting: boolean;
   isSelected?: boolean;
   onSelect?: (id: number, selected: boolean) => void;
+  gitStatus?: GitStatusResponse;
 }
 
 export function RepoCard({
@@ -32,19 +35,27 @@ export function RepoCard({
   isDeleting,
   isSelected = false,
   onSelect,
+  gitStatus,
 }: RepoCardProps) {
   const navigate = useNavigate();
-  const [isDownloading, setIsDownloading] = useState(false);
-  
-  const repoName = repo.repoUrl 
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false);
+  const [showSourceControl, setShowSourceControl] = useState(false);
+
+  const repoName = repo.repoUrl
     ? repo.repoUrl.split("/").slice(-1)[0].replace(".git", "")
     : repo.localPath || "Local Repo";
-  const branchToDisplay = repo.currentBranch || repo.branch;
+  const branchToDisplay = gitStatus?.branch || repo.currentBranch || repo.branch;
   const isReady = repo.cloneStatus === "ready";
   const isCloning = repo.cloneStatus === "cloning";
 
+  const isDirty = gitStatus?.hasChanges || false;
+  const ahead = gitStatus?.ahead || 0;
+  const behind = gitStatus?.behind || 0;
+  const stagedCount = gitStatus?.files.filter((f) => f.staged).length || 0;
+  const unstagedCount = gitStatus?.files.filter((f) => !f.staged).length || 0;
+
   const handleCardClick = () => {
-    if (isReady) {
+    if (isReady && !showSourceControl && !showDownloadDialog) {
       navigate(`/repos/${repo.id}`);
     }
   };
@@ -52,6 +63,15 @@ export function RepoCard({
   const handleActionClick = (e: React.MouseEvent, action: () => void) => {
     e.stopPropagation();
     action();
+  };
+
+  const handleDownload = async (options: { includeGit?: boolean, includePaths?: string[] }) => {
+    try {
+      await downloadRepo(repo.id, repoName, options);
+      showToast.success("Download complete");
+    } catch (error: unknown) {
+      showToast.error(error instanceof Error ? error.message : "Download failed");
+    }
   };
 
   return (
@@ -65,34 +85,34 @@ export function RepoCard({
           : "border-border bg-card"
       }`}
     >
-      <div className="p-4">
-        <div className="flex items-start gap-3">
-          {onSelect && (
-            <div 
-              className="pt-0.5"
-              onClick={(e) => handleActionClick(e, () => onSelect(repo.id, !isSelected))}
-            >
-              <Checkbox
-                checked={isSelected}
-                onCheckedChange={(checked) => onSelect(repo.id, checked === true)}
-                className="w-5 h-5"
-              />
-            </div>
-          )}
-          
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+      <div className="p-2">
+        <div>
+          <div className="flex items-start gap-3 mb-1">
+            {onSelect && (
+              <div
+                onClick={(e) => handleActionClick(e, () => onSelect(repo.id, !isSelected))}
+              >
+                <Checkbox
+                  checked={isSelected}
+                  onCheckedChange={(checked) => onSelect(repo.id, checked === true)}
+                  className="w-5 h-5"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
               <h3 className="font-semibold text-base text-foreground truncate">
                 {repoName}
               </h3>
-              {repo.isWorktree && (
-                <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
-                  worktree
-                </Badge>
+              {isReady && (
+                <div className={`w-2 h-2 rounded-full shrink-0 ${isDirty ? 'bg-orange-500' : 'bg-green-500'}`} />
               )}
+
             </div>
-            
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          </div>
+
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
               {isCloning ? (
                 <span className="flex items-center gap-1.5">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
@@ -100,72 +120,95 @@ export function RepoCard({
                 </span>
               ) : (
                 <>
-                  <span className="flex items-center gap-1">
-                    <GitBranch className="w-3.5 h-3.5" />
-                    {branchToDisplay || "main"}
+                  <span className={`flex items-center gap-1 shrink-0 ${repo.isWorktree ? 'text-purple-400' : ''}`}>
+                    <GitBranch className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate max-w-[80px]">{branchToDisplay || "main"}</span>
                   </span>
+                  {isDirty && (
+                    <span className="flex items-center gap-1 text-orange-600 dark:text-orange-400 shrink-0">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-xs whitespace-nowrap">
+                        {unstagedCount > 0 && unstagedCount}
+                        {unstagedCount > 0 && stagedCount > 0 && "/"}
+                        {stagedCount > 0 && `${stagedCount}s`}
+                      </span>
+                    </span>
+                  )}
+                  {(ahead > 0 || behind > 0) && (
+                    <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400 shrink-0">
+                      <span className="text-xs whitespace-nowrap">
+                        {ahead > 0 && `↑${ahead}`}
+                        {behind > 0 && `↓${behind}`}
+                      </span>
+                    </span>
+                  )}
                   {repo.isLocal && (
-                    <span className="flex items-center gap-1">
-                      <FolderOpen className="w-3.5 h-3.5" />
-                      Local
+                    <span className="flex items-center gap-1 shrink-0">
+                      <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                     </span>
                   )}
                 </>
               )}
             </div>
-          </div>
 
-          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <BranchSwitcher
-              repoId={repo.id}
-              currentBranch={branchToDisplay || ""}
-              isWorktree={repo.isWorktree}
-              repoUrl={repo.repoUrl}
-              repoLocalPath={repo.localPath}
-              iconOnly={true}
-              className="h-8 w-8"
-            />
+            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => handleActionClick(e, () => setShowSourceControl(true))}
+                disabled={!isReady}
+                className="h-8 w-8 p-0"
+                title="Source Control"
+              >
+                <GitBranch className="w-4 h-4" />
+              </Button>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={(e) => handleActionClick(e, async () => {
-                setIsDownloading(true);
-                try {
-                  await downloadRepo(repo.id, repoName);
-                  showToast.success("Download complete");
-                } catch (error: unknown) {
-                  showToast.error(error instanceof Error ? error.message : "Download failed");
-                } finally {
-                  setIsDownloading(false);
-                }
-              })}
-              disabled={!isReady || isDownloading}
-              className="h-8 w-8 p-0"
-            >
-              {isDownloading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => handleActionClick(e, () => setShowDownloadDialog(true))}
+                disabled={!isReady}
+                className="h-8 w-8 p-0"
+              >
                 <Download className="w-4 h-4" />
-              )}
-            </Button>
+              </Button>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={(e) => handleActionClick(e, () => onDelete(repo.id))}
-              disabled={isDeleting}
-              className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              {isDeleting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Trash2 className="w-4 h-4" />
-              )}
-            </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => handleActionClick(e, () => onDelete(repo.id))}
+                disabled={isDeleting}
+                className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                {isDeleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
+
+      <SourceControlPanel
+        repoId={repo.id}
+        isOpen={showSourceControl}
+        onClose={() => setShowSourceControl(false)}
+        currentBranch={branchToDisplay || ""}
+        repoUrl={repo.repoUrl}
+        isRepoWorktree={repo.isWorktree}
+        repoName={repoName}
+      />
+      <DownloadDialog
+        open={showDownloadDialog}
+        onOpenChange={setShowDownloadDialog}
+        onDownload={handleDownload}
+        title="Download Repository"
+        description="This will create a ZIP archive of the entire repository."
+        itemName={repoName}
+        targetPath={repo.fullPath}
+      />
     </div>
   );
 }

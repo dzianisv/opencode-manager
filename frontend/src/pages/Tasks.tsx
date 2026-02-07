@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Header } from '@/components/layout/Header'
+import { Header } from '@/components/ui/header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -374,16 +374,18 @@ export function TasksPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-background">
-      <Header
-        title="Scheduled Tasks"
-        backTo="/"
-        action={
+      <Header>
+        <div className="flex items-center gap-3">
+          <Header.BackButton to="/" />
+          <Header.Title>Scheduled Tasks</Header.Title>
+        </div>
+        <Header.Actions>
           <Button onClick={() => setDialogOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />
             New Task
           </Button>
-        }
-      />
+        </Header.Actions>
+      </Header>
 
       <div className="max-w-6xl mx-auto p-6">
         {isLoading ? (

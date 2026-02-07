@@ -384,15 +384,16 @@ useEffect(() => {
   }, [selectedFile, handleFileSelect])
 
   useEffect(() => {
-    if (isPreviewModalOpen) {
-      const handleEscape = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-          handleCloseModal()
-        }
+    if (!isPreviewModalOpen) return
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCloseModal()
       }
-      document.addEventListener('keydown', handleEscape)
-      return () => document.removeEventListener('keydown', handleEscape)
     }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
   }, [isPreviewModalOpen, handleCloseModal])
 
   const filteredFiles = files?.children?.filter(file =>
@@ -533,7 +534,7 @@ useEffect(() => {
           {!isMobile && (
             <div className="flex-1 overflow-y-auto min-h-0 h-full">
               {selectedFile && !selectedFile.isDirectory ? (
-                <FilePreview file={selectedFile} />
+                <FilePreview key={selectedFile.path} file={selectedFile} />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
                   Select a file to preview
@@ -632,7 +633,7 @@ useEffect(() => {
           {!isMobile && (
             <div className="flex-1 overflow-y-auto min-h-0 ">
               {selectedFile && !selectedFile.isDirectory ? (
-                <FilePreview file={selectedFile} />
+                <FilePreview key={selectedFile.path} file={selectedFile} />
               ) : (
                 <div className="flex items-center justify-center h-64 text-muted-foreground">
                   Select a file to preview

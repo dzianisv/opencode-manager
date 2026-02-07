@@ -4,16 +4,13 @@ export type TTSState = 'idle' | 'loading' | 'playing' | 'error'
 
 export interface TTSConfig {
   enabled: boolean
-  provider: 'external' | 'builtin' | 'chatterbox' | 'coqui'
+  provider: 'external' | 'builtin'
   endpoint: string
   apiKey: string
   voice: string
   model: string
   speed: number
-  chatterboxExaggeration?: number
-  chatterboxCfgWeight?: number
 }
-
 
 export interface TTSContextValue {
   speak: (text: string) => Promise<boolean>

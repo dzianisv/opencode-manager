@@ -11,7 +11,6 @@ export function createHealthRoutes(db: Database) {
       const dbCheck = db.prepare('SELECT 1').get()
       const opencodeHealthy = await opencodeServerManager.checkHealth()
       const startupError = opencodeServerManager.getLastStartupError()
-      const telegramStatus = telegramService.getStatus()
 
       const status = startupError && !opencodeHealthy
         ? 'unhealthy'
@@ -25,12 +24,7 @@ export function createHealthRoutes(db: Database) {
         opencodePort: opencodeServerManager.getPort(),
         opencodeVersion: opencodeServerManager.getVersion(),
         opencodeMinVersion: opencodeServerManager.getMinVersion(),
-        opencodeVersionSupported: opencodeServerManager.isVersionSupported(),
-        telegram: {
-          running: telegramStatus.running,
-          sessions: telegramStatus.activeSessions,
-          allowlist: telegramStatus.allowlistCount,
-        },
+        opencodeVersionSupported: opencodeServerManager.isVersionSupported()
       }
 
       if (startupError && !opencodeHealthy) {

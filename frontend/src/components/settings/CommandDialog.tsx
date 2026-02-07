@@ -1,6 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod/v3";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -160,7 +160,7 @@ export function CommandDialog({
                       {...field}
                       placeholder="The prompt template that will be sent to the LLM. Use $ARGUMENTS or $1, $2, etc. for parameters."
                       rows={8}
-                      className="font-mono text-sm"
+                      className="font-mono md:text-sm"
                     />
                   </FormControl>
                   <FormDescription>
