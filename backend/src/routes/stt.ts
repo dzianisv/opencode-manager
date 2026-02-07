@@ -285,12 +285,14 @@ export function createSTTRoutes(db: Database) {
     const sttConfig = settings.preferences.stt as STTConfigExtended | undefined
 
     const serverStatus = whisperServerManager.getStatus()
+    logger.info(`STT status request: serverStatus.running=${serverStatus.running}, error=${serverStatus.error}`)
 
     return c.json({
       enabled: sttConfig?.enabled || false,
       configured: !!sttConfig?.endpoint,
       provider: sttConfig?.provider || 'builtin',
       model: sttConfig?.model || 'whisper-1',
+      running: serverStatus.running,
       server: serverStatus,
     })
   })
