@@ -1,15 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const mockWhisperManager = {
-  syncStatus: vi.fn(),
-  transcribe: vi.fn(),
-  getModels: vi.fn(),
-  getStatus: vi.fn(),
-  getPort: vi.fn(),
-  getHost: vi.fn(),
-  getBaseUrl: vi.fn()
-}
-
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn(),
 }))
@@ -42,50 +32,59 @@ vi.mock('../../src/services/settings', () => ({
 }))
 
 vi.mock('../../src/services/whisper', () => ({
-  whisperServerManager: mockWhisperManager
+  whisperServerManager: {
+    syncStatus: vi.fn(),
+    transcribe: vi.fn(),
+    getModels: vi.fn(),
+    getStatus: vi.fn(),
+    getPort: vi.fn(),
+    getHost: vi.fn(),
+    getBaseUrl: vi.fn()
+  }
 }))
 
 import { createSTTRoutes } from '../../src/routes/stt'
 import { SettingsService } from '../../src/services/settings'
+import { whisperServerManager } from '../../src/services/whisper'
 
 describe('STT Routes', () => {
   let mockDb: any
   let sttApp: ReturnType<typeof createSTTRoutes>
 
   beforeEach(() => {
-    vi.clearAllMocks()
-    mockDb = {} as any
+    vi.clearAllMocks();
+    mockDb = {} as any;
     
-    mockWhisperManager.syncStatus.mockResolvedValue({
+    (whisperServerManager.syncStatus as any).mockResolvedValue({
       running: true,
       port: 5552,
       host: '127.0.0.1',
       model: 'base',
       error: null
-    })
-    mockWhisperManager.transcribe.mockResolvedValue({
+    });
+    (whisperServerManager.transcribe as any).mockResolvedValue({
       text: 'Hello world',
       language: 'en',
       language_probability: 0.98,
       duration: 2.5
-    })
-    mockWhisperManager.getModels.mockResolvedValue({
+    });
+    (whisperServerManager.getModels as any).mockResolvedValue({
       models: ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'],
       current: 'base',
       default: 'base'
-    })
-    mockWhisperManager.getStatus.mockReturnValue({
+    });
+    (whisperServerManager.getStatus as any).mockReturnValue({
       running: true,
       port: 5552,
       host: '127.0.0.1',
       model: 'base',
       error: null
-    })
-    mockWhisperManager.getPort.mockReturnValue(5552)
-    mockWhisperManager.getHost.mockReturnValue('127.0.0.1')
-    mockWhisperManager.getBaseUrl.mockReturnValue('http://127.0.0.1:5552')
+    });
+    (whisperServerManager.getPort as any).mockReturnValue(5552);
+    (whisperServerManager.getHost as any).mockReturnValue('127.0.0.1');
+    (whisperServerManager.getBaseUrl as any).mockReturnValue('http://127.0.0.1:5552');
     
-    sttApp = createSTTRoutes(mockDb)
+    sttApp = createSTTRoutes(mockDb);
   })
 
   describe('GET /status', () => {
@@ -105,7 +104,7 @@ describe('STT Routes', () => {
     })
 
     it('should return server not running status', async () => {
-      mockWhisperManager.syncStatus.mockResolvedValueOnce({
+      (whisperServerManager as any).syncStatus.mockResolvedValueOnce({
         running: false,
         port: 5552,
         host: '127.0.0.1',
@@ -161,7 +160,7 @@ describe('STT Routes', () => {
     })
 
     it('should handle model fetch errors gracefully', async () => {
-      mockWhisperManager.getModels.mockRejectedValueOnce(new Error('Server error'))
+      (whisperServerManager as any).getModels.mockRejectedValueOnce(new Error('Server error'))
 
       const res = await sttApp.request('/models')
       const data = await res.json()
@@ -270,7 +269,7 @@ describe('STT Routes', () => {
     })
 
     it('should reject when Whisper server is not running', async () => {
-      mockWhisperManager.syncStatus.mockResolvedValueOnce({
+      (whisperServerManager as any).syncStatus.mockResolvedValueOnce({
         running: false,
         port: 5552,
         host: '127.0.0.1',
@@ -332,7 +331,7 @@ describe('STT Routes', () => {
       })
 
       expect(res.status).toBe(200)
-      expect(mockWhisperManager.transcribe).toHaveBeenCalledWith(
+      expect((whisperServerManager as any).transcribe).toHaveBeenCalledWith(
         expect.any(Buffer),
         expect.objectContaining({
           model: 'small',
@@ -343,7 +342,7 @@ describe('STT Routes', () => {
     })
 
     it('should handle transcription errors', async () => {
-      mockWhisperManager.transcribe.mockRejectedValueOnce(new Error('Transcription failed'))
+      (whisperServerManager as any).transcribe.mockRejectedValueOnce(new Error('Transcription failed'))
 
       const res = await sttApp.request('/transcribe', {
         method: 'POST',
@@ -370,7 +369,7 @@ describe('STT Routes', () => {
       })
 
       expect(res.status).toBe(200)
-      expect(mockWhisperManager.transcribe).toHaveBeenCalledWith(
+      expect((whisperServerManager as any).transcribe).toHaveBeenCalledWith(
         expect.any(Buffer),
         expect.objectContaining({
           model: 'base',
