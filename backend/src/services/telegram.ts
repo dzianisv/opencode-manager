@@ -1,4 +1,4 @@
-import { Bot, GrammyError, HttpError } from 'grammy'
+import { Bot, GrammyError, HttpError, type Context } from 'grammy'
 import { Database } from 'bun:sqlite'
 import { logger } from '../utils/logger'
 import { opencodeSdkClient } from './opencode-sdk-client'
@@ -26,45 +26,78 @@ export interface TelegramStatus {
 }
 
 const MAX_MESSAGE_LENGTH = 4096
-const TYPING_INTERVAL_MS = 5000
+const TYPING_INTERVAL_MS = 4000
 
 function chunkText(text: string, maxLength: number = MAX_MESSAGE_LENGTH): string[] {
   if (text.length <= maxLength) {
     return [text]
   }
-  
+
   const chunks: string[] = []
   let remaining = text
-  
+
   while (remaining.length > 0) {
     if (remaining.length <= maxLength) {
       chunks.push(remaining)
       break
     }
-    
-    let splitIndex = remaining.lastIndexOf('\n', maxLength)
+
+    let splitIndex = remaining.lastIndexOf('\n\n', maxLength)
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      splitIndex = remaining.lastIndexOf('\n', maxLength)
+    }
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      splitIndex = remaining.lastIndexOf('. ', maxLength)
+    }
     if (splitIndex === -1 || splitIndex < maxLength / 2) {
       splitIndex = remaining.lastIndexOf(' ', maxLength)
     }
     if (splitIndex === -1 || splitIndex < maxLength / 2) {
       splitIndex = maxLength
     }
-    
+
     chunks.push(remaining.slice(0, splitIndex))
     remaining = remaining.slice(splitIndex).trimStart()
   }
-  
+
   return chunks
 }
 
 class TelegramService {
   private db: Database | null = null
   private bot: Bot | null = null
+  private botUsername: string | null = null
   private startedAt: number | null = null
   private messageQueue: Map<string, Promise<void>> = new Map()
 
   setDatabase(db: Database): void {
     this.db = db
+    this.ensureTables()
+  }
+
+  private ensureTables(): void {
+    if (!this.db) return
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS telegram_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL UNIQUE,
+        opencode_session_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS telegram_allowlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL UNIQUE,
+        added_at INTEGER NOT NULL
+      )
+    `)
+
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_telegram_sessions_chat_id ON telegram_sessions(chat_id)')
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_telegram_allowlist_chat_id ON telegram_allowlist(chat_id)')
   }
 
   isRunning(): boolean {
@@ -99,10 +132,22 @@ class TelegramService {
       })
     })
 
+    this.bot.on('message:voice', async (ctx) => {
+      const chatId = String(ctx.chat.id)
+
+      if (!this.isAllowed(chatId)) {
+        logger.warn(`Telegram: Unauthorized voice message from chat ${chatId}`)
+        await ctx.reply('Access denied.')
+        return
+      }
+
+      await ctx.reply('Voice messages are not yet supported. Please send text messages.')
+    })
+
     this.bot.catch((err) => {
       const ctx = err.ctx
       logger.error(`Telegram error while handling update ${ctx.update.update_id}:`)
-      
+
       const e = err.error
       if (e instanceof GrammyError) {
         logger.error(`Grammy error: ${e.description}`)
@@ -115,10 +160,11 @@ class TelegramService {
 
     try {
       const me = await this.bot.api.getMe()
+      this.botUsername = me.username
       logger.info(`Telegram bot @${me.username} started successfully`)
-      
+
       this.startedAt = Date.now()
-      
+
       this.bot.start({
         onStart: () => {
           logger.info('Telegram bot polling started')
@@ -126,6 +172,7 @@ class TelegramService {
       })
     } catch (error) {
       this.bot = null
+      this.botUsername = null
       throw error
     }
   }
@@ -135,6 +182,7 @@ class TelegramService {
       logger.info('Stopping Telegram bot...')
       await this.bot.stop()
       this.bot = null
+      this.botUsername = null
       this.startedAt = null
       logger.info('Telegram bot stopped')
     }
@@ -143,7 +191,7 @@ class TelegramService {
   getStatus(): TelegramStatus {
     return {
       running: this.isRunning(),
-      botUsername: this.bot ? undefined : undefined,
+      botUsername: this.botUsername ?? undefined,
       activeSessions: this.getSessionCount(),
       allowlistCount: this.getAllowlistCount(),
       startedAt: this.startedAt ?? undefined,
@@ -152,34 +200,37 @@ class TelegramService {
 
   private async queueMessage(chatId: string, task: () => Promise<void>): Promise<void> {
     const previous = this.messageQueue.get(chatId) ?? Promise.resolve()
-    const next = previous.then(task).catch((err) => {
-      logger.error(`Telegram queue error for chat ${chatId}:`, err)
-    }).finally(() => {
-      if (this.messageQueue.get(chatId) === next) {
-        this.messageQueue.delete(chatId)
-      }
-    })
+    const next = previous
+      .then(task)
+      .catch((err) => {
+        logger.error(`Telegram queue error for chat ${chatId}:`, err)
+      })
+      .finally(() => {
+        if (this.messageQueue.get(chatId) === next) {
+          this.messageQueue.delete(chatId)
+        }
+      })
     this.messageQueue.set(chatId, next)
     await next
   }
 
-  private async handleMessage(ctx: any, chatId: string, text: string): Promise<void> {
+  private async handleMessage(ctx: Context, chatId: string, text: string): Promise<void> {
     const typingInterval = setInterval(() => {
       ctx.replyWithChatAction('typing').catch(() => {})
     }, TYPING_INTERVAL_MS)
 
     try {
       await ctx.replyWithChatAction('typing')
-      
+
       const session = await this.getOrCreateSession(chatId)
-      
+
       if (!opencodeSdkClient.isConfigured()) {
         await ctx.reply('OpenCode server is not available. Please try again later.')
         return
       }
 
       const response = await this.sendToOpenCode(session.opencode_session_id, text)
-      
+
       if (!response) {
         await ctx.reply('No response received from OpenCode.')
         return
@@ -187,7 +238,7 @@ class TelegramService {
 
       const chunks = chunkText(response)
       for (const chunk of chunks) {
-        await ctx.reply(chunk)
+        await ctx.reply(chunk, { parse_mode: undefined })
       }
 
       this.updateSessionTimestamp(chatId)
@@ -202,7 +253,7 @@ class TelegramService {
   private async sendToOpenCode(sessionId: string, message: string): Promise<string | null> {
     try {
       const baseUrl = opencodeSdkClient.getBaseUrl()
-      
+
       const response = await fetch(`${baseUrl}/session/${sessionId}/message`, {
         method: 'POST',
         headers: {
@@ -211,7 +262,7 @@ class TelegramService {
         body: JSON.stringify({
           parts: [{ type: 'text', text: message }],
         }),
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(180000),
       })
 
       if (!response.ok) {
@@ -220,20 +271,20 @@ class TelegramService {
 
       let fullResponse = ''
       const reader = response.body?.getReader()
-      
+
       if (!reader) {
         throw new Error('No response body')
       }
 
       const decoder = new TextDecoder()
-      
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        
+
         const chunk = decoder.decode(value, { stream: true })
         const lines = chunk.split('\n')
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -242,6 +293,7 @@ class TelegramService {
                 fullResponse += data.part.text || ''
               }
             } catch {
+              // Ignore parse errors
             }
           }
         }
@@ -282,14 +334,14 @@ class TelegramService {
       throw new Error(`Failed to create OpenCode session: ${createResponse.status}`)
     }
 
-    const sessionData = await createResponse.json() as { id: string }
+    const sessionData = (await createResponse.json()) as { id: string }
     const now = Date.now()
 
     this.db
-      .prepare(`
-        INSERT INTO telegram_sessions (chat_id, opencode_session_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
-      `)
+      .prepare(
+        `INSERT INTO telegram_sessions (chat_id, opencode_session_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`
+      )
       .run(chatId, sessionData.id, now, now)
 
     logger.info(`Created new Telegram session for chat ${chatId}`)
@@ -305,62 +357,50 @@ class TelegramService {
 
   private updateSessionTimestamp(chatId: string): void {
     if (!this.db) return
-    
-    this.db
-      .prepare('UPDATE telegram_sessions SET updated_at = ? WHERE chat_id = ?')
-      .run(Date.now(), chatId)
+
+    this.db.prepare('UPDATE telegram_sessions SET updated_at = ? WHERE chat_id = ?').run(Date.now(), chatId)
   }
 
   private isAllowed(chatId: string): boolean {
     if (!this.db) return false
 
     const allowlistCount = this.getAllowlistCount()
-    
+
     if (allowlistCount === 0) {
       return true
     }
 
-    const entry = this.db
-      .prepare('SELECT 1 FROM telegram_allowlist WHERE chat_id = ?')
-      .get(chatId)
-    
+    const entry = this.db.prepare('SELECT 1 FROM telegram_allowlist WHERE chat_id = ?').get(chatId)
+
     return !!entry
   }
 
   private getSessionCount(): number {
     if (!this.db) return 0
-    
-    const result = this.db
-      .prepare('SELECT COUNT(*) as count FROM telegram_sessions')
-      .get() as { count: number }
-    
+
+    const result = this.db.prepare('SELECT COUNT(*) as count FROM telegram_sessions').get() as { count: number }
+
     return result?.count ?? 0
   }
 
   private getAllowlistCount(): number {
     if (!this.db) return 0
-    
-    const result = this.db
-      .prepare('SELECT COUNT(*) as count FROM telegram_allowlist')
-      .get() as { count: number }
-    
+
+    const result = this.db.prepare('SELECT COUNT(*) as count FROM telegram_allowlist').get() as { count: number }
+
     return result?.count ?? 0
   }
 
   getAllSessions(): TelegramSession[] {
     if (!this.db) return []
-    
-    return this.db
-      .prepare('SELECT * FROM telegram_sessions ORDER BY updated_at DESC')
-      .all() as TelegramSession[]
+
+    return this.db.prepare('SELECT * FROM telegram_sessions ORDER BY updated_at DESC').all() as TelegramSession[]
   }
 
   getAllowlist(): TelegramAllowlistEntry[] {
     if (!this.db) return []
-    
-    return this.db
-      .prepare('SELECT * FROM telegram_allowlist ORDER BY added_at DESC')
-      .all() as TelegramAllowlistEntry[]
+
+    return this.db.prepare('SELECT * FROM telegram_allowlist ORDER BY added_at DESC').all() as TelegramAllowlistEntry[]
   }
 
   addToAllowlist(chatId: string): void {
@@ -369,12 +409,12 @@ class TelegramService {
     }
 
     this.db
-      .prepare(`
-        INSERT OR IGNORE INTO telegram_allowlist (chat_id, added_at)
-        VALUES (?, ?)
-      `)
+      .prepare(
+        `INSERT OR IGNORE INTO telegram_allowlist (chat_id, added_at)
+         VALUES (?, ?)`
+      )
       .run(chatId, Date.now())
-    
+
     logger.info(`Added chat ${chatId} to Telegram allowlist`)
   }
 
@@ -383,15 +423,13 @@ class TelegramService {
       throw new Error('Database not set')
     }
 
-    const result = this.db
-      .prepare('DELETE FROM telegram_allowlist WHERE chat_id = ?')
-      .run(chatId)
-    
+    const result = this.db.prepare('DELETE FROM telegram_allowlist WHERE chat_id = ?').run(chatId)
+
     if (result.changes > 0) {
       logger.info(`Removed chat ${chatId} from Telegram allowlist`)
       return true
     }
-    
+
     return false
   }
 
@@ -400,10 +438,8 @@ class TelegramService {
       throw new Error('Database not set')
     }
 
-    const result = this.db
-      .prepare('DELETE FROM telegram_sessions WHERE chat_id = ?')
-      .run(chatId)
-    
+    const result = this.db.prepare('DELETE FROM telegram_sessions WHERE chat_id = ?').run(chatId)
+
     return result.changes > 0
   }
 
@@ -411,12 +447,15 @@ class TelegramService {
     const allowlistEnv = process.env.TELEGRAM_ALLOWLIST
     if (!allowlistEnv) return
 
-    const chatIds = allowlistEnv.split(',').map(id => id.trim()).filter(Boolean)
-    
+    const chatIds = allowlistEnv
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+
     for (const chatId of chatIds) {
       this.addToAllowlist(chatId)
     }
-    
+
     if (chatIds.length > 0) {
       logger.info(`Seeded ${chatIds.length} chat IDs from TELEGRAM_ALLOWLIST env var`)
     }

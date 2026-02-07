@@ -13,13 +13,15 @@ vi.mock('../../src/services/telegram', () => ({
       activeSessions: 0,
       allowlistCount: 0,
     }),
-    start: vi.fn(),
-    stop: vi.fn(),
+    isRunning: vi.fn().mockReturnValue(false),
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
     getAllSessions: vi.fn().mockReturnValue([]),
     deleteSession: vi.fn().mockReturnValue(true),
     getAllowlist: vi.fn().mockReturnValue([]),
     addToAllowlist: vi.fn(),
     removeFromAllowlist: vi.fn().mockReturnValue(true),
+    seedAllowlistFromEnv: vi.fn(),
   }
 }))
 

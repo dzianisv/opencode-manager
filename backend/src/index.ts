@@ -20,9 +20,11 @@ import { createTitleRoutes } from './routes/title'
 import { createSSERoutes } from './routes/sse'
 import { createNotificationRoutes } from './routes/notifications'
 import { createAuthRoutes, createAuthInfoRoutes, syncAdminFromEnv } from './routes/auth'
+import { createTelegramRoutes } from './routes/telegram'
 import { createAuth } from './auth'
 import { createAuthMiddleware } from './auth/middleware'
 import { sseAggregator } from './services/sse-aggregator'
+import { telegramService } from './services/telegram'
 import { ensureDirectoryExists, writeFileContent, fileExists, readFileContent } from './services/file-operations'
 import { SettingsService } from './services/settings'
 import { opencodeServerManager } from './services/opencode-single-server'
@@ -439,6 +441,16 @@ if (ENV.VAPID.PUBLIC_KEY && ENV.VAPID.PRIVATE_KEY) {
   })
 }
 
+if (ENV.TELEGRAM.BOT_TOKEN) {
+  telegramService.setDatabase(db)
+  telegramService.start(ENV.TELEGRAM.BOT_TOKEN).then(() => {
+    telegramService.seedAllowlistFromEnv()
+    logger.info('Telegram bot auto-started from TELEGRAM_BOT_TOKEN')
+  }).catch((err) => {
+    logger.error('Failed to auto-start Telegram bot:', err)
+  })
+}
+
 app.route('/api/auth', createAuthRoutes(auth))
 app.route('/api/auth-info', createAuthInfoRoutes(auth, db))
 
@@ -454,6 +466,7 @@ protectedApi.route('/providers', createProvidersRoutes())
 protectedApi.route('/oauth', createOAuthRoutes())
 protectedApi.route('/tts', createTTSRoutes(db))
 protectedApi.route('/stt', createSTTRoutes(db))
+protectedApi.route('/telegram', createTelegramRoutes(db))
 protectedApi.route('/generate-title', createTitleRoutes())
 protectedApi.route('/sse', createSSERoutes())
 protectedApi.route('/notifications', createNotificationRoutes(notificationService))
@@ -542,6 +555,10 @@ const shutdown = async (signal: string) => {
   try {
     sseAggregator.shutdown()
     logger.info('SSE Aggregator stopped')
+    if (telegramService.isRunning()) {
+      await telegramService.stop()
+      logger.info('Telegram bot stopped')
+    }
     if (ipcServer) {
       ipcServer.dispose()
       logger.info('Git IPC server stopped')

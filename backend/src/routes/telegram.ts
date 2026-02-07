@@ -9,7 +9,7 @@ const AddToAllowlistSchema = z.object({
 })
 
 const StartBotSchema = z.object({
-  token: z.string().min(1),
+  token: z.string().min(1).optional(),
 })
 
 export function createTelegramRoutes(db: Database) {
@@ -24,25 +24,32 @@ export function createTelegramRoutes(db: Database) {
 
   app.post('/start', async (c) => {
     try {
-      const body = await c.req.json()
+      const body = await c.req.json().catch(() => ({}))
       const parsed = StartBotSchema.safeParse(body)
-      
-      if (!parsed.success) {
-        const token = process.env.TELEGRAM_BOT_TOKEN
-        if (!token) {
-          return c.json({ error: 'No token provided and TELEGRAM_BOT_TOKEN not set' }, 400)
-        }
-        await telegramService.start(token)
+
+      let token: string | undefined
+      if (parsed.success && parsed.data.token) {
+        token = parsed.data.token
       } else {
-        await telegramService.start(parsed.data.token)
+        token = process.env.TELEGRAM_BOT_TOKEN
       }
-      
+
+      if (!token) {
+        return c.json({ error: 'No token provided and TELEGRAM_BOT_TOKEN not set' }, 400)
+      }
+
+      await telegramService.start(token)
+      telegramService.seedAllowlistFromEnv()
+
       return c.json({ success: true, status: telegramService.getStatus() })
     } catch (error) {
       logger.error('Failed to start Telegram bot:', error)
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Failed to start bot' 
-      }, 500)
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : 'Failed to start bot',
+        },
+        500
+      )
     }
   })
 
@@ -52,9 +59,12 @@ export function createTelegramRoutes(db: Database) {
       return c.json({ success: true })
     } catch (error) {
       logger.error('Failed to stop Telegram bot:', error)
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Failed to stop bot' 
-      }, 500)
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : 'Failed to stop bot',
+        },
+        500
+      )
     }
   })
 
@@ -66,7 +76,7 @@ export function createTelegramRoutes(db: Database) {
   app.delete('/sessions/:chatId', async (c) => {
     const chatId = c.req.param('chatId')
     const deleted = telegramService.deleteSession(chatId)
-    
+
     if (deleted) {
       return c.json({ success: true })
     }
@@ -82,24 +92,27 @@ export function createTelegramRoutes(db: Database) {
     try {
       const body = await c.req.json()
       const parsed = AddToAllowlistSchema.safeParse(body)
-      
+
       if (!parsed.success) {
         return c.json({ error: 'Invalid request: chatId is required' }, 400)
       }
-      
+
       telegramService.addToAllowlist(parsed.data.chatId)
       return c.json({ success: true })
     } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Failed to add to allowlist' 
-      }, 500)
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : 'Failed to add to allowlist',
+        },
+        500
+      )
     }
   })
 
   app.delete('/allowlist/:chatId', async (c) => {
     const chatId = c.req.param('chatId')
     const removed = telegramService.removeFromAllowlist(chatId)
-    
+
     if (removed) {
       return c.json({ success: true })
     }

@@ -93,6 +93,9 @@ importers:
       eventsource:
         specifier: ^4.1.0
         version: 4.1.0
+      grammy:
+        specifier: ^1.39.3
+        version: 1.39.3
       hono:
         specifier: ^4.11.7
         version: 4.11.7

@@ -110,6 +110,11 @@ export const ENV = {
     PASSKEY_RP_NAME: getEnvString('PASSKEY_RP_NAME', 'OpenCode Manager'),
     PASSKEY_ORIGIN: getEnvString('PASSKEY_ORIGIN', 'http://localhost:5003'),
   },
+
+  TELEGRAM: {
+    BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ?? '',
+    ALLOWLIST: process.env.TELEGRAM_ALLOWLIST ?? '',
+  },
 } as const
 
 export const getWorkspacePath = () => ENV.WORKSPACE.BASE_PATH
