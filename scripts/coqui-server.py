@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Coqui TTS Server with Jenny Model
+Coqui TTS Server with Dynamic Model Support
 Runs as a subprocess managed by the OpenCode Manager backend.
-Provides HTTP API for text-to-speech synthesis using Coqui TTS with Jenny voice.
+Provides HTTP API for text-to-speech synthesis using Coqui TTS with multiple voice models.
 """
 
 import os
@@ -10,18 +10,20 @@ import sys
 import io
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import StreamingResponse
+    from pydantic import BaseModel
     import uvicorn
 except ImportError:
     print("Installing required packages...")
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn", "pydantic"])
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import StreamingResponse
+    from pydantic import BaseModel
     import uvicorn
 
 try:
@@ -34,11 +36,13 @@ except ImportError:
 
 try:
     from TTS.api import TTS
+    from TTS.utils.manage import ModelManager
 except ImportError:
     print("Installing TTS...")
     import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "TTS"])
     from TTS.api import TTS
+    from TTS.utils.manage import ModelManager
 
 import scipy.io.wavfile as wavfile
 import numpy as np
@@ -46,16 +50,93 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Coqui TTS Server", version="1.0.0")
+app = FastAPI(title="Coqui TTS Server", version="2.0.0")
 
 COQUI_PORT = int(os.environ.get("COQUI_PORT", "5554"))
 COQUI_HOST = os.environ.get("COQUI_HOST", "127.0.0.1")
 COQUI_DEVICE = os.environ.get("COQUI_DEVICE", "auto")
 COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/jenny/jenny")
 
+# Global state
 model: Optional[TTS] = None
+current_model_name: str = COQUI_MODEL
 device: str = "cpu"
 sample_rate: int = 22050
+available_models_cache: List[Dict[str, Any]] = []
+
+# Curated list of high-quality English TTS models
+RECOMMENDED_MODELS = [
+    {
+        "id": "tts_models/en/jenny/jenny",
+        "name": "Jenny",
+        "description": "High-quality English female voice (recommended, fastest)",
+        "language": "en",
+        "quality": "high",
+        "speed": "fast"
+    },
+    {
+        "id": "tts_models/en/ljspeech/vits",
+        "name": "LJSpeech VITS",
+        "description": "Classic English female voice with VITS architecture",
+        "language": "en",
+        "quality": "high",
+        "speed": "fast"
+    },
+    {
+        "id": "tts_models/en/ljspeech/tacotron2-DDC",
+        "name": "LJSpeech Tacotron2",
+        "description": "Classic English female voice (slower, high quality)",
+        "language": "en",
+        "quality": "high",
+        "speed": "slow"
+    },
+    {
+        "id": "tts_models/en/vctk/vits",
+        "name": "VCTK VITS",
+        "description": "Multi-speaker English model (109 speakers)",
+        "language": "en",
+        "quality": "high",
+        "speed": "fast",
+        "multi_speaker": True
+    },
+    {
+        "id": "tts_models/en/ljspeech/glow-tts",
+        "name": "LJSpeech Glow-TTS",
+        "description": "Fast English female voice with Glow-TTS",
+        "language": "en",
+        "quality": "medium",
+        "speed": "very_fast"
+    },
+    {
+        "id": "tts_models/en/ljspeech/fast_pitch",
+        "name": "LJSpeech FastPitch",
+        "description": "Fast English female voice with FastPitch",
+        "language": "en",
+        "quality": "medium",
+        "speed": "very_fast"
+    },
+    {
+        "id": "tts_models/multilingual/multi-dataset/xtts_v2",
+        "name": "XTTS v2",
+        "description": "Multilingual voice cloning model (requires reference audio)",
+        "language": "multilingual",
+        "quality": "very_high",
+        "speed": "slow",
+        "multi_speaker": True,
+        "voice_cloning": True
+    },
+]
+
+
+class SynthesizeRequest(BaseModel):
+    text: str = None
+    input: str = None  # OpenAI-compatible alias
+    voice: str = "default"
+    speed: float = 1.0
+
+
+class ChangeModelRequest(BaseModel):
+    model_id: str
 
 
 def get_device() -> str:
@@ -72,22 +153,95 @@ def get_device() -> str:
     return device
 
 
-def get_model() -> TTS:
-    global model, sample_rate
-    if model is None:
-        dev = get_device()
-        logger.info(f"Loading Coqui TTS model '{COQUI_MODEL}' on {dev}...")
-        model = TTS(model_name=COQUI_MODEL, progress_bar=True)
+def load_model(model_name: str) -> TTS:
+    global model, current_model_name, sample_rate
+    
+    dev = get_device()
+    logger.info(f"Loading Coqui TTS model '{model_name}' on {dev}...")
+    
+    try:
+        new_model = TTS(model_name=model_name, progress_bar=True)
         if dev == "cuda":
-            model = model.to(dev)
+            new_model = new_model.to(dev)
         
-        if hasattr(model, 'synthesizer') and hasattr(model.synthesizer, 'output_sample_rate'):
-            sample_rate = model.synthesizer.output_sample_rate
+        if hasattr(new_model, 'synthesizer') and hasattr(new_model.synthesizer, 'output_sample_rate'):
+            sample_rate = new_model.synthesizer.output_sample_rate
         else:
             sample_rate = 22050
-            
+        
+        model = new_model
+        current_model_name = model_name
         logger.info(f"Coqui TTS model loaded successfully (sample_rate={sample_rate})")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load model '{model_name}': {e}")
+        raise
+
+
+def get_model() -> TTS:
+    global model
+    if model is None:
+        load_model(current_model_name)
     return model
+
+
+def discover_available_models() -> List[Dict[str, Any]]:
+    """Discover all available Coqui TTS models."""
+    global available_models_cache
+    
+    if available_models_cache:
+        return available_models_cache
+    
+    try:
+        # Get list of all available models from TTS
+        tts_instance = TTS()
+        all_models = tts_instance.list_models()
+        
+        # Filter to TTS models (not vocoder or voice conversion)
+        if hasattr(all_models, 'list_models'):
+            # Newer TTS versions
+            tts_models = [m for m in all_models.list_models() if m.startswith("tts_models/")]
+        elif hasattr(all_models, '__iter__'):
+            # Older versions or list-like
+            tts_models = [m for m in all_models if isinstance(m, str) and m.startswith("tts_models/")]
+        else:
+            logger.warning(f"Unexpected list_models return type: {type(all_models)}")
+            tts_models = []
+        
+        # Build model info list, prioritizing recommended models
+        models = []
+        seen_ids = set()
+        
+        # Add recommended models first
+        for rec_model in RECOMMENDED_MODELS:
+            models.append(rec_model)
+            seen_ids.add(rec_model["id"])
+        
+        # Add other English models found
+        for model_id in tts_models:
+            if model_id in seen_ids:
+                continue
+            if "/en/" in model_id:
+                parts = model_id.split("/")
+                name = parts[-1].replace("_", " ").replace("-", " ").title() if len(parts) > 2 else model_id
+                dataset = parts[2] if len(parts) > 2 else "unknown"
+                models.append({
+                    "id": model_id,
+                    "name": f"{dataset.upper()} {name}",
+                    "description": f"English TTS model: {model_id}",
+                    "language": "en",
+                    "quality": "medium",
+                    "speed": "medium"
+                })
+                seen_ids.add(model_id)
+        
+        available_models_cache = models
+        logger.info(f"Discovered {len(models)} TTS models")
+        return models
+        
+    except Exception as e:
+        logger.warning(f"Failed to discover models: {e}")
+        return RECOMMENDED_MODELS
 
 
 @app.on_event("startup")
@@ -100,6 +254,9 @@ async def startup_event():
         logger.info("Coqui TTS model pre-loaded successfully")
     except Exception as e:
         logger.warning(f"Could not pre-load model: {e}. Will load on first request.")
+    
+    # Pre-discover models in background
+    discover_available_models()
 
 
 @app.get("/health")
@@ -107,7 +264,7 @@ async def health():
     return {
         "status": "healthy",
         "model_loaded": model is not None,
-        "model_name": COQUI_MODEL,
+        "model_name": current_model_name,
         "device": device,
         "sample_rate": sample_rate,
         "cuda_available": torch.cuda.is_available(),
@@ -117,37 +274,65 @@ async def health():
 
 @app.get("/models")
 async def list_models():
+    """List all available TTS models."""
+    models = discover_available_models()
     return {
-        "models": [
-            {
-                "id": "tts_models/en/jenny/jenny",
-                "name": "Jenny",
-                "description": "High-quality English female voice (recommended)",
-                "language": "en"
-            },
-            {
-                "id": "tts_models/en/ljspeech/tacotron2-DDC",
-                "name": "LJSpeech Tacotron2",
-                "description": "Classic English female voice",
-                "language": "en"
-            },
-            {
-                "id": "tts_models/en/vctk/vits",
-                "name": "VCTK VITS",
-                "description": "Multi-speaker English model",
-                "language": "en"
-            }
-        ],
-        "current_model": COQUI_MODEL
+        "models": models,
+        "current_model": current_model_name
     }
+
+
+@app.post("/models/change")
+async def change_model(request: ChangeModelRequest):
+    """Change the active TTS model."""
+    global model
+    
+    model_id = request.model_id
+    logger.info(f"Changing model to: {model_id}")
+    
+    # Validate model exists
+    available = discover_available_models()
+    valid_ids = [m["id"] for m in available]
+    
+    if model_id not in valid_ids:
+        # Try to load anyway - it might be a valid model not in our curated list
+        logger.warning(f"Model '{model_id}' not in curated list, attempting to load anyway")
+    
+    try:
+        # Unload current model to free memory
+        if model is not None:
+            del model
+            model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # Load new model
+        load_model(model_id)
+        
+        return {
+            "success": True,
+            "model": current_model_name,
+            "device": device,
+            "sample_rate": sample_rate
+        }
+    except Exception as e:
+        logger.error(f"Failed to change model: {e}")
+        # Try to reload the previous model
+        try:
+            if current_model_name != model_id:
+                load_model(current_model_name)
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
 
 
 @app.get("/voices")
 async def list_voices():
+    """List available voices for the current model."""
     tts_model = get_model()
     
     voices = []
-    if tts_model.is_multi_speaker and hasattr(tts_model, 'speakers') and tts_model.speakers:
+    if hasattr(tts_model, 'is_multi_speaker') and tts_model.is_multi_speaker and hasattr(tts_model, 'speakers') and tts_model.speakers:
         for speaker in tts_model.speakers:
             voices.append({
                 "id": speaker,
@@ -155,24 +340,27 @@ async def list_voices():
                 "description": f"Speaker: {speaker}"
             })
     else:
+        # Single speaker model
+        model_name = current_model_name.split("/")[-1].replace("_", " ").replace("-", " ").title()
         voices.append({
             "id": "default",
-            "name": "Jenny",
-            "description": "Default Jenny voice"
+            "name": model_name,
+            "description": f"Default voice for {current_model_name}"
         })
     
     return {
         "voices": [v["id"] for v in voices],
         "voice_details": voices,
-        "is_multi_speaker": tts_model.is_multi_speaker if hasattr(tts_model, 'is_multi_speaker') else False
+        "is_multi_speaker": hasattr(tts_model, 'is_multi_speaker') and tts_model.is_multi_speaker
     }
 
 
 @app.post("/synthesize")
-async def synthesize(request: dict):
-    text = request.get("input") or request.get("text")
-    voice_id = request.get("voice", "default")
-    speed = request.get("speed", 1.0)
+async def synthesize(request: SynthesizeRequest):
+    """Synthesize speech from text."""
+    text = request.input or request.text
+    voice_id = request.voice
+    speed = request.speed
     
     if not text:
         raise HTTPException(status_code=400, detail="No text provided")
@@ -186,7 +374,7 @@ async def synthesize(request: dict):
         logger.info(f"Synthesizing text with voice '{voice_id}', speed={speed}")
         
         kwargs = {}
-        if tts_model.is_multi_speaker and voice_id != "default":
+        if hasattr(tts_model, 'is_multi_speaker') and tts_model.is_multi_speaker and voice_id != "default":
             kwargs["speaker"] = voice_id
         if hasattr(tts_model, 'is_multi_lingual') and tts_model.is_multi_lingual:
             kwargs["language"] = "en"
@@ -219,6 +407,7 @@ async def synthesize(request: dict):
 
 @app.post("/v1/audio/speech")
 async def openai_compatible_synthesize(request: dict):
+    """OpenAI-compatible speech synthesis endpoint."""
     text = request.get("input")
     voice = request.get("voice", "default")
     speed = request.get("speed", 1.0)
@@ -236,7 +425,7 @@ async def openai_compatible_synthesize(request: dict):
         logger.info(f"OpenAI-compatible synthesis: voice='{voice}', format='{response_format}'")
         
         kwargs = {}
-        if tts_model.is_multi_speaker and voice != "default":
+        if hasattr(tts_model, 'is_multi_speaker') and tts_model.is_multi_speaker and voice != "default":
             kwargs["speaker"] = voice
         if hasattr(tts_model, 'is_multi_lingual') and tts_model.is_multi_lingual:
             kwargs["language"] = "en"
@@ -264,6 +453,7 @@ async def openai_compatible_synthesize(request: dict):
 
 @app.get("/v1/audio/voices")
 async def openai_compatible_list_voices():
+    """OpenAI-compatible voice listing endpoint."""
     voices_data = await list_voices()
     return {
         "data": [

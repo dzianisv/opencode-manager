@@ -216,6 +216,36 @@ export function TTSSettings() {
       refetchCoquiStatus()
     },
   })
+
+  interface CoquiModel {
+    id: string
+    name: string
+    description: string
+    quality?: string
+    speed?: string
+    multi_speaker?: boolean
+  }
+  
+  const { data: coquiModels, refetch: refetchCoquiModels } = useQuery<{ models: CoquiModel[], currentModel: string }>({
+    queryKey: ['coqui', 'models'],
+    queryFn: async () => {
+      const response = await apiClient.get('/api/tts/coqui/models')
+      return response.data
+    },
+    enabled: coquiStatus?.running === true,
+  })
+  
+  const changeCoquiModelMutation = useMutation({
+    mutationFn: async (modelId: string) => {
+      const response = await apiClient.post('/api/tts/coqui/models/change', { modelId })
+      return response.data
+    },
+    onSuccess: () => {
+      refetchCoquiStatus()
+      refetchCoquiModels()
+      refetchCoquiVoices()
+    },
+  })
   
   const availableModels = modelsData?.models || preferences?.tts?.availableModels || []
   const availableVoices = voicesData?.voices || preferences?.tts?.availableVoices || []
@@ -529,7 +559,7 @@ export function TTSSettings() {
                   <div className="rounded-lg border border-border p-4 space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="font-medium">Coqui TTS Server (Jenny)</h3>
+                        <h3 className="font-medium">Coqui TTS Server</h3>
                         <p className="text-sm text-muted-foreground">
                           {coquiStatus?.running ? (
                             <span className="text-green-600 dark:text-green-400">
@@ -580,10 +610,51 @@ export function TTSSettings() {
                     
                     {startCoquiMutation.isPending && (
                       <div className="text-sm text-muted-foreground">
-                        Starting server... This may take a minute on first run to download the Jenny model.
+                        Starting server... This may take a minute on first run to download the model.
                       </div>
                     )}
                   </div>
+
+                  {/* Model Selection */}
+                  <FormItem>
+                    <FormLabel>TTS Model</FormLabel>
+                    <FormControl>
+                      <Combobox
+                        value={coquiModels?.currentModel || 'tts_models/en/jenny/jenny'}
+                        onChange={(modelId) => {
+                          if (modelId !== coquiModels?.currentModel) {
+                            changeCoquiModelMutation.mutate(modelId)
+                          }
+                        }}
+                        options={(coquiModels?.models || []).map((m) => ({
+                          value: m.id,
+                          label: `${m.name}${m.quality ? ` (${m.quality} quality, ${m.speed})` : ''}`
+                        }))}
+                        placeholder="Select a TTS model..."
+                        disabled={!coquiStatus?.running || changeCoquiModelMutation.isPending}
+                        allowCustomValue={false}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {changeCoquiModelMutation.isPending ? (
+                        <span className="flex items-center gap-1 text-blue-600">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Loading model... This may take a minute to download.
+                        </span>
+                      ) : coquiStatus?.running ? (
+                        <>
+                          {coquiModels?.models?.length || 0} models available. 
+                          {coquiModels?.models?.find(m => m.id === coquiModels?.currentModel)?.description && (
+                            <span className="block mt-1 text-xs">
+                              {coquiModels.models.find(m => m.id === coquiModels.currentModel)?.description}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        'Start the server to see available models'
+                      )}
+                    </FormDescription>
+                  </FormItem>
 
                   <FormField
                     control={form.control}
@@ -601,7 +672,7 @@ export function TTSSettings() {
                             <Combobox
                               value={field.value}
                               onChange={field.onChange}
-                              options={voiceOptions.length > 0 ? voiceOptions : [{ value: 'default', label: 'Jenny (Default)' }]}
+                              options={voiceOptions.length > 0 ? voiceOptions : [{ value: 'default', label: 'Default Voice' }]}
                               placeholder="Select a voice..."
                               disabled={!coquiStatus?.running}
                               allowCustomValue={false}
@@ -609,8 +680,10 @@ export function TTSSettings() {
                           </FormControl>
                           <FormDescription>
                             {coquiStatus?.running 
-                              ? `Model: ${coquiStatus.model}`
-                              : 'Start the Coqui TTS server to use Jenny voice'}
+                              ? voiceOptions.length > 1 
+                                ? `${voiceOptions.length} voices available for this model`
+                                : 'Single-speaker model'
+                              : 'Start the Coqui TTS server to select a voice'}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

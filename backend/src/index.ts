@@ -32,6 +32,7 @@ import { cleanupOrphanedDirectories, cleanupStaleRepoEntries, registerExternalDi
 import { proxyRequest } from './services/proxy'
 import { logger } from './utils/logger'
 import { chatterboxServerManager } from './services/chatterbox'
+import { coquiServerManager } from './services/coqui'
 import { startGlobalSSEListener, stopGlobalSSEListener } from './services/global-sse'
 import { autoPruneOnStartup } from './services/session-prune'
 import { startLogMaintenance } from './utils/log-maintenance'
@@ -337,6 +338,29 @@ try {
     logger.warn('Whisper server failed to start (STT will be unavailable):', error)
   }
 
+  // Auto-start TTS server if enabled in settings
+  try {
+    const ttsSettings = settingsService.getSettings('default').preferences.tts
+    if (ttsSettings?.enabled) {
+      if (ttsSettings.provider === 'coqui') {
+        logger.info('TTS is enabled with Coqui provider, starting Coqui TTS server...')
+        await coquiServerManager.start()
+        logger.info(`Coqui TTS server running on port ${coquiServerManager.getPort()}`)
+      } else if (ttsSettings.provider === 'chatterbox') {
+        logger.info('TTS is enabled with Chatterbox provider, starting Chatterbox TTS server...')
+        await chatterboxServerManager.start()
+        logger.info(`Chatterbox TTS server running on port ${chatterboxServerManager.getPort()}`)
+      }
+    } else {
+      logger.info('TTS is disabled in settings, skipping TTS server auto-start')
+    }
+  } catch (error) {
+    logger.warn('TTS server failed to start:', error)
+  }
+
+  // Start log maintenance routine
+  startLogMaintenance()
+
   try {
     schedulerService.setDatabase(db)
     await schedulerService.initialize()
@@ -506,6 +530,8 @@ const shutdown = async (signal: string) => {
     logger.info('Whisper server stopped')
     await chatterboxServerManager.stop()
     logger.info('Chatterbox server stopped')
+    await coquiServerManager.stop()
+    logger.info('Coqui TTS server stopped')
     await opencodeServerManager.stop()
     logger.info('OpenCode server stopped')
   } catch (error) {

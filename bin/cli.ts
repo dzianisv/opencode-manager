@@ -138,9 +138,9 @@ Usage: opencode-manager <command> [options]
 
 Commands:
   start              Start the OpenCode Manager server
+  status             Check status of locally running service
   install-service    Install as a user service (macOS/Linux)
   uninstall-service  Remove the user service
-  status             Show service status
   logs               Show service logs
   help               Show this help message
 
@@ -149,6 +149,9 @@ Start Options:
   --tunnel, -t       Start a Cloudflare tunnel for public access
   --port, -p <port>  Backend API port (default: 5001)
   --no-auth          Disable basic authentication
+
+Status Options:
+  --port, -p <port>  Backend API port to check (default: 5001)
 
 Service Options:
   --no-tunnel        Disable Cloudflare tunnel (tunnel enabled by default)
@@ -160,9 +163,9 @@ one will be started automatically.
 Examples:
   opencode-manager start
   opencode-manager start --tunnel
+  opencode-manager status
   opencode-manager install-service
   opencode-manager install-service --no-tunnel
-  opencode-manager status
 `)
 }
 
@@ -741,64 +744,6 @@ function commandUninstallService(): void {
   console.log('\n✅ Uninstallation complete!')
 }
 
-function commandStatus(): void {
-  const platform = os.platform()
-
-  console.log('\n📊 OpenCode Manager Service Status\n')
-
-  if (platform === 'darwin') {
-    const plistPath = getMacOSPlistPath()
-    
-    if (!fs.existsSync(plistPath)) {
-      console.log('❌ Service not installed')
-      return
-    }
-
-    try {
-      const result = execSync('launchctl list | grep com.opencode-manager', { encoding: 'utf8' })
-      const parts = result.trim().split(/\s+/)
-      const pid = parts[0]
-      const exitCode = parts[1]
-      
-      if (pid !== '-') {
-        console.log(`✅ Running (PID: ${pid})`)
-      } else if (exitCode === '0') {
-        console.log('⏸️  Stopped (last exit: success)')
-      } else {
-        console.log(`❌ Stopped (last exit code: ${exitCode})`)
-      }
-    } catch {
-      console.log('⏸️  Not running')
-    }
-
-  } else if (platform === 'linux') {
-    try {
-      const result = execSync('systemctl --user status opencode-manager --no-pager', { encoding: 'utf8' })
-      console.log(result)
-    } catch (err: unknown) {
-      const error = err as { stdout?: string }
-      if (error.stdout) {
-        console.log(error.stdout)
-      } else {
-        console.log('❌ Service not installed or not running')
-      }
-    }
-
-  } else {
-    console.log(`❌ Unsupported platform: ${platform}`)
-  }
-
-  if (fs.existsSync(ENDPOINTS_FILE)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(ENDPOINTS_FILE, 'utf8')) as EndpointsConfig
-      console.log('\n📍 Last known endpoints:')
-      for (const ep of config.endpoints) {
-        console.log(`   ${ep.type}: ${ep.url}`)
-      }
-    } catch {}
-  }
-}
-
 function commandLogs(): void {
   const platform = os.platform()
 
@@ -826,6 +771,238 @@ function commandLogs(): void {
   }
 }
 
+interface HealthResponse {
+  status: string
+  timestamp?: string
+  database?: string
+  opencode?: string
+  opencodePort?: number
+  opencodeVersion?: string
+  opencodeMinVersion?: string
+  opencodeVersionSupported?: boolean
+  telegram?: {
+    running: boolean
+    sessions: number
+    allowlist: number
+  }
+  error?: string
+}
+
+interface SttStatusResponse {
+  server: {
+    running: boolean
+    model?: string
+    port?: number
+  }
+}
+
+interface TtsStatusResponse {
+  enabled: boolean
+  configured: boolean
+  provider: string
+  coqui?: {
+    running: boolean
+    device?: string
+    model?: string
+    error?: string
+  }
+  chatterbox?: {
+    running: boolean
+    device?: string
+    error?: string
+  }
+}
+
+interface TunnelStatusResponse {
+  connected: boolean
+  url?: string
+  edgeLocation?: string
+  edgeLocationFormatted?: string
+  haConnections?: number
+  error?: string
+}
+
+async function commandHealth(args: string[]): Promise<void> {
+  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
+  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
+
+  // Load auth credentials
+  let auth: AuthConfig | null = null
+  if (fs.existsSync(AUTH_FILE)) {
+    try {
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+    } catch {}
+  }
+
+  const headers: Record<string, string> = {}
+  if (auth?.username && auth?.password) {
+    headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`
+  }
+
+  const results: {
+    backend: { ok: boolean; data?: HealthResponse; error?: string }
+    stt: { ok: boolean; data?: SttStatusResponse; error?: string }
+    tts: { ok: boolean; data?: TtsStatusResponse; error?: string }
+    tunnel: { ok: boolean; data?: TunnelStatusResponse; error?: string }
+  } = {
+    backend: { ok: false },
+    stt: { ok: false },
+    tts: { ok: false },
+    tunnel: { ok: false },
+  }
+
+  // Check backend health
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(5000),
+      headers,
+    })
+    if (response.ok) {
+      const data = await response.json() as HealthResponse
+      results.backend = { ok: data.status === 'healthy', data }
+    } else if (response.status === 401) {
+      results.backend = { ok: false, error: 'Authentication failed' }
+    } else {
+      results.backend = { ok: false, error: `HTTP ${response.status}` }
+    }
+  } catch (err) {
+    results.backend = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+  }
+
+  // Check STT status
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/stt/status`, {
+      signal: AbortSignal.timeout(5000),
+      headers,
+    })
+    if (response.ok) {
+      const data = await response.json() as SttStatusResponse
+      results.stt = { ok: data.server?.running === true, data }
+    } else {
+      results.stt = { ok: false, error: `HTTP ${response.status}` }
+    }
+  } catch (err) {
+    results.stt = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+  }
+
+  // Check TTS status
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/tts/status`, {
+      signal: AbortSignal.timeout(5000),
+      headers,
+    })
+    if (response.ok) {
+      const data = await response.json() as TtsStatusResponse
+      // TTS is ok if configured and either provider's server is running
+      const providerRunning = 
+        (data.provider === 'coqui' && data.coqui?.running) ||
+        (data.provider === 'chatterbox' && data.chatterbox?.running) ||
+        (data.provider === 'external' && data.configured) ||
+        (data.provider === 'builtin')
+      results.tts = { ok: data.configured && providerRunning, data }
+    } else {
+      results.tts = { ok: false, error: `HTTP ${response.status}` }
+    }
+  } catch (err) {
+    results.tts = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+  }
+
+  // Check tunnel status
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/tunnel/status`, {
+      signal: AbortSignal.timeout(5000),
+      headers,
+    })
+    if (response.ok) {
+      const data = await response.json() as TunnelStatusResponse
+      results.tunnel = { ok: data.connected === true, data }
+    } else {
+      results.tunnel = { ok: false, error: `HTTP ${response.status}` }
+    }
+  } catch (err) {
+    results.tunnel = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+  }
+
+  // Build YAML output
+  const backendStatus = results.backend.ok ? 'healthy' : 
+    (results.backend.data?.status === 'degraded' ? 'degraded' : 'unhealthy')
+  const sttStatus = results.stt.ok ? 'running' : 'stopped'
+  const ttsStatus = results.tts.ok ? 'running' : 
+    (results.tts.data?.configured ? 'stopped' : 'not_configured')
+  const tunnelStatus = results.tunnel.ok ? 'connected' : 'disconnected'
+
+  // Overall health
+  const backendDegraded = results.backend.data?.status === 'degraded'
+  const coreHealthy = results.backend.ok || backendDegraded
+  const allHealthy = results.backend.ok && results.stt.ok && results.tts.ok && results.tunnel.ok
+  const overallStatus = allHealthy ? 'healthy' : (coreHealthy ? 'degraded' : 'unhealthy')
+
+  // YAML output
+  console.log(`status: ${overallStatus}`)
+  console.log(`port: ${port}`)
+  console.log('')
+  console.log('backend:')
+  console.log(`  status: ${backendStatus}`)
+  if (results.backend.data) {
+    console.log(`  database: ${results.backend.data.database || 'unknown'}`)
+    console.log(`  opencode: ${results.backend.data.opencode || 'unknown'}`)
+    if (results.backend.data.opencodeVersion) {
+      console.log(`  opencode_version: ${results.backend.data.opencodeVersion}`)
+    }
+  }
+  if (results.backend.error) {
+    console.log(`  error: ${results.backend.error}`)
+  }
+
+  console.log('')
+  console.log('stt:')
+  console.log(`  status: ${sttStatus}`)
+  if (results.stt.data?.server) {
+    console.log(`  model: ${results.stt.data.server.model || 'unknown'}`)
+    console.log(`  port: ${results.stt.data.server.port || 'unknown'}`)
+  }
+  if (results.stt.error) {
+    console.log(`  error: ${results.stt.error}`)
+  }
+
+  console.log('')
+  console.log('tts:')
+  console.log(`  status: ${ttsStatus}`)
+  if (results.tts.data) {
+    console.log(`  provider: ${results.tts.data.provider}`)
+    if (results.tts.data.coqui?.running) {
+      console.log(`  model: ${results.tts.data.coqui.model || 'unknown'}`)
+    }
+  }
+  if (results.tts.error) {
+    console.log(`  error: ${results.tts.error}`)
+  }
+
+  console.log('')
+  console.log('tunnel:')
+  console.log(`  status: ${tunnelStatus}`)
+  if (results.tunnel.data?.url) {
+    // Build authenticated URL
+    let tunnelUrl = results.tunnel.data.url
+    if (auth?.username && auth?.password) {
+      const urlObj = new URL(tunnelUrl)
+      urlObj.username = auth.username
+      urlObj.password = auth.password
+      tunnelUrl = urlObj.toString()
+    }
+    console.log(`  url: ${tunnelUrl}`)
+    if (results.tunnel.data.edgeLocationFormatted) {
+      console.log(`  edge_location: ${results.tunnel.data.edgeLocationFormatted}`)
+    }
+  }
+  if (results.tunnel.error) {
+    console.log(`  error: ${results.tunnel.error}`)
+  }
+
+  // Exit code based on overall health
+  process.exit(coreHealthy ? 0 : 1)
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0] || 'help'
@@ -835,14 +1012,14 @@ async function main(): Promise<void> {
     case 'start':
       await commandStart(commandArgs)
       break
+    case 'status':
+      await commandHealth(commandArgs)
+      break
     case 'install-service':
       commandInstallService(commandArgs)
       break
     case 'uninstall-service':
       commandUninstallService()
-      break
-    case 'status':
-      commandStatus()
       break
     case 'logs':
       commandLogs()

@@ -35,11 +35,14 @@ This fork of [opencode-manager](https://github.com/chriswritescode-dev/opencode-
 | Feature | This Fork | Upstream |
 |---------|-----------|----------|
 | **Built-in STT** | ✅ Faster Whisper server (local, no API key) | ❌ External API only |
-| **Built-in TTS** | ✅ Coqui + Chatterbox engines (local) | ❌ External API only |
+| **Built-in TTS** | ✅ Coqui + Chatterbox (7+ models, local) | ❌ External API only |
 | **Browser Voice** | ✅ Web Speech API fallback | ✅ Web Speech API |
 | **System Service** | ✅ `install-service` for macOS/Linux | ❌ Manual startup |
+| **Status Command** | ✅ YAML health output w/ tunnel URL | ❌ Not included |
 | **Cloudflare Tunnel** | ✅ Built-in, auto-starts with service | ❌ Not included |
-| **Tunnel Metrics UI** | ✅ Live connection stats in Settings | ❌ Not included |
+| **Tunnel Metrics UI** | ✅ Live connection stats + logs in Settings | ❌ Not included |
+| **Session Pruning** | ✅ Auto-cleanup old sessions | ❌ Manual cleanup |
+| **Log Rotation** | ✅ Auto-rotate logs (5MB limit) | ❌ Not included |
 | **Cloud Deploy** | ✅ One-command Azure deployment | ❌ Not included |
 | **Basic Auth** | ✅ Caddy proxy with auth | ❌ Not included |
 | **E2E Voice Tests** | ✅ Browser + API tests | ❌ Not included |
@@ -169,6 +172,11 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 ### Text-to-Speech (TTS)
 - **Dual Provider Support** - Browser-native Web Speech API + external OpenAI-compatible endpoints
 - **Browser-Native TTS** - Built-in Web Speech API for instant playback without API keys
+- **Coqui TTS with Multi-Model Support** - 7+ high-quality English voice models with runtime switching:
+  - Jenny (default, fastest)
+  - LJSpeech VITS, Tacotron2, Glow-TTS, FastPitch
+  - VCTK VITS (109 multi-speaker voices)
+  - XTTS v2 (multilingual voice cloning)
 - **AI Message Playback** - Listen to assistant responses with TTS
 - **OpenAI-Compatible** - Works with any OpenAI-compatible TTS endpoint
 - **Voice & Speed Discovery** - Automatic voice detection with caching (1hr TTL)
@@ -177,6 +185,16 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 - **Markdown Sanitization** - Filters unreadable symbols for smooth playback
 - **Floating Controls** - Persistent stop button for audio control
 - **Custom Endpoints** - Connect to local or self-hosted TTS services
+
+### Session Management
+- **Session Pruning** - Automatic cleanup of old sessions to save disk space
+- **Auto-Prune on Startup** - Configurable retention period (default: 30 days)
+- **Bulk Delete** - Delete multiple sessions at once from the UI
+
+### Log Management
+- **Cloudflare Tunnel Logs** - Logs surfaced in UI Settings → Tunnel tab
+- **Log Rotation** - Automatic rotation at 5MB with up to 3 backups
+- **Runtime Maintenance** - Log files rotated every 5 minutes to prevent disk bloat
 
 ### QA Testing System
 - **Autonomous AI Testing** - OpenCode AI agent can autonomously test the entire application
@@ -256,7 +274,7 @@ opencode-manager install-service
 # Install as a service without tunnel (local only)
 opencode-manager install-service --no-tunnel
 
-# Check service status
+# Check service status (YAML output with health checks)
 opencode-manager status
 
 # View service logs
@@ -267,6 +285,36 @@ opencode-manager uninstall-service
 
 # Show help
 opencode-manager help
+```
+
+**Status Command Output:**
+
+The `status` command provides comprehensive health information in YAML format:
+
+```yaml
+status: healthy
+port: 5001
+
+backend:
+  status: healthy
+  database: ok
+  opencode: connected
+  opencode_version: 1.2.0
+
+stt:
+  status: running
+  model: ggml-small-q5_1
+  port: 5552
+
+tts:
+  status: running
+  provider: coqui
+  model: tts_models/en/jenny/jenny
+
+tunnel:
+  status: connected
+  url: https://admin:password@xxx.trycloudflare.com
+  edge_location: San Francisco, CA
 ```
 
 **Service Installation:**
@@ -284,6 +332,7 @@ All configuration is stored in `~/.local/run/opencode-manager/`:
 |------|-------------|
 | `auth.json` | Basic auth credentials (`{"username": "admin", "password": "..."}`) |
 | `endpoints.json` | Active endpoints (local URL and tunnel URL if enabled) |
+| `cloudflared.log` | Cloudflare tunnel logs (auto-rotated at 5MB) |
 | `stdout.log` | Service stdout (macOS only) |
 | `stderr.log` | Service stderr (macOS only) |
 

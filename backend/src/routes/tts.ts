@@ -847,5 +847,23 @@ export function createTTSRoutes(db: Database) {
     }
   })
 
+  app.post('/coqui/models/change', async (c) => {
+    try {
+      const body = await c.req.json() as { modelId: string }
+      if (!body.modelId) {
+        return c.json({ error: 'modelId is required' }, 400)
+      }
+      
+      const result = await coquiServerManager.changeModel(body.modelId)
+      return c.json(result)
+    } catch (error) {
+      logger.error('Failed to change Coqui model:', error)
+      return c.json({ 
+        error: 'Failed to change model',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      }, 500)
+    }
+  })
+
   return app
 }

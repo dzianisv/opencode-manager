@@ -405,7 +405,7 @@ class CoquiServerManager {
   }
 
   async getModels(): Promise<{
-    models: Array<{ id: string; name: string; description: string }>
+    models: Array<{ id: string; name: string; description: string; quality?: string; speed?: string; multi_speaker?: boolean }>
     currentModel: string
   }> {
     if (!this.status.running) {
@@ -413,7 +413,9 @@ class CoquiServerManager {
         models: [{
           id: 'tts_models/en/jenny/jenny',
           name: 'Jenny',
-          description: 'High-quality English female voice (recommended)'
+          description: 'High-quality English female voice (recommended)',
+          quality: 'high',
+          speed: 'fast'
         }],
         currentModel: COQUI_MODEL
       }
@@ -423,9 +425,11 @@ class CoquiServerManager {
       const response = await fetch(`${this.getBaseUrl()}/models`)
       if (response.ok) {
         const data = await response.json() as {
-          models: Array<{ id: string; name: string; description: string }>
+          models: Array<{ id: string; name: string; description: string; quality?: string; speed?: string; multi_speaker?: boolean }>
           current_model: string
         }
+        // Update status with current model
+        this.status.model = data.current_model
         return {
           models: data.models,
           currentModel: data.current_model
@@ -439,9 +443,62 @@ class CoquiServerManager {
       models: [{
         id: 'tts_models/en/jenny/jenny',
         name: 'Jenny',
-        description: 'High-quality English female voice (recommended)'
+        description: 'High-quality English female voice (recommended)',
+        quality: 'high',
+        speed: 'fast'
       }],
       currentModel: COQUI_MODEL
+    }
+  }
+
+  async changeModel(modelId: string): Promise<{
+    success: boolean
+    model: string
+    device: string
+    sampleRate: number
+  }> {
+    if (!this.status.running) {
+      throw new Error('Coqui TTS server is not running')
+    }
+
+    logger.info(`Changing Coqui TTS model to: ${modelId}`)
+
+    try {
+      const response = await fetch(`${this.getBaseUrl()}/models/change`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ model_id: modelId })
+      })
+
+      if (!response.ok) {
+        const error = await response.text()
+        throw new Error(`Failed to change model: ${error}`)
+      }
+
+      const data = await response.json() as {
+        success: boolean
+        model: string
+        device: string
+        sample_rate: number
+      }
+
+      // Update local status
+      this.status.model = data.model
+      this.status.device = data.device
+
+      logger.info(`Successfully changed model to: ${data.model}`)
+
+      return {
+        success: data.success,
+        model: data.model,
+        device: data.device,
+        sampleRate: data.sample_rate
+      }
+    } catch (error) {
+      logger.error('Failed to change Coqui TTS model:', error)
+      throw error
     }
   }
 }
