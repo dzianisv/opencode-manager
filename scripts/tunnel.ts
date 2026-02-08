@@ -371,19 +371,23 @@ async function main() {
       stopTunnel()
       break
     case 'status':
-      showStatus()
+      await showStatus()
       break
     case 'url':
-      showUrl()
+      await showUrl()
+      break
+    case 'health':
+      await checkHealth()
       break
     default:
-      console.log('Usage: bun scripts/tunnel.ts [start|stop|status|url] [--port PORT]')
+      console.log('Usage: bun scripts/tunnel.ts [start|stop|status|url|health] [--port PORT]')
       console.log('')
       console.log('Commands:')
       console.log('  start   Start a persistent Cloudflare tunnel')
       console.log('  stop    Stop the running tunnel')
-      console.log('  status  Show tunnel status')
+      console.log('  status  Show tunnel status (with health check)')
       console.log('  url     Print just the tunnel URL (for scripts)')
+      console.log('  health  Check if tunnel URL is reachable')
       console.log('')
       console.log('Options:')
       console.log('  --port, -p  Local port to tunnel (default: 5001)')
