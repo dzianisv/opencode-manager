@@ -7,6 +7,7 @@ import os from 'os'
 const TUNNEL_STATE_DIR = path.join(os.homedir(), '.local', 'run', 'opencode-manager')
 const TUNNEL_STATE_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.json')
 const TUNNEL_PID_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.pid')
+const ENDPOINTS_FILE = path.join(TUNNEL_STATE_DIR, 'endpoints.json')
 
 interface TunnelState {
   pid: number
@@ -14,6 +15,14 @@ interface TunnelState {
   urlWithAuth: string | null
   port: number
   startedAt: number
+}
+
+interface EndpointsFile {
+  endpoints: Array<{
+    type: 'local' | 'tunnel'
+    url: string
+    timestamp: string
+  }>
 }
 
 interface AuthConfig {
@@ -48,9 +57,9 @@ function buildUrlWithAuth(baseUrl: string, auth: AuthConfig | null): string | nu
   }
 }
 
-function parseArgs(): { action: 'start' | 'stop' | 'status' | 'url'; port: number } {
+function parseArgs(): { action: 'start' | 'stop' | 'status' | 'url' | 'health'; port: number } {
   const args = process.argv.slice(2)
-  const action = (args[0] || 'status') as 'start' | 'stop' | 'status' | 'url'
+  const action = (args[0] || 'status') as 'start' | 'stop' | 'status' | 'url' | 'health'
   const portArg = args.find((_, i, arr) => arr[i - 1] === '--port' || arr[i - 1] === '-p')
   const port = parseInt(portArg || '5001')
   return { action, port }
@@ -91,6 +100,50 @@ function clearTunnelState(): void {
   } catch {}
 }
 
+function updateEndpointsFile(tunnelUrl: string | null, port: number): void {
+  ensureStateDir()
+  const timestamp = new Date().toISOString()
+  const endpoints: EndpointsFile = {
+    endpoints: [
+      {
+        type: 'local',
+        url: `http://localhost:${port}`,
+        timestamp,
+      },
+    ],
+  }
+  if (tunnelUrl) {
+    endpoints.endpoints.push({
+      type: 'tunnel',
+      url: tunnelUrl,
+      timestamp,
+    })
+  }
+  writeFileSync(ENDPOINTS_FILE, JSON.stringify(endpoints, null, 2))
+}
+
+async function checkTunnelHealth(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000)
+    const response = await fetch(url, {
+      method: 'HEAD',
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    return response.status !== 502 && response.status !== 503 && response.status !== 504
+  } catch (err: unknown) {
+    const error = err as Error
+    if (error.cause && typeof error.cause === 'object' && 'code' in error.cause) {
+      const cause = error.cause as { code: string }
+      if (cause.code === 'ENOTFOUND') {
+        return false
+      }
+    }
+    return false
+  }
+}
+
 function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -100,7 +153,7 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-function findExistingTunnel(): TunnelState | null {
+async function findExistingTunnel(verifyHealth: boolean = false): Promise<TunnelState | null> {
   const state = readTunnelState()
   if (!state) return null
   
@@ -108,12 +161,20 @@ function findExistingTunnel(): TunnelState | null {
     clearTunnelState()
     return null
   }
+
+  if (verifyHealth) {
+    const isHealthy = await checkTunnelHealth(state.url)
+    if (!isHealthy) {
+      console.log(`Tunnel URL ${state.url} is not reachable`)
+      return null
+    }
+  }
   
   return state
 }
 
 async function startTunnel(port: number): Promise<TunnelState | null> {
-  const existing = findExistingTunnel()
+  const existing = await findExistingTunnel(true)
   if (existing) {
     if (existing.port === port) {
       console.log(`Tunnel already running on port ${port}`)
@@ -123,6 +184,15 @@ async function startTunnel(port: number): Promise<TunnelState | null> {
     } else {
       console.log(`Stopping existing tunnel on port ${existing.port}...`)
       stopTunnel()
+    }
+  } else {
+    const staleState = readTunnelState()
+    if (staleState && isProcessRunning(staleState.pid)) {
+      console.log(`Killing stale tunnel process (PID ${staleState.pid}) with unreachable URL...`)
+      try {
+        process.kill(staleState.pid, 'SIGTERM')
+      } catch {}
+      clearTunnelState()
     }
   }
 
@@ -186,6 +256,7 @@ async function startTunnel(port: number): Promise<TunnelState | null> {
   }
 
   writeTunnelState(state)
+  updateEndpointsFile(urlWithAuth || url, port)
 
   console.log(`\nTunnel started successfully!`)
   console.log(`URL: ${url}`)
@@ -223,11 +294,19 @@ function stopTunnel(): boolean {
   }
 }
 
-function showStatus(): void {
-  const state = findExistingTunnel()
+async function showStatus(): Promise<void> {
+  const state = await findExistingTunnel(true)
   
   if (!state) {
-    console.log('No tunnel is running')
+    const staleState = readTunnelState()
+    if (staleState && isProcessRunning(staleState.pid)) {
+      console.log('Tunnel Status: UNHEALTHY (process running but URL unreachable)')
+      console.log(`URL: ${staleState.url}`)
+      console.log(`PID: ${staleState.pid}`)
+      console.log('\nRun "bun scripts/tunnel.ts start" to restart the tunnel')
+    } else {
+      console.log('No tunnel is running')
+    }
     return
   }
 
@@ -246,14 +325,39 @@ function showStatus(): void {
   console.log(`Uptime: ${hours}h ${minutes}m ${seconds}s`)
 }
 
-function showUrl(): void {
-  const state = findExistingTunnel()
+async function showUrl(): Promise<void> {
+  const state = await findExistingTunnel()
   
   if (!state) {
     process.exit(1)
   }
 
   console.log(state.url)
+}
+
+async function checkHealth(): Promise<void> {
+  const state = readTunnelState()
+  
+  if (!state) {
+    console.log('No tunnel state found')
+    process.exit(1)
+  }
+
+  if (!isProcessRunning(state.pid)) {
+    console.log('Tunnel process is not running')
+    process.exit(1)
+  }
+
+  console.log(`Checking tunnel health: ${state.url}`)
+  const isHealthy = await checkTunnelHealth(state.url)
+  
+  if (isHealthy) {
+    console.log('Tunnel is healthy')
+    process.exit(0)
+  } else {
+    console.log('Tunnel URL is unreachable')
+    process.exit(1)
+  }
 }
 
 async function main() {
