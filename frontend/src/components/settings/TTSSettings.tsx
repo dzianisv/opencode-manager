@@ -10,6 +10,7 @@ import { Loader2, Volume2, Square, XCircle, RefreshCw, MonitorSpeaker, Globe, Ch
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Combobox } from '@/components/ui/combobox'
@@ -615,27 +616,25 @@ export function TTSSettings() {
                     )}
                   </div>
 
-                  {/* Model Selection */}
-                  <FormItem>
-                    <FormLabel>TTS Model</FormLabel>
-                    <FormControl>
-                      <Combobox
-                        value={coquiModels?.currentModel || 'tts_models/en/jenny/jenny'}
-                        onChange={(modelId) => {
-                          if (modelId !== coquiModels?.currentModel) {
-                            changeCoquiModelMutation.mutate(modelId)
-                          }
-                        }}
-                        options={(coquiModels?.models || []).map((m) => ({
-                          value: m.id,
-                          label: `${m.name}${m.quality ? ` (${m.quality} quality, ${m.speed})` : ''}`
-                        }))}
-                        placeholder="Select a TTS model..."
-                        disabled={!coquiStatus?.running || changeCoquiModelMutation.isPending}
-                        allowCustomValue={false}
-                      />
-                    </FormControl>
-                    <FormDescription>
+                  {/* Model Selection - not part of form, uses direct mutation */}
+                  <div className="space-y-2">
+                    <Label>TTS Model</Label>
+                    <Combobox
+                      value={coquiModels?.currentModel || 'tts_models/en/jenny/jenny'}
+                      onChange={(modelId) => {
+                        if (modelId !== coquiModels?.currentModel) {
+                          changeCoquiModelMutation.mutate(modelId)
+                        }
+                      }}
+                      options={(coquiModels?.models || []).map((m) => ({
+                        value: m.id,
+                        label: `${m.name}${m.quality ? ` (${m.quality} quality, ${m.speed})` : ''}`
+                      }))}
+                      placeholder="Select a TTS model..."
+                      disabled={!coquiStatus?.running || changeCoquiModelMutation.isPending}
+                      allowCustomValue={false}
+                    />
+                    <p className="text-sm text-muted-foreground">
                       {changeCoquiModelMutation.isPending ? (
                         <span className="flex items-center gap-1 text-blue-600">
                           <Loader2 className="h-3 w-3 animate-spin" />
@@ -653,8 +652,8 @@ export function TTSSettings() {
                       ) : (
                         'Start the server to see available models'
                       )}
-                    </FormDescription>
-                  </FormItem>
+                    </p>
+                  </div>
 
                   <FormField
                     control={form.control}
