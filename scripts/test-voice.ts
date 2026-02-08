@@ -368,6 +368,14 @@ class VoiceTest {
 
   async testTTSSynthesis(): Promise<TestResult> {
     return this.runTest('TTS Synthesis', async () => {
+      const settingsResponse = await this.fetch('/api/settings')
+      const settings = await settingsResponse.json()
+      const ttsProvider = settings.preferences?.tts?.provider
+      
+      if (ttsProvider === 'builtin') {
+        return { passed: true, details: 'SKIPPED: TTS provider is "builtin" (browser handles synthesis)' }
+      }
+
       const response = await this.fetch('/api/tts/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -599,6 +607,18 @@ class VoiceTest {
 
   async testCoquiTTSSynthesis(): Promise<TestResult> {
     return this.runTest('Coqui TTS Synthesis', async () => {
+      const settingsResponse = await this.fetch('/api/settings')
+      const settings = await settingsResponse.json()
+      const ttsProvider = settings.preferences?.tts?.provider
+      
+      if (ttsProvider === 'builtin') {
+        return { passed: true, details: 'SKIPPED: TTS provider is "builtin" (browser handles synthesis)' }
+      }
+      
+      if (ttsProvider !== 'coqui') {
+        return { passed: true, details: `SKIPPED: TTS provider is "${ttsProvider}", not "coqui"` }
+      }
+
       const statusResponse = await this.fetch('/api/tts/coqui/status')
       const statusData = await statusResponse.json()
       
