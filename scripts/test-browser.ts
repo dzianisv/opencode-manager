@@ -906,18 +906,20 @@ const isComplete = lastMsg.info?.time?.completed
     fail(`Test error: ${error instanceof Error ? error.message : error}`)
     return false
   } finally {
-    info('Creating GIF from screenshots...')
+    info('Creating screencast GIF...')
     const gifResult = await VideoRecorder.fromTestDirectory(config.outputDir, {
-      fps: 0.5,
+      secondsPerFrame: 0.5,
       width: 1280,
       height: 800,
-      outputName: 'test-recording.gif'
+      outputName: 'screencast.gif',
+      finalFrameSeconds: 3,
+      deduplicate: true
     })
 
     if (gifResult.success) {
-      success(`GIF created: ${gifResult.videoPath} (${gifResult.sizeMB} MB)`)
+      success(`Screencast: ${gifResult.videoPath} (${gifResult.sizeMB} MB, ${gifResult.duration?.toFixed(1)}s)`)
     } else {
-      log(`GIF creation failed: ${gifResult.error}`, 1)
+      log(`Screencast creation failed: ${gifResult.error}`, 1)
     }
 
     if (browser) {

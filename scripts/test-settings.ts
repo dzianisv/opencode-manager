@@ -3,6 +3,7 @@
 import puppeteer, { Browser, Page } from 'puppeteer'
 import { mkdirSync } from 'fs'
 import { join } from 'path'
+import { AutoScreenshotter, VideoRecorder } from './lib/video-recorder'
 
 interface TestConfig {
   baseUrl: string
@@ -76,6 +77,7 @@ class SettingsTest {
   private browser: Browser | null = null
   private page: Page | null = null
   private consoleErrors: string[] = []
+  private autoScreenshotter: AutoScreenshotter | null = null
 
   constructor(config: TestConfig) {
     this.config = config
@@ -694,6 +696,15 @@ class SettingsTest {
     try {
       await this.setupBrowser()
       await this.navigateToApp()
+
+      this.autoScreenshotter = new AutoScreenshotter({
+        browser: this.browser,
+        page: this.page,
+        screenshotsDir: this.config.screenshotsDir,
+        intervalMs: 500
+      })
+      this.autoScreenshotter.start()
+
       await this.openSettingsDialog()
 
       await this.runTest('Settings Dialog Opens', () => this.testSettingsDialogOpens())
@@ -707,12 +718,36 @@ class SettingsTest {
       await this.runTest('No Critical Console Errors', () => this.testNoConsoleErrors())
 
     } finally {
+      if (this.autoScreenshotter) {
+        this.autoScreenshotter.stop()
+      }
+
+      await this.createScreencast()
+
       if (this.browser) {
         await this.browser.close()
       }
     }
 
     this.printResults()
+  }
+
+  private async createScreencast(): Promise<void> {
+    console.log('\nCreating screencast GIF...')
+    const result = await VideoRecorder.fromTestDirectory(this.config.outputDir, {
+      outputName: 'screencast.gif',
+      secondsPerFrame: 0.5,
+      finalFrameSeconds: 2,
+      deduplicate: true,
+      width: 1200,
+      height: 800
+    })
+
+    if (result.success) {
+      console.log(`Screencast: ${result.videoPath} (${result.sizeMB}MB, ${result.duration?.toFixed(1)}s)`)
+    } else {
+      console.log(`Screencast creation failed: ${result.error}`)
+    }
   }
 
   private printResults(): void {
@@ -734,6 +769,7 @@ class SettingsTest {
     console.log('\n' + '-'.repeat(60))
     console.log(`Total: ${this.results.length} | Passed: ${passed} | Failed: ${failed}`)
     console.log(`Screenshots: ${this.config.screenshotsDir}`)
+    console.log(`Screencast: ${join(this.config.outputDir, 'screencast.gif')}`)
     console.log('-'.repeat(60) + '\n')
 
     if (failed > 0) {

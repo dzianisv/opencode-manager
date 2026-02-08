@@ -1,5 +1,6 @@
 import { spawnSync } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, statSync, rmSync, copyFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { existsSync, mkdirSync, readdirSync, statSync, rmSync, copyFileSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 export function hasFfmpeg(): boolean {
@@ -21,8 +22,12 @@ interface VideoRecorderOptions {
   width?: number
   height?: number
   fps?: number
+  secondsPerFrame?: number
   maxScreenshots?: number
   outputName?: string
+  finalFrameSeconds?: number
+  deduplicate?: boolean
+  similarityThreshold?: number
 }
 
 interface CreateVideoResult {
@@ -40,7 +45,16 @@ export class VideoRecorder {
   private testDir: string
   private screenshotsDir: string
   private framesDir: string
-  private options: Required<VideoRecorderOptions>
+  private options: {
+    width: number
+    height: number
+    fps: number
+    maxScreenshots: number
+    outputName: string
+    finalFrameSeconds: number
+    deduplicate: boolean
+    similarityThreshold: number
+  }
   private screenshots: Screenshot[] = []
   private frameCount = 0
 
@@ -49,12 +63,20 @@ export class VideoRecorder {
     this.screenshotsDir = join(testDir, 'screenshots')
     this.framesDir = join(testDir, 'gif-frames')
 
+    let fps = options.fps || 1
+    if (options.secondsPerFrame) {
+      fps = 1 / options.secondsPerFrame
+    }
+
     this.options = {
-      width: options.width || 800,
-      height: options.height || 500,
-      fps: options.fps || 0.5,
-      maxScreenshots: options.maxScreenshots || 30,
-      outputName: options.outputName || 'test-recording.gif'
+      width: options.width || 1200,
+      height: options.height || 800,
+      fps,
+      maxScreenshots: options.maxScreenshots || 50,
+      outputName: options.outputName || 'screencast.gif',
+      finalFrameSeconds: options.finalFrameSeconds ?? 3,
+      deduplicate: options.deduplicate !== false,
+      similarityThreshold: options.similarityThreshold || 0.95
     }
   }
 
@@ -64,6 +86,100 @@ export class VideoRecorder {
       name,
       timestamp: metadata.timestamp || Date.now()
     })
+  }
+
+  private getFileHash(filePath: string): string {
+    const content = readFileSync(filePath)
+    return createHash('md5').update(content).digest('hex')
+  }
+
+  private getPerceptualHash(filePath: string, size = 16): string {
+    try {
+      const result = spawnSync('ffmpeg', [
+        '-i', filePath,
+        '-vf', `scale=${size}:${size}:flags=area`,
+        '-pix_fmt', 'gray',
+        '-f', 'rawvideo',
+        '-'
+      ], { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: size * size * 4 })
+
+      if (result.status !== 0 || !result.stdout || result.stdout.length === 0) {
+        return this.getFileHash(filePath)
+      }
+
+      return createHash('md5').update(result.stdout).digest('hex')
+    } catch {
+      return this.getFileHash(filePath)
+    }
+  }
+
+  private areImagesSimilar(filePath1: string, filePath2: string, threshold = 0.95): boolean {
+    const size = 32
+
+    try {
+      const getPixels = (filePath: string): Buffer | null => {
+        const result = spawnSync('ffmpeg', [
+          '-i', filePath,
+          '-vf', `scale=${size}:${size}:flags=area`,
+          '-pix_fmt', 'gray',
+          '-f', 'rawvideo',
+          '-'
+        ], { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: size * size * 4 })
+
+        return result.status === 0 ? result.stdout : null
+      }
+
+      const pixels1 = getPixels(filePath1)
+      const pixels2 = getPixels(filePath2)
+
+      if (!pixels1 || !pixels2 || pixels1.length !== pixels2.length) {
+        return this.getFileHash(filePath1) === this.getFileHash(filePath2)
+      }
+
+      let matchingPixels = 0
+      const pixelTolerance = 10
+
+      for (let i = 0; i < pixels1.length; i++) {
+        if (Math.abs(pixels1[i] - pixels2[i]) <= pixelTolerance) {
+          matchingPixels++
+        }
+      }
+
+      const similarity = matchingPixels / pixels1.length
+      return similarity >= threshold
+    } catch {
+      return this.getFileHash(filePath1) === this.getFileHash(filePath2)
+    }
+  }
+
+  private deduplicateScreenshots(screenshots: Screenshot[]): Screenshot[] {
+    if (!this.options.deduplicate || screenshots.length === 0) {
+      return screenshots
+    }
+
+    const deduplicated: Screenshot[] = []
+    let lastFilePath: string | null = null
+
+    for (const screenshot of screenshots) {
+      if (!screenshot.path || !existsSync(screenshot.path)) {
+        deduplicated.push(screenshot)
+        lastFilePath = null
+        continue
+      }
+
+      if (lastFilePath && this.areImagesSimilar(lastFilePath, screenshot.path, this.options.similarityThreshold)) {
+        continue
+      }
+
+      deduplicated.push(screenshot)
+      lastFilePath = screenshot.path
+    }
+
+    if (deduplicated.length < screenshots.length) {
+      console.log(`Deduplicated: ${screenshots.length} → ${deduplicated.length} screenshots (removed ${screenshots.length - deduplicated.length} similar frames)`)
+    }
+
+    return deduplicated
   }
 
   collectScreenshots(): void {
@@ -76,13 +192,24 @@ export class VideoRecorder {
       .filter(f => f.endsWith('.png'))
       .sort()
 
+    const allScreenshots: Screenshot[] = []
     for (const file of files) {
       const filePath = join(this.screenshotsDir, file)
       const stats = statSync(filePath)
       const name = file.replace(/^\d+_/, '').replace(/\.png$/, '')
 
-      this.addScreenshot(filePath, name, {
+      allScreenshots.push({
+        path: filePath,
+        name,
         timestamp: stats.mtime.getTime()
+      })
+    }
+
+    const deduplicated = this.deduplicateScreenshots(allScreenshots)
+
+    for (const screenshot of deduplicated) {
+      this.addScreenshot(screenshot.path, screenshot.name, {
+        timestamp: screenshot.timestamp
       })
     }
 
@@ -159,6 +286,19 @@ export class VideoRecorder {
 
     console.log(`Created ${this.frameCount} frames from ${screenshotsToUse.length} screenshots`)
 
+    if (this.frameCount > 0 && this.options.finalFrameSeconds > 0) {
+      const lastFramePath = join(this.framesDir, `frame_${String(this.frameCount - 1).padStart(5, '0')}.png`)
+      if (existsSync(lastFramePath)) {
+        const extraFrames = Math.ceil(this.options.finalFrameSeconds * this.options.fps) - 1
+        for (let i = 0; i < extraFrames; i++) {
+          const dupFramePath = join(this.framesDir, `frame_${String(this.frameCount).padStart(5, '0')}.png`)
+          copyFileSync(lastFramePath, dupFramePath)
+          this.frameCount++
+        }
+        console.log(`Added ${extraFrames} duplicate frames for ${this.options.finalFrameSeconds}s final hold`)
+      }
+    }
+
     const outputPath = join(this.testDir, this.options.outputName)
     const palettePath = join(this.framesDir, 'palette.png')
 
@@ -166,7 +306,7 @@ export class VideoRecorder {
       '-y',
       '-framerate', String(this.options.fps),
       '-i', join(this.framesDir, 'frame_%05d.png'),
-      '-vf', 'palettegen=stats_mode=diff',
+      '-vf', 'palettegen=max_colors=256:stats_mode=diff',
       palettePath
     ], { stdio: 'pipe' })
 
@@ -194,7 +334,7 @@ export class VideoRecorder {
         '-framerate', String(this.options.fps),
         '-i', join(this.framesDir, 'frame_%05d.png'),
         '-i', palettePath,
-        '-lavfi', 'paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
+        '-lavfi', 'paletteuse=dither=sierra2_4a:diff_mode=rectangle:new=1',
         outputPath
       ], { stdio: 'pipe' })
 
@@ -218,7 +358,7 @@ export class VideoRecorder {
 
     console.log(`GIF created: ${outputPath}`)
     console.log(`  Size: ${sizeMB} MB`)
-    console.log(`  Duration: ${durationSec} seconds`)
+    console.log(`  Duration: ${durationSec.toFixed(1)} seconds`)
     console.log(`  Frames: ${this.frameCount}`)
 
     return {
@@ -236,6 +376,78 @@ export class VideoRecorder {
     const recorder = new VideoRecorder(testDir, options)
     recorder.collectScreenshots()
     return recorder.createVideo()
+  }
+}
+
+export interface AutoScreenshotOptions {
+  browser: any
+  page: any
+  screenshotsDir: string
+  intervalMs?: number
+  onScreenshot?: (path: string, count: number) => void
+}
+
+export class AutoScreenshotter {
+  private browser: any
+  private page: any
+  private screenshotsDir: string
+  private intervalMs: number
+  private onScreenshot?: (path: string, count: number) => void
+  private running = false
+  private timer: NodeJS.Timeout | null = null
+  private count = 0
+
+  constructor(options: AutoScreenshotOptions) {
+    this.browser = options.browser
+    this.page = options.page
+    this.screenshotsDir = options.screenshotsDir
+    this.intervalMs = options.intervalMs || 1000
+    this.onScreenshot = options.onScreenshot
+  }
+
+  start(): void {
+    if (this.running) return
+    this.running = true
+    console.log(`Starting auto-screenshot every ${this.intervalMs}ms`)
+    this.capture()
+  }
+
+  stop(): void {
+    if (!this.running) return
+    this.running = false
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    console.log(`Stopped auto-screenshot (captured ${this.count} screenshots)`)
+  }
+
+  private async capture(): Promise<void> {
+    if (!this.running || !this.page) return
+
+    try {
+      const filename = `${String(this.count).padStart(3, '0')}_auto.png`
+      const filepath = join(this.screenshotsDir, filename)
+      await this.page.screenshot({ path: filepath, fullPage: false })
+      this.count++
+      
+      if (this.onScreenshot) {
+        this.onScreenshot(filepath, this.count)
+      }
+    } catch (e) {
+      if ((e as Error).message?.includes('Target closed') || (e as Error).message?.includes('Session closed')) {
+        this.stop()
+        return
+      }
+    }
+
+    if (this.running) {
+      this.timer = setTimeout(() => this.capture(), this.intervalMs)
+    }
+  }
+
+  getCount(): number {
+    return this.count
   }
 }
 
