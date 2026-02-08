@@ -38,9 +38,15 @@ async function getSessionSummary(
   directory: string
 ): Promise<string | undefined> {
   try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    
     const messagesRes = await fetch(
-      `http://127.0.0.1:${opencodePort}/session/${sessionId}/message?directory=${encodeURIComponent(directory)}`
+      `http://127.0.0.1:${opencodePort}/session/${sessionId}/message?directory=${encodeURIComponent(directory)}`,
+      { signal: controller.signal }
     )
+    clearTimeout(timeout)
+    
     if (!messagesRes.ok) return undefined
     
     const messages = await messagesRes.json() as SessionMessage[]
@@ -55,7 +61,7 @@ async function getSessionSummary(
       }
     }
   } catch {
-    // Ignore errors fetching messages
+    // Ignore errors and timeouts fetching messages
   }
   return undefined
 }
@@ -83,56 +89,61 @@ export function createSessionRoutes(database: Database) {
       const repos = db.listRepos(database)
       const opencodePort = opencodeServerManager.getPort()
       
-      const recentSessions: SessionWithRepo[] = []
+      const [sessionStatuses, repoSessions] = await Promise.all([
+        fetch(`http://127.0.0.1:${opencodePort}/session/status`)
+          .then(res => res.ok ? res.json() as Promise<Record<string, { type: string }>> : {})
+          .catch(() => ({} as Record<string, { type: string }>)),
+        Promise.all(
+          repos.map(async (repo) => {
+            try {
+              const sessionsRes = await fetch(
+                `http://127.0.0.1:${opencodePort}/session?directory=${encodeURIComponent(repo.fullPath)}`
+              )
+              if (!sessionsRes.ok) return { repo, sessions: [] }
+              const sessions = await sessionsRes.json() as Array<{
+                id: string
+                title?: string
+                directory: string
+                parentID?: string
+                time: { created: number; updated: number }
+              }>
+              return { repo, sessions }
+            } catch {
+              return { repo, sessions: [] }
+            }
+          })
+        )
+      ])
       
-      let sessionStatuses: Record<string, { type: string }> = {}
-      try {
-        const statusRes = await fetch(`http://127.0.0.1:${opencodePort}/session/status`)
-        if (statusRes.ok) {
-          sessionStatuses = await statusRes.json()
-        }
-      } catch (err) {
-        logger.warn('Failed to fetch session statuses:', err)
-      }
+      const recentSessionsWithoutSummary = repoSessions.flatMap(({ repo, sessions }) =>
+        sessions
+          .filter(session => !session.parentID && session.time.updated >= cutoffTime)
+          .map(session => ({
+            id: session.id,
+            title: session.title || 'Untitled Session',
+            directory: session.directory,
+            repoId: repo.id,
+            repoName: getRepoDisplayName(repo),
+            status: (sessionStatuses[session.id]?.type as 'idle' | 'busy' | 'retry') || 'idle',
+            time: session.time,
+          }))
+      )
       
-      for (const repo of repos) {
-        try {
-          const sessionsRes = await fetch(
-            `http://127.0.0.1:${opencodePort}/session?directory=${encodeURIComponent(repo.fullPath)}`
+      const skipSummaries = c.req.query('skipSummaries') === 'true'
+      let summaries: (string | undefined)[] = []
+      
+      if (!skipSummaries && recentSessionsWithoutSummary.length <= 50) {
+        summaries = await Promise.all(
+          recentSessionsWithoutSummary.map(session =>
+            getSessionSummary(opencodePort, session.id, session.directory)
           )
-          
-          if (!sessionsRes.ok) continue
-          
-          const sessions = await sessionsRes.json() as Array<{
-            id: string
-            title?: string
-            directory: string
-            parentID?: string
-            time: { created: number; updated: number }
-          }>
-          
-          for (const session of sessions) {
-            if (session.parentID) continue
-            if (session.time.updated < cutoffTime) continue
-            
-            const status = sessionStatuses[session.id]
-            const summary = await getSessionSummary(opencodePort, session.id, session.directory)
-            
-            recentSessions.push({
-              id: session.id,
-              title: session.title || 'Untitled Session',
-              directory: session.directory,
-              repoId: repo.id,
-              repoName: getRepoDisplayName(repo),
-              status: (status?.type as 'idle' | 'busy' | 'retry') || 'idle',
-              summary,
-              time: session.time,
-            })
-          }
-        } catch (err) {
-          logger.warn(`Failed to fetch sessions for repo ${repo.id}:`, err)
-        }
+        )
       }
+      
+      const recentSessions: SessionWithRepo[] = recentSessionsWithoutSummary.map((session, i) => ({
+        ...session,
+        summary: summaries[i],
+      }))
       
       recentSessions.sort((a, b) => b.time.updated - a.time.updated)
       
