@@ -314,3 +314,89 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker logs opencode-manager
+
+  settings-e2e-tests:
+    name: Settings E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (slim)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: opencode-manager:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: runner-slim
+
+      - name: Start container
+        run: |
+          docker run -d --name opencode-manager \
+            -p 5003:5003 \
+            opencode-manager:test
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Puppeteer browser
+        run: npx puppeteer browsers install chrome
+
+      - name: Wait for service to be ready
+        run: |
+          echo "Waiting for OpenCode Manager to be ready..."
+          for i in {1..90}; do
+            if curl -sf http://localhost:5003/api/health | grep -q '"status":"healthy"'; then
+              echo "Service is healthy!"
+              break
+            fi
+            if [ $i -eq 90 ]; then
+              echo "Service failed to become healthy"
+              docker logs opencode-manager
+              exit 1
+            fi
+            echo "Attempt $i/90 - waiting..."
+            sleep 2
+          done
+
+      - name: Run Settings E2E Tests
+        run: bun run scripts/test-settings.ts --url http://localhost:5003
+        env:
+          CI: true
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: settings-e2e-screenshots
+          path: .test/
+          retention-days: 7
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs opencode-manager
