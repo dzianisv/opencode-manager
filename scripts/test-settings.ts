@@ -341,6 +341,85 @@ class SettingsTest {
     }
   }
 
+  private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
+    if (!this.page) return { passed: false, details: 'No page available' }
+
+    await this.page.evaluate(() => {
+      const ttsHeading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Text-to-Speech'))
+      if (ttsHeading) ttsHeading.scrollIntoView({ behavior: 'instant', block: 'center' })
+    })
+    await new Promise(resolve => setTimeout(resolve, 300))
+
+    const coquiButton = await this.page.evaluateHandle(() => {
+      const buttons = Array.from(document.querySelectorAll('button'))
+      return buttons.find(btn => btn.textContent?.includes('Coqui Jenny'))
+    })
+
+    if (!coquiButton) {
+      return { passed: false, details: 'Coqui Jenny provider button not found' }
+    }
+
+    await (coquiButton as import('puppeteer').ElementHandle<Element>).click()
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    const coquiServerStatus = await this.page.evaluate(() => {
+      const statusText = document.body.innerText
+      return statusText.includes('Running on') || statusText.includes('running')
+    })
+
+    if (!coquiServerStatus) {
+      info('Coqui server not running, skipping model selector test')
+      return { passed: true, details: 'Coqui server not running - skipped model test' }
+    }
+
+    const modelInput = await this.page.$('input[placeholder="Select a TTS model..."]')
+    if (!modelInput) {
+      return { passed: false, details: 'TTS Model input not found' }
+    }
+
+    const modelsCount = await this.page.evaluate(() => {
+      const text = document.body.innerText
+      const match = text.match(/(\d+) models available/)
+      return match ? parseInt(match[1]) : 0
+    })
+
+    await modelInput.click()
+    await this.page.keyboard.down('Meta')
+    await this.page.keyboard.press('a')
+    await this.page.keyboard.up('Meta')
+    await this.page.keyboard.press('Backspace')
+    await new Promise(resolve => setTimeout(resolve, 1500))
+
+    const dropdownOptions = await this.page.evaluate(() => {
+      const dropdown = document.querySelector('.absolute.z-50')
+      if (!dropdown) return 0
+      const options = dropdown.querySelectorAll('button[data-option]')
+      return options.length
+    })
+
+    await takeScreenshot(this.page, 'coqui_model_selector', this.config.screenshotsDir)
+
+    await this.page.evaluate(() => {
+      const label = document.querySelector('label')
+      if (label) label.click()
+    })
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    await this.page.evaluate(() => {
+      const builtinBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent?.includes('Built-in Browser'))
+      if (builtinBtn) (builtinBtn as HTMLElement).click()
+    })
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    const passed = modelsCount >= 10 && dropdownOptions > 0
+    return { 
+      passed, 
+      details: passed 
+        ? `Coqui model selector working: ${dropdownOptions} options in dropdown, ${modelsCount} models available`
+        : `Expected at least 10 models available, found ${modelsCount}. Dropdown options: ${dropdownOptions}` 
+    }
+  }
+
   private async testSTTSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
@@ -620,6 +699,7 @@ class SettingsTest {
       await this.runTest('Settings Dialog Opens', () => this.testSettingsDialogOpens())
       await this.runTest('General Settings Tab', () => this.testGeneralSettingsTab())
       await this.runTest('TTS Settings', () => this.testTTSSettings())
+      await this.runTest('Coqui Model Selector', () => this.testCoquiModelSelector())
       await this.runTest('STT Settings', () => this.testSTTSettings())
       await this.runTest('Talk Mode Settings', () => this.testTalkModeSettings())
       await this.runTest('Notification Settings', () => this.testNotificationSettings())

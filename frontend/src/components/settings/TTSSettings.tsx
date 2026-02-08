@@ -296,6 +296,21 @@ export function TTSSettings() {
     }
   }, [watchProvider, watchEnabled])
   
+  // Refetch Coqui models and voices when provider changes to coqui
+  useEffect(() => {
+    if (watchProvider === 'coqui' && coquiStatus?.running) {
+      refetchCoquiModels()
+      refetchCoquiVoices()
+    }
+  }, [watchProvider, coquiStatus?.running, refetchCoquiModels, refetchCoquiVoices])
+  
+  // Refetch Chatterbox voices when provider changes to chatterbox
+  useEffect(() => {
+    if (watchProvider === 'chatterbox' && chatterboxStatus?.running) {
+      refetchChatterboxVoices()
+    }
+  }, [watchProvider, chatterboxStatus?.running, refetchChatterboxVoices])
+  
   const handleRefreshDiscovery = async () => {
     setIsRefreshingDiscovery(true)
     try {
