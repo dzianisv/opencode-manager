@@ -32,3 +32,4 @@ temp/
 
 # Transient planning docs
 plan.md
+*.tsbuildinfo
