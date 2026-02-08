@@ -179,8 +179,11 @@ The Cloudflare tunnel now runs as a **persistent background process** that survi
 # Start tunnel once (persists until explicitly stopped)
 pnpm tunnel:start
 
-# Check tunnel status and get URL
+# Check tunnel status and get URL (includes health check)
 pnpm tunnel:status
+
+# Check if tunnel URL is reachable
+bun scripts/tunnel.ts health
 
 # Now you can restart backend freely without losing tunnel connection
 pnpm dev:backend  # Ctrl+C and restart as needed
@@ -190,11 +193,46 @@ pnpm tunnel:stop
 ```
 
 The tunnel state is stored in `~/.local/run/opencode-manager/tunnel.json`.
+The endpoints are stored in `~/.local/run/opencode-manager/endpoints.json`.
 
-**Benefits:**
+**Features:**
 - Restart backend without disconnecting mobile/remote users
 - Same tunnel URL persists across backend restarts  
 - `pnpm cleanup` does NOT kill the tunnel
+- Health check verifies tunnel URL is actually reachable (not just process running)
+- Automatically updates `endpoints.json` when tunnel starts
+
+### Named Tunnels (Persistent URLs)
+
+Quick tunnels generate random URLs that change on each restart. For a **persistent URL**, use a Cloudflare named tunnel:
+
+```bash
+# 1. Login to Cloudflare (one-time)
+cloudflared tunnel login
+
+# 2. Create a named tunnel (one-time)
+cloudflared tunnel create opencode-manager
+# Note the tunnel ID (UUID) from output
+
+# 3. Create config file ~/.cloudflared/config.yml
+cat > ~/.cloudflared/config.yml << EOF
+tunnel: <TUNNEL_ID>
+credentials-file: /Users/$(whoami)/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: opencode.yourdomain.com
+    service: http://localhost:5001
+  - service: http_status:404
+EOF
+
+# 4. Add DNS record in Cloudflare dashboard
+# CNAME: opencode -> <TUNNEL_ID>.cfargotunnel.com
+
+# 5. Run the named tunnel
+cloudflared tunnel run opencode-manager
+```
+
+With named tunnels, `opencode.yourdomain.com` will always point to your instance.
 
 ## Native Local Development (No Docker)
 
