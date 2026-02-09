@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: read
+  pull-requests: write
 
 jobs:
   build-and-test:
@@ -310,6 +311,51 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
           include-hidden-files: true
+
+      - name: Prepare Screencast for Comment
+        if: always()
+        id: prepare-screencast
+        run: |
+          GIF_PATH=$(find .test -name "screencast.gif" | head -n 1)
+          if [ -f "$GIF_PATH" ]; then
+            echo "Found screencast at $GIF_PATH"
+            mkdir -p screencasts
+            # Use run ID and short SHA to make filename unique and sortable
+            NEW_NAME="screencast-${{ github.run_id }}-${{ github.event.pull_request.number || 'manual' }}.gif"
+            cp "$GIF_PATH" "screencasts/$NEW_NAME"
+            echo "filename=$NEW_NAME" >> $GITHUB_OUTPUT
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "No screencast found"
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Screencast to Assets Branch
+        if: always() && steps.prepare-screencast.outputs.found == 'true'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./screencasts
+          publish_branch: test-assets
+          keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Comment PR with Screencast
+        if: always() && steps.prepare-screencast.outputs.found == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const filename = '${{ steps.prepare-screencast.outputs.filename }}';
+            const repo = context.repo;
+            const imageUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/test-assets/${filename}`;
+            
+            await github.rest.issues.createComment({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number: context.issue.number,
+              body: `### 🎥 Browser E2E Test Recording\n\n![Screencast](${imageUrl})\n\n_Run #${context.runId} | Commit ${context.sha.substring(0, 7)}_`
+            });
 
       - name: Container logs on failure
         if: failure()
