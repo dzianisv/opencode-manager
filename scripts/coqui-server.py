@@ -64,68 +64,85 @@ device: str = "cpu"
 sample_rate: int = 22050
 available_models_cache: List[Dict[str, Any]] = []
 
-# Curated list of high-quality English TTS models
+# Curated list of high-quality TTS models
 RECOMMENDED_MODELS = [
     {
-        "id": "tts_models/en/jenny/jenny",
-        "name": "Jenny",
-        "description": "High-quality English female voice (recommended, fastest)",
+        "id": "tts_models/en/vctk/vits",
+        "name": "VCTK VITS",
+        "description": "VCTK VITS (109 speakers, recommended)",
         "language": "en",
         "quality": "high",
-        "speed": "fast"
+        "speed": "fast",
+        "multi_speaker": True,
+        "recommended": True
     },
     {
         "id": "tts_models/en/ljspeech/vits",
         "name": "LJSpeech VITS",
-        "description": "Classic English female voice with VITS architecture",
-        "language": "en",
-        "quality": "high",
-        "speed": "fast"
-    },
-    {
-        "id": "tts_models/en/ljspeech/tacotron2-DDC",
-        "name": "LJSpeech Tacotron2",
-        "description": "Classic English female voice (slower, high quality)",
-        "language": "en",
-        "quality": "high",
-        "speed": "slow"
-    },
-    {
-        "id": "tts_models/en/vctk/vits",
-        "name": "VCTK VITS",
-        "description": "Multi-speaker English model (109 speakers)",
+        "description": "LJSpeech single speaker",
         "language": "en",
         "quality": "high",
         "speed": "fast",
-        "multi_speaker": True
+        "multi_speaker": False
     },
     {
-        "id": "tts_models/en/ljspeech/glow-tts",
-        "name": "LJSpeech Glow-TTS",
-        "description": "Fast English female voice with Glow-TTS",
+        "id": "tts_models/en/jenny/jenny",
+        "name": "Jenny",
+        "description": "Jenny voice",
         "language": "en",
-        "quality": "medium",
-        "speed": "very_fast"
-    },
-    {
-        "id": "tts_models/en/ljspeech/fast_pitch",
-        "name": "LJSpeech FastPitch",
-        "description": "Fast English female voice with FastPitch",
-        "language": "en",
-        "quality": "medium",
-        "speed": "very_fast"
+        "quality": "high",
+        "speed": "medium",
+        "multi_speaker": False
     },
     {
         "id": "tts_models/multilingual/multi-dataset/xtts_v2",
         "name": "XTTS v2",
-        "description": "Multilingual voice cloning model (requires reference audio)",
+        "description": "XTTS v2 with voice cloning",
         "language": "multilingual",
         "quality": "very_high",
         "speed": "slow",
         "multi_speaker": True,
         "voice_cloning": True
     },
+    {
+        "id": "tts_models/multilingual/multi-dataset/bark",
+        "name": "Bark",
+        "description": "Multilingual neural TTS",
+        "language": "multilingual",
+        "quality": "high",
+        "speed": "slow",
+        "multi_speaker": False
+    }
 ]
+
+# Detailed metadata for popular VCTK speakers
+VCTK_METADATA = {
+    "p226": {"gender": "Male", "accent": "English", "desc": "Clear, professional (recommended)"},
+    "p225": {"gender": "Female", "accent": "English", "desc": "Clear, neutral"},
+    "p227": {"gender": "Male", "accent": "English", "desc": "Deep voice"},
+    "p228": {"gender": "Female", "accent": "English", "desc": "Warm tone"},
+    "p229": {"gender": "Female", "accent": "English", "desc": "Higher pitch"},
+    "p230": {"gender": "Female", "accent": "English", "desc": "Soft voice"},
+    "p231": {"gender": "Male", "accent": "English", "desc": "Standard"},
+    "p232": {"gender": "Male", "accent": "English", "desc": "Casual"},
+    "p233": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
+    "p234": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
+    "p236": {"gender": "Female", "accent": "English", "desc": "Professional"},
+    "p237": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
+    "p238": {"gender": "Female", "accent": "N. Irish", "desc": "Northern Irish"},
+    "p239": {"gender": "Female", "accent": "English", "desc": "Young voice"},
+    "p240": {"gender": "Female", "accent": "English", "desc": "Mature voice"},
+    "p241": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
+    "p243": {"gender": "Male", "accent": "English", "desc": "Deep, authoritative"},
+    "p244": {"gender": "Female", "accent": "English", "desc": "Bright voice"},
+    "p245": {"gender": "Male", "accent": "Irish", "desc": "Irish accent"},
+    "p246": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
+    "p247": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
+    "p248": {"gender": "Female", "accent": "Indian", "desc": "Indian English"},
+    "p249": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
+    "p250": {"gender": "Female", "accent": "English", "desc": "Standard"},
+    "p251": {"gender": "Male", "accent": "Indian", "desc": "Indian English"},
+}
 
 
 class SynthesizeRequest(BaseModel):
@@ -334,11 +351,27 @@ async def list_voices():
     voices = []
     if hasattr(tts_model, 'is_multi_speaker') and tts_model.is_multi_speaker and hasattr(tts_model, 'speakers') and tts_model.speakers:
         for speaker in tts_model.speakers:
+            # Check for VCTK metadata
+            meta = VCTK_METADATA.get(speaker, {})
+            name = speaker.replace("_", " ").title()
+            
+            if meta:
+                desc = f"{meta['desc']} ({meta['gender']}, {meta['accent']})"
+                is_recommended = speaker == "p226"
+            else:
+                desc = f"Speaker: {speaker}"
+                is_recommended = False
+                
             voices.append({
                 "id": speaker,
-                "name": speaker.replace("_", " ").title(),
-                "description": f"Speaker: {speaker}"
+                "name": name,
+                "description": desc,
+                "recommended": is_recommended
             })
+            
+        # Sort voices: recommended first, then numeric/alpha
+        voices.sort(key=lambda x: (not x.get("recommended", False), x["id"]))
+        
     else:
         # Single speaker model
         model_name = current_model_name.split("/")[-1].replace("_", " ").replace("-", " ").title()

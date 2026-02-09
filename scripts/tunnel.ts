@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawn, execSync } from 'child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync, closeSync } from 'fs'
 import path from 'path'
 import os from 'os'
 
@@ -8,6 +8,7 @@ const TUNNEL_STATE_DIR = path.join(os.homedir(), '.local', 'run', 'opencode-mana
 const TUNNEL_STATE_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.json')
 const TUNNEL_PID_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.pid')
 const ENDPOINTS_FILE = path.join(TUNNEL_STATE_DIR, 'endpoints.json')
+const TUNNEL_LOG_FILE = path.join(TUNNEL_STATE_DIR, 'tunnel.log')
 
 interface TunnelState {
   pid: number
@@ -198,43 +199,46 @@ async function startTunnel(port: number): Promise<TunnelState | null> {
 
   console.log(`Starting Cloudflare tunnel for port ${port}...`)
   
+  ensureStateDir()
+  const logFd = openSync(TUNNEL_LOG_FILE, 'w')
+  
   const tunnelProcess = spawn('cloudflared', [
     'tunnel', 
     '--no-autoupdate', 
     '--protocol', 'http2', 
     '--url', `http://localhost:${port}`
   ], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     detached: true,
   })
 
   tunnelProcess.unref()
+  closeSync(logFd)
 
   let tunnelUrl: string | null = null
-
-  const urlPromise = new Promise<string | null>((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 30000)
-
-    const handleOutput = (data: Buffer) => {
-      const output = data.toString()
-      const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
-      if (urlMatch && !tunnelUrl) {
+  
+  const startTime = Date.now()
+  while (Date.now() - startTime < 30000) {
+    if (existsSync(TUNNEL_LOG_FILE)) {
+      const content = readFileSync(TUNNEL_LOG_FILE, 'utf8')
+      const urlMatch = content.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+      if (urlMatch) {
         tunnelUrl = urlMatch[0]
-        clearTimeout(timeout)
-        resolve(tunnelUrl)
+        break
+      }
+      
+      try {
+        process.kill(tunnelProcess.pid!, 0)
+      } catch {
+        console.error('Tunnel process died unexpectedly. Logs:')
+        console.error(content)
+        return null
       }
     }
+    await new Promise(r => setTimeout(r, 500))
+  }
 
-    tunnelProcess.stdout?.on('data', handleOutput)
-    tunnelProcess.stderr?.on('data', handleOutput)
-  })
-
-  tunnelProcess.on('error', (err) => {
-    console.error('Failed to start cloudflared:', err.message)
-    console.log('Install cloudflared: brew install cloudflared')
-  })
-
-  const url = await urlPromise
+  const url = tunnelUrl
 
   if (!url) {
     console.error('Failed to get tunnel URL within timeout')
@@ -392,6 +396,10 @@ async function main() {
       console.log('Options:')
       console.log('  --port, -p  Local port to tunnel (default: 5001)')
   }
+  process.exit(0)
 }
 
-main().catch(console.error)
+main().catch(err => {
+  console.error(err)
+  process.exit(1)
+})

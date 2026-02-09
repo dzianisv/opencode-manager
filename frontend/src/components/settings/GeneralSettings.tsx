@@ -8,9 +8,6 @@ import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { X } from 'lucide-react'
-import { TTSSettings } from './TTSSettings'
-import { STTSettings } from './STTSettings'
-import { TalkModeSettings } from './TalkModeSettings'
 import { NotificationSettings } from './NotificationSettings'
 import { SessionPruneSettings } from './SessionPruneSettings'
 import { showToast } from '@/lib/toast'
@@ -222,18 +219,6 @@ onClick={async () => {
             <span>Saving...</span>
           </div>
         )}
-      </div>
-
-      <div className="mt-6">
-        <TTSSettings />
-      </div>
-
-      <div className="mt-6">
-        <STTSettings />
-      </div>
-
-      <div className="mt-6">
-        <TalkModeSettings />
       </div>
 
       <div className="mt-6">

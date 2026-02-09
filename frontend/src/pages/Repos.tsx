@@ -86,7 +86,7 @@ export function Repos() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-background">
+    <div className="h-dvh max-h-dvh overflow-hidden bg-gradient-to-br from-background via-background to-background flex flex-col">
       <Header
         title="OpenCode"
         action={
@@ -126,18 +126,20 @@ export function Repos() {
           </div>
         }
       />
-      <div className="container mx-auto sm:p-2 p-4">
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            <h2 className="text-sm font-medium text-muted-foreground">Recent Sessions (Last 8 hours)</h2>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="container mx-auto sm:p-2 p-4">
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-sm font-medium text-muted-foreground">Recent Sessions (Last 8 hours)</h2>
+            </div>
+            <RecentSessions maxItems={5} />
           </div>
-          <RecentSessions maxItems={5} />
+          <div className="mb-3">
+            <h2 className="text-sm font-medium text-muted-foreground">Repositories</h2>
+          </div>
+          <RepoList />
         </div>
-        <div className="mb-3">
-          <h2 className="text-sm font-medium text-muted-foreground">Repositories</h2>
-        </div>
-        <RepoList />
       </div>
       <AddRepoDialog open={addRepoOpen} onOpenChange={setAddRepoOpen} />
       <FileBrowserSheet

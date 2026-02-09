@@ -43,14 +43,14 @@ export function SessionPruneSettings() {
   
   const pruneConfig = preferences?.sessionPrune ?? DEFAULT_SESSION_PRUNE_CONFIG
 
-  const handleChange = (updates: Partial<typeof pruneConfig>) => {
+  const handleChange = useCallback((updates: Partial<typeof pruneConfig>) => {
     updateSettings({
       sessionPrune: {
         ...pruneConfig,
         ...updates,
       },
     })
-  }
+  }, [pruneConfig, updateSettings])
 
   const handlePreview = useCallback(async () => {
     setIsPreviewing(true)
@@ -101,7 +101,7 @@ export function SessionPruneSettings() {
       setIsPruning(false)
       setShowConfirmDialog(false)
     }
-  }, [pruneConfig.intervalDays])
+  }, [pruneConfig.intervalDays, handleChange])
 
   const formatLastPruned = () => {
     if (!pruneConfig.lastPrunedAt) return 'Never'

@@ -9,11 +9,26 @@ echo "Repo: $REPO_DIR"
 echo ""
 
 echo "[1/6] Stopping service..."
+
+# Ensure persistent tunnel is running
+echo "Checking persistent tunnel..."
+if bun "$REPO_DIR/scripts/tunnel.ts" health >/dev/null 2>&1; then
+  echo "✓ Active persistent tunnel found. Preserving it."
+else
+  echo "⚠ No active persistent tunnel found. Starting one now to ensure stability..."
+  bun "$REPO_DIR/scripts/tunnel.ts" start
+fi
+
+# Always true now since we ensure it starts
+HAS_PERSISTENT_TUNNEL=true
+
 opencode-manager stop 2>/dev/null || true
 opencode-manager uninstall-service 2>/dev/null || true
 
-# Clean up stale endpoints
-rm -f "$HOME/.local/run/opencode-manager/endpoints.json"
+# Clean up stale endpoints only if no persistent tunnel
+if [ "$HAS_PERSISTENT_TUNNEL" = false ]; then
+  rm -f "$HOME/.local/run/opencode-manager/endpoints.json"
+fi
 
 echo "[2/6] Removing global installation..."
 bun remove -g opencode-manager 2>/dev/null || true
@@ -43,7 +58,12 @@ rm -f "$TARBALL"
 cd ~/.bun/install/global && bun pm trust opencode-manager 2>/dev/null || true
 
 echo "[6/6] Installing and starting service..."
-opencode-manager install-service
+if [ "$HAS_PERSISTENT_TUNNEL" = true ]; then
+  echo "Installing service with existing tunnel..."
+  opencode-manager install-service --no-tunnel
+else
+  opencode-manager install-service
+fi
 
 echo ""
 echo "=== Waiting for service to be ready (max 90s) ==="

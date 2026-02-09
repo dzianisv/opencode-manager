@@ -634,21 +634,21 @@ export function TTSSettings() {
                   {/* Model Selection - not part of form, uses direct mutation */}
                   <div className="space-y-2">
                     <Label>TTS Model</Label>
-                    <Combobox
-                      value={coquiModels?.currentModel || 'tts_models/en/jenny/jenny'}
-                      onChange={(modelId) => {
-                        if (modelId !== coquiModels?.currentModel) {
-                          changeCoquiModelMutation.mutate(modelId)
-                        }
-                      }}
-                      options={(coquiModels?.models || []).map((m) => ({
-                        value: m.id,
-                        label: `${m.name}${m.quality ? ` (${m.quality} quality, ${m.speed})` : ''}`
-                      }))}
-                      placeholder="Select a TTS model..."
-                      disabled={!coquiStatus?.running || changeCoquiModelMutation.isPending}
-                      allowCustomValue={false}
-                    />
+                      <Combobox
+                        value={coquiModels?.currentModel || 'tts_models/en/jenny/jenny'}
+                        onChange={(modelId) => {
+                          if (modelId !== coquiModels?.currentModel) {
+                            changeCoquiModelMutation.mutate(modelId)
+                          }
+                        }}
+                        options={(coquiModels?.models || []).map((m) => ({
+                          value: m.id,
+                          label: `${m.name}${m.quality ? ` (${m.quality} quality, ${m.speed})` : ''}`
+                        }))}
+                        placeholder="Select a TTS model or type custom ID..."
+                        disabled={!coquiStatus?.running || changeCoquiModelMutation.isPending}
+                        allowCustomValue={true}
+                      />
                     <p className="text-sm text-muted-foreground">
                       {changeCoquiModelMutation.isPending ? (
                         <span className="flex items-center gap-1 text-blue-600">
