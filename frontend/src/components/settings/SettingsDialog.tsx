@@ -4,9 +4,11 @@ import { KeyboardShortcuts } from '@/components/settings/KeyboardShortcuts'
 import { OpenCodeConfigManager } from '@/components/settings/OpenCodeConfigManager'
 import { ProviderSettings } from '@/components/settings/ProviderSettings'
 import { TunnelSettings } from '@/components/settings/TunnelSettings'
+import { VoiceSettings } from '@/components/settings/VoiceSettings'
+import { TelegramSettings } from '@/components/settings/TelegramSettings'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Settings2, Keyboard, Code, ChevronLeft, X, Key, Cloud } from 'lucide-react'
+import { Settings2, Keyboard, Code, ChevronLeft, X, Key, Cloud, Mic, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useSwipeBack } from '@/hooks/useMobile'
 
@@ -15,7 +17,7 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type SettingsView = 'menu' | 'general' | 'shortcuts' | 'opencode' | 'providers' | 'tunnel'
+type SettingsView = 'menu' | 'general' | 'voice' | 'shortcuts' | 'opencode' | 'providers' | 'tunnel' | 'telegram'
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [mobileView, setMobileView] = useState<SettingsView>('menu')
@@ -40,10 +42,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const menuItems = [
     { id: 'general', icon: Settings2, label: 'General Settings', description: 'App preferences and behavior' },
+    { id: 'voice', icon: Mic, label: 'Voice Settings', description: 'Configure TTS and STT settings' },
     { id: 'shortcuts', icon: Keyboard, label: 'Keyboard Shortcuts', description: 'Customize keyboard shortcuts' },
     { id: 'opencode', icon: Code, label: 'OpenCode Config', description: 'Manage OpenCode configurations, commands, and agents' },
     { id: 'providers', icon: Key, label: 'Providers', description: 'Manage AI provider API keys' },
     { id: 'tunnel', icon: Cloud, label: 'Tunnel', description: 'Cloudflare tunnel status and metrics' },
+    { id: 'telegram', icon: MessageSquare, label: 'Telegram Bot', description: 'Configure Telegram integration and access control' },
   ]
 
   const handleClose = () => {
@@ -67,9 +71,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </div>
           <Tabs defaultValue="general" className="w-full flex flex-col flex-1 min-h-0">
             <div className="px-6 pt-6 pb-4 flex-shrink-0">
-              <TabsList className="grid w-full grid-cols-5 bg-card border border-border p-1">
+              <TabsList className="grid w-full grid-cols-7 bg-card border border-border p-1">
                 <TabsTrigger value="general" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
                   General
+                </TabsTrigger>
+                <TabsTrigger value="voice" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
+                  Voice
                 </TabsTrigger>
                 <TabsTrigger value="shortcuts" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
                   Shortcuts
@@ -83,16 +90,21 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <TabsTrigger value="tunnel" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
                   Tunnel
                 </TabsTrigger>
+                <TabsTrigger value="telegram" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-muted-foreground transition-all duration-200">
+                  Telegram
+                </TabsTrigger>
               </TabsList>
             </div>
 
             <div className="flex-1 overflow-y-auto">
               <div className="px-6 pb-6">
                 <TabsContent value="general" className="mt-0"><GeneralSettings /></TabsContent>
+                <TabsContent value="voice" className="mt-0"><VoiceSettings /></TabsContent>
                 <TabsContent value="shortcuts" className="mt-0"><KeyboardShortcuts /></TabsContent>
                 <TabsContent value="opencode" className="mt-0"><OpenCodeConfigManager /></TabsContent>
                 <TabsContent value="providers" className="mt-0"><ProviderSettings /></TabsContent>
                 <TabsContent value="tunnel" className="mt-0"><TunnelSettings /></TabsContent>
+                <TabsContent value="telegram" className="mt-0"><TelegramSettings /></TabsContent>
               </div>
             </div>
           </Tabs>
@@ -149,13 +161,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             )}
 
             {mobileView === 'general' && <GeneralSettings />}
+            {mobileView === 'voice' && <VoiceSettings />}
             {mobileView === 'shortcuts' && <KeyboardShortcuts />}
             {mobileView === 'opencode' && <OpenCodeConfigManager />}
             {mobileView === 'providers' && <ProviderSettings />}
             {mobileView === 'tunnel' && <TunnelSettings />}
+            {mobileView === 'telegram' && <TelegramSettings />}
           </div>
         </div>
       </DialogContent>
     </Dialog>
   )
 }
+
