@@ -517,7 +517,7 @@ export function TTSSettings() {
                 >
                   <Cpu className={`h-6 w-6 ${watchProvider === 'coqui' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`} />
                   <span className={`font-medium ${watchProvider === 'coqui' ? 'text-blue-700 dark:text-blue-300' : ''}`}>
-                    Coqui Jenny
+                    Coqui
                   </span>
                   <span className="text-xs text-muted-foreground text-center">
                     Fast local TTS

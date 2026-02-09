@@ -354,11 +354,11 @@ class SettingsTest {
 
     const coquiButton = await this.page.evaluateHandle(() => {
       const buttons = Array.from(document.querySelectorAll('button'))
-      return buttons.find(btn => btn.textContent?.includes('Coqui Jenny'))
+      return buttons.find(btn => btn.textContent?.includes('Coqui'))
     })
 
     if (!coquiButton) {
-      return { passed: false, details: 'Coqui Jenny provider button not found' }
+      return { passed: false, details: 'Coqui provider button not found' }
     }
 
     await (coquiButton as import('puppeteer').ElementHandle<Element>).click()
