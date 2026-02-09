@@ -946,4 +946,4 @@ Push to GHCR ───────────────→ ./scripts/run-loca
                                   ↓
                               ✅ Voice E2E tests
                               ✅ Talk Mode API tests  
-                              ✅ Talk Mode Browser tests
+                              ✅ Talk Mode Browser tests 
