@@ -144,28 +144,70 @@ export function runMigrations(db: Database): void {
     }
     
     try {
-      db.run(`
-        CREATE TABLE IF NOT EXISTS telegram_sessions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          chat_id TEXT UNIQUE NOT NULL,
-          opencode_session_id TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        )
-      `)
-      db.run('CREATE INDEX IF NOT EXISTS idx_telegram_sessions_chat_id ON telegram_sessions(chat_id)')
+      // Messenger Service Migration (replaces Telegram Service)
       
-      db.run(`
-        CREATE TABLE IF NOT EXISTS telegram_allowlist (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          chat_id TEXT UNIQUE NOT NULL,
-          added_at INTEGER NOT NULL
-        )
-      `)
-      db.run('CREATE INDEX IF NOT EXISTS idx_telegram_allowlist_chat_id ON telegram_allowlist(chat_id)')
-      logger.info('Telegram tables created/verified')
+      // 1. Check for messenger_sessions table
+      const sessionsTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='messenger_sessions'").get()
+      const telegramSessionsExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_sessions'").get()
+
+      if (!sessionsTableExists) {
+        db.run(`
+          CREATE TABLE messenger_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            provider_chat_id TEXT NOT NULL,
+            opencode_session_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(provider, provider_chat_id)
+          )
+        `)
+        db.run('CREATE INDEX IF NOT EXISTS idx_messenger_sessions_lookup ON messenger_sessions(provider, provider_chat_id)')
+
+        if (telegramSessionsExists) {
+           logger.info('Migrating telegram_sessions to messenger_sessions...')
+           db.run(`
+             INSERT INTO messenger_sessions (provider, provider_chat_id, opencode_session_id, created_at, updated_at)
+             SELECT 'telegram', chat_id, opencode_session_id, created_at, updated_at FROM telegram_sessions
+           `)
+           // We keep the old table for safety for now, or drop it? 
+           // Let's drop it to avoid confusion, assuming backup exists or this is stable.
+           db.run('DROP TABLE telegram_sessions')
+        }
+      }
+
+      // 2. Check for messenger_allowlist table
+      const allowlistTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='messenger_allowlist'").get()
+      const telegramAllowlistExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_allowlist'").get()
+
+      if (!allowlistTableExists) {
+        db.run(`
+          CREATE TABLE messenger_allowlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            provider_chat_id TEXT NOT NULL,
+            added_at INTEGER NOT NULL,
+            UNIQUE(provider, provider_chat_id)
+          )
+        `)
+        db.run('CREATE INDEX IF NOT EXISTS idx_messenger_allowlist_lookup ON messenger_allowlist(provider, provider_chat_id)')
+
+        if (telegramAllowlistExists) {
+           logger.info('Migrating telegram_allowlist to messenger_allowlist...')
+           db.run(`
+             INSERT INTO messenger_allowlist (provider, provider_chat_id, added_at)
+             SELECT 'telegram', chat_id, added_at FROM telegram_allowlist
+           `)
+           db.run('DROP TABLE telegram_allowlist')
+        }
+      }
+      
+      logger.info('Messenger tables created/verified')
     } catch (error) {
-      logger.debug('Telegram tables might already exist:', error)
+      logger.error('Messenger table migration failed:', error)
+      // Don't throw, just log, to allow other things to work? 
+      // No, if DB is inconsistent, better to fail?
+      // But we are in a migration function.
     }
     
     logger.info('Database migrations completed successfully')

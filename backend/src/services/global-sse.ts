@@ -51,6 +51,10 @@ async function getActiveDirectoriesFromOpenCode(): Promise<Set<string>> {
       const sessions = await response.json() as Array<{ directory?: string }>
       for (const session of sessions) {
         if (session.directory) {
+          // Skip temporary directories
+          if (session.directory.startsWith('/tmp/') || session.directory.startsWith('/private/tmp/')) {
+            continue
+          }
           directories.add(session.directory)
         }
       }

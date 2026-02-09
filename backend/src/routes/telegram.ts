@@ -1,7 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { Database } from 'bun:sqlite'
-import { telegramService } from '../services/telegram'
+import { messengerService } from '../services/messenger/service'
+import { channelRegistry } from '../services/channel-registry'
+import { TelegramProvider } from '../services/messenger/providers/telegram'
 import { logger } from '../utils/logger'
 
 const AddToAllowlistSchema = z.object({
@@ -15,11 +17,11 @@ const StartBotSchema = z.object({
 export function createTelegramRoutes(db: Database) {
   const app = new Hono()
 
-  telegramService.setDatabase(db)
+  // Note: Database is already set in messengerService by index.ts
 
   app.get('/status', async (c) => {
-    const status = telegramService.getStatus()
-    return c.json(status)
+    const status = channelRegistry.getStatus('telegram')
+    return c.json(status || { running: false })
   })
 
   app.post('/start', async (c) => {
@@ -27,17 +29,25 @@ export function createTelegramRoutes(db: Database) {
       const body = await c.req.json()
       const parsed = StartBotSchema.safeParse(body)
       
+      const channel = channelRegistry.get('telegram')
+      if (!channel) {
+          return c.json({ error: 'Telegram channel not registered' }, 500)
+      }
+
+      // Cast to specific provider to access specific start method signature if needed
+      const telegramProvider = channel as TelegramProvider
+
       if (!parsed.success) {
         const token = process.env.TELEGRAM_BOT_TOKEN
         if (!token) {
           return c.json({ error: 'No token provided and TELEGRAM_BOT_TOKEN not set' }, 400)
         }
-        await telegramService.start(token)
+        await telegramProvider.start(token)
       } else {
-        await telegramService.start(parsed.data.token)
+        await telegramProvider.start(parsed.data.token)
       }
       
-      return c.json({ success: true, status: telegramService.getStatus() })
+      return c.json({ success: true, status: channel.getStatus() })
     } catch (error) {
       logger.error('Failed to start Telegram bot:', error)
       return c.json({ 
@@ -48,7 +58,7 @@ export function createTelegramRoutes(db: Database) {
 
   app.post('/stop', async (c) => {
     try {
-      await telegramService.stop()
+      await channelRegistry.stop('telegram')
       return c.json({ success: true })
     } catch (error) {
       logger.error('Failed to stop Telegram bot:', error)
@@ -59,13 +69,13 @@ export function createTelegramRoutes(db: Database) {
   })
 
   app.get('/sessions', async (c) => {
-    const sessions = telegramService.getAllSessions()
+    const sessions = messengerService.getAllSessions('telegram')
     return c.json(sessions)
   })
 
   app.delete('/sessions/:chatId', async (c) => {
     const chatId = c.req.param('chatId')
-    const deleted = telegramService.deleteSession(chatId)
+    const deleted = messengerService.deleteSession('telegram', chatId)
     
     if (deleted) {
       return c.json({ success: true })
@@ -74,7 +84,7 @@ export function createTelegramRoutes(db: Database) {
   })
 
   app.get('/allowlist', async (c) => {
-    const allowlist = telegramService.getAllowlist()
+    const allowlist = messengerService.getAllowlist('telegram')
     return c.json(allowlist)
   })
 
@@ -87,7 +97,7 @@ export function createTelegramRoutes(db: Database) {
         return c.json({ error: 'Invalid request: chatId is required' }, 400)
       }
       
-      telegramService.addToAllowlist(parsed.data.chatId)
+      messengerService.addToAllowlist('telegram', parsed.data.chatId)
       return c.json({ success: true })
     } catch (error) {
       return c.json({ 
@@ -98,7 +108,7 @@ export function createTelegramRoutes(db: Database) {
 
   app.delete('/allowlist/:chatId', async (c) => {
     const chatId = c.req.param('chatId')
-    const removed = telegramService.removeFromAllowlist(chatId)
+    const removed = messengerService.removeFromAllowlist('telegram', chatId)
     
     if (removed) {
       return c.json({ success: true })

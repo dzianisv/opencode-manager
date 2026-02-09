@@ -24,7 +24,9 @@ import { createTunnelRoutes } from './routes/tunnel'
 import { createServicesRoutes } from './routes/services'
 import { terminalService } from './services/terminal'
 import { schedulerService } from './services/scheduler'
-import { telegramService } from './services/telegram'
+import { messengerService } from './services/messenger/service'
+import { channelRegistry } from './services/channel-registry'
+import { TelegramProvider } from './services/messenger/providers/telegram'
 import { whisperServerManager } from './services/whisper'
 import { ensureDirectoryExists, writeFileContent, fileExists, readFileContent } from './services/file-operations'
 import { SettingsService } from './services/settings'
@@ -371,16 +373,17 @@ try {
   }
 
   try {
-    telegramService.setDatabase(db)
-    telegramService.seedAllowlistFromEnv()
+    messengerService.setDatabase(db)
     
-    const telegramToken = process.env.TELEGRAM_BOT_TOKEN
-    if (telegramToken) {
-      await telegramService.start(telegramToken)
-      logger.info('Telegram bot started automatically (TELEGRAM_BOT_TOKEN detected)')
-    }
+    // Register channels
+    const telegramProvider = new TelegramProvider()
+    channelRegistry.register(telegramProvider)
+    
+    // Start Messenger Service
+    await messengerService.start()
+    logger.info('Messenger service started')
   } catch (error) {
-    logger.warn('Telegram bot failed to start:', error)
+    logger.warn('Messenger service failed to start:', error)
   }
 
   // Chatterbox auto-start disabled - use on-demand via API
@@ -526,8 +529,8 @@ const shutdown = async (signal: string) => {
     logger.info('Terminal sessions destroyed')
     await schedulerService.shutdown()
     logger.info('Scheduler service stopped')
-    await telegramService.stop()
-    logger.info('Telegram bot stopped')
+    await messengerService.stop()
+    logger.info('Messenger service stopped')
     await whisperServerManager.stop()
     logger.info('Whisper server stopped')
     await chatterboxServerManager.stop()
