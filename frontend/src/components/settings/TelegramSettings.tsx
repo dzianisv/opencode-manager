@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Loader2, Plus, Trash2, Bot, Users, MessageSquare } from 'lucide-react'
-import { telegramApi, TelegramStatus, TelegramSession } from '@/api/telegram'
+import { telegramApi } from '@/api/telegram'
+import type { TelegramStatus, TelegramSession } from '@/api/telegram'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
