@@ -233,6 +233,28 @@ class SettingsTest {
     return { passed: true, details: 'Settings dialog opened successfully' }
   }
 
+  private async switchToTab(tabName: string): Promise<void> {
+    if (!this.page) return
+
+    const switched = await this.page.evaluate((name) => {
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+      for (const tab of tabs) {
+        if (tab.textContent?.toLowerCase().includes(name.toLowerCase())) {
+          (tab as HTMLElement).click()
+          return true
+        }
+      }
+      return false
+    }, tabName)
+
+    if (switched) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      info(`Switched to ${tabName} tab`)
+    } else {
+      info(`Could not find ${tabName} tab`)
+    }
+  }
+
   private async testGeneralSettingsTab(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
@@ -709,10 +731,18 @@ class SettingsTest {
 
       await this.runTest('Settings Dialog Opens', () => this.testSettingsDialogOpens())
       await this.runTest('General Settings Tab', () => this.testGeneralSettingsTab())
+      
+      // Switch to Voice tab for TTS/STT/Talk Mode tests
+      await this.switchToTab('Voice')
+      
       await this.runTest('TTS Settings', () => this.testTTSSettings())
       await this.runTest('Coqui Model Selector', () => this.testCoquiModelSelector())
       await this.runTest('STT Settings', () => this.testSTTSettings())
       await this.runTest('Talk Mode Settings', () => this.testTalkModeSettings())
+      
+      // Switch back to General for Notification Settings
+      await this.switchToTab('General')
+      
       await this.runTest('Notification Settings', () => this.testNotificationSettings())
       await this.runTest('Other Settings Tabs', () => this.testOtherSettingsTabs())
       await this.runTest('No Critical Console Errors', () => this.testNoConsoleErrors())

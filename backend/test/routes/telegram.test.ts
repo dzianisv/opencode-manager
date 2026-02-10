@@ -1,26 +1,35 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { Hono } from 'hono'
 
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn()
 }))
 
-vi.mock('../../src/services/telegram', () => ({
-  telegramService: {
+vi.mock('../../src/services/messenger/service', () => ({
+  messengerService: {
     setDatabase: vi.fn(),
-    getStatus: vi.fn().mockReturnValue({
-      running: false,
-      activeSessions: 0,
-      allowlistCount: 0,
-    }),
-    start: vi.fn(),
-    stop: vi.fn(),
     getAllSessions: vi.fn().mockReturnValue([]),
     deleteSession: vi.fn().mockReturnValue(true),
     getAllowlist: vi.fn().mockReturnValue([]),
     addToAllowlist: vi.fn(),
     removeFromAllowlist: vi.fn().mockReturnValue(true),
   }
+}))
+
+vi.mock('../../src/services/channel-registry', () => ({
+  channelRegistry: {
+    get: vi.fn(),
+    getStatus: vi.fn().mockReturnValue({
+      running: false,
+      activeSessions: 0,
+      allowlistCount: 0,
+    }),
+    stop: vi.fn(),
+  }
+}))
+
+vi.mock('../../src/services/messenger/providers/telegram', () => ({
+  TelegramProvider: vi.fn()
 }))
 
 vi.mock('../../src/utils/logger', () => ({
@@ -33,15 +42,24 @@ vi.mock('../../src/utils/logger', () => ({
 }))
 
 import { createTelegramRoutes } from '../../src/routes/telegram'
-import { telegramService } from '../../src/services/telegram'
+import { messengerService } from '../../src/services/messenger/service'
+import { channelRegistry } from '../../src/services/channel-registry'
 
 describe('Telegram Routes', () => {
   let app: Hono
   let mockDb: any
+  let mockTelegramChannel: any
 
   beforeEach(() => {
     vi.clearAllMocks()
     mockDb = {}
+    
+    mockTelegramChannel = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({ running: true }),
+    }
+    
     app = new Hono()
     app.route('/api/telegram', createTelegramRoutes(mockDb))
   })
@@ -53,12 +71,10 @@ describe('Telegram Routes', () => {
       expect(res.status).toBe(200)
       const data = await res.json()
       expect(data).toHaveProperty('running')
-      expect(data).toHaveProperty('activeSessions')
-      expect(data).toHaveProperty('allowlistCount')
     })
 
     it('should return running status when bot is active', async () => {
-      (telegramService.getStatus as Mock).mockReturnValueOnce({
+      (channelRegistry.getStatus as Mock).mockReturnValueOnce({
         running: true,
         activeSessions: 5,
         allowlistCount: 3,
@@ -75,6 +91,8 @@ describe('Telegram Routes', () => {
 
   describe('POST /api/telegram/start', () => {
     it('should start bot with provided token', async () => {
+      (channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
+      
       const res = await app.request('/api/telegram/start', {
         method: 'POST',
         body: JSON.stringify({ token: 'test-token' }),
@@ -82,11 +100,12 @@ describe('Telegram Routes', () => {
       })
       
       expect(res.status).toBe(200)
-      expect(telegramService.start).toHaveBeenCalledWith('test-token')
+      expect(mockTelegramChannel.start).toHaveBeenCalledWith('test-token')
     })
 
     it('should use env token if not provided', async () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-token'
+      ;(channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
       
       const res = await app.request('/api/telegram/start', {
         method: 'POST',
@@ -95,13 +114,14 @@ describe('Telegram Routes', () => {
       })
       
       expect(res.status).toBe(200)
-      expect(telegramService.start).toHaveBeenCalledWith('env-token')
+      expect(mockTelegramChannel.start).toHaveBeenCalledWith('env-token')
       
       delete process.env.TELEGRAM_BOT_TOKEN
     })
 
     it('should return 400 if no token available', async () => {
       delete process.env.TELEGRAM_BOT_TOKEN
+      ;(channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
       
       const res = await app.request('/api/telegram/start', {
         method: 'POST',
@@ -112,8 +132,23 @@ describe('Telegram Routes', () => {
       expect(res.status).toBe(400)
     })
 
+    it('should return 500 if channel not registered', async () => {
+      (channelRegistry.get as Mock).mockReturnValue(null)
+      
+      const res = await app.request('/api/telegram/start', {
+        method: 'POST',
+        body: JSON.stringify({ token: 'test-token' }),
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      expect(res.status).toBe(500)
+      const data = await res.json()
+      expect(data.error).toBe('Telegram channel not registered')
+    })
+
     it('should return 500 on start failure', async () => {
-      (telegramService.start as Mock).mockRejectedValueOnce(new Error('Invalid token'))
+      (channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
+      mockTelegramChannel.start.mockRejectedValueOnce(new Error('Invalid token'))
       
       const res = await app.request('/api/telegram/start', {
         method: 'POST',
@@ -132,11 +167,11 @@ describe('Telegram Routes', () => {
       const res = await app.request('/api/telegram/stop', { method: 'POST' })
       
       expect(res.status).toBe(200)
-      expect(telegramService.stop).toHaveBeenCalled()
+      expect(channelRegistry.stop).toHaveBeenCalledWith('telegram')
     })
 
     it('should return 500 on stop failure', async () => {
-      (telegramService.stop as Mock).mockRejectedValueOnce(new Error('Stop failed'))
+      (channelRegistry.stop as Mock).mockRejectedValueOnce(new Error('Stop failed'))
       
       const res = await app.request('/api/telegram/stop', { method: 'POST' })
       
@@ -154,15 +189,15 @@ describe('Telegram Routes', () => {
     })
 
     it('should return sessions list', async () => {
-      (telegramService.getAllSessions as Mock).mockReturnValueOnce([
-        { id: 1, chat_id: '111', opencode_session_id: 'sess-1', created_at: Date.now(), updated_at: Date.now() }
+      (messengerService.getAllSessions as Mock).mockReturnValueOnce([
+        { id: 1, provider_chat_id: '111', opencode_session_id: 'sess-1', created_at: Date.now(), updated_at: Date.now() }
       ])
       
       const res = await app.request('/api/telegram/sessions')
       const data = await res.json()
       
       expect(data).toHaveLength(1)
-      expect(data[0].chat_id).toBe('111')
+      expect(data[0].provider_chat_id).toBe('111')
     })
   })
 
@@ -171,11 +206,11 @@ describe('Telegram Routes', () => {
       const res = await app.request('/api/telegram/sessions/12345', { method: 'DELETE' })
       
       expect(res.status).toBe(200)
-      expect(telegramService.deleteSession).toHaveBeenCalledWith('12345')
+      expect(messengerService.deleteSession).toHaveBeenCalledWith('telegram', '12345')
     })
 
     it('should return 404 if session not found', async () => {
-      (telegramService.deleteSession as Mock).mockReturnValueOnce(false)
+      (messengerService.deleteSession as Mock).mockReturnValueOnce(false)
       
       const res = await app.request('/api/telegram/sessions/99999', { method: 'DELETE' })
       
@@ -193,9 +228,9 @@ describe('Telegram Routes', () => {
     })
 
     it('should return allowlist entries', async () => {
-      (telegramService.getAllowlist as Mock).mockReturnValueOnce([
-        { id: 1, chat_id: '111', added_at: Date.now() },
-        { id: 2, chat_id: '222', added_at: Date.now() }
+      (messengerService.getAllowlist as Mock).mockReturnValueOnce([
+        { id: 1, provider_chat_id: '111', added_at: Date.now() },
+        { id: 2, provider_chat_id: '222', added_at: Date.now() }
       ])
       
       const res = await app.request('/api/telegram/allowlist')
@@ -214,7 +249,7 @@ describe('Telegram Routes', () => {
       })
       
       expect(res.status).toBe(200)
-      expect(telegramService.addToAllowlist).toHaveBeenCalledWith('12345')
+      expect(messengerService.addToAllowlist).toHaveBeenCalledWith('telegram', '12345')
     })
 
     it('should return 400 if chatId missing', async () => {
@@ -233,11 +268,11 @@ describe('Telegram Routes', () => {
       const res = await app.request('/api/telegram/allowlist/12345', { method: 'DELETE' })
       
       expect(res.status).toBe(200)
-      expect(telegramService.removeFromAllowlist).toHaveBeenCalledWith('12345')
+      expect(messengerService.removeFromAllowlist).toHaveBeenCalledWith('telegram', '12345')
     })
 
     it('should return 404 if chat ID not found', async () => {
-      (telegramService.removeFromAllowlist as Mock).mockReturnValueOnce(false)
+      (messengerService.removeFromAllowlist as Mock).mockReturnValueOnce(false)
       
       const res = await app.request('/api/telegram/allowlist/99999', { method: 'DELETE' })
       
