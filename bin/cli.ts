@@ -55,6 +55,34 @@ function clearTunnelState(): void {
   } catch {}
 }
 
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function cleanupStaleTunnelState(): void {
+  try {
+    if (!fs.existsSync(TUNNEL_STATE_FILE)) return
+    const state = JSON.parse(fs.readFileSync(TUNNEL_STATE_FILE, 'utf8'))
+    if (state.pid && !isProcessRunning(state.pid)) {
+      console.log(`   Clearing stale tunnel state (PID ${state.pid} no longer running)`)
+      clearTunnelState()
+    } else if (state.pid && isProcessRunning(state.pid)) {
+      console.log(`   Stopping previous tunnel (PID ${state.pid})...`)
+      try {
+        process.kill(state.pid, 'SIGTERM')
+      } catch {}
+      clearTunnelState()
+    }
+  } catch {
+    clearTunnelState()
+  }
+}
+
 /**
  * Rotate a log file if it exceeds the maximum size.
  * Creates backups like: cloudflared.log.1, cloudflared.log.2, etc.
@@ -317,6 +345,8 @@ async function startCloudflaredTunnel(localPort: number, auth: AuthConfig): Prom
     fs.mkdirSync(CONFIG_DIR, { recursive: true })
   }
 
+  cleanupStaleTunnelState()
+
   // Rotate log file if needed
   rotateLogFile(CLOUDFLARED_LOG_FILE)
 
@@ -369,6 +399,7 @@ async function startCloudflaredTunnel(localPort: number, auth: AuthConfig): Prom
   tunnelProcess.on('exit', (code, signal) => {
     logStream.write(`[${timestamp()}] Process exited with code ${code}, signal ${signal}\n`)
     logStream.end()
+    clearTunnelState()
   })
 
   const url = await urlPromise
