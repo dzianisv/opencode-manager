@@ -313,20 +313,20 @@ class SettingsTest {
     }
   }
 
+  private buildXPathText(text: string): string {
+    if (!text.includes("'")) {
+      return `'${text}'`
+    }
+    const parts = text.split("'").map(part => `'${part}'`)
+    return `concat(${parts.join(', "\'", ')})`
+  }
+
   private async waitForText(text: string, timeoutMs: number): Promise<boolean> {
     if (!this.page) return false
 
     try {
-      await this.page.waitForFunction(
-        (target) => {
-          const panel = document.querySelector('[role="tabpanel"][data-state="active"]') as HTMLElement | null
-          const panelText = panel?.textContent || ''
-          const bodyText = document.body?.textContent || ''
-          return panelText.includes(target) || bodyText.includes(target)
-        },
-        { timeout: timeoutMs },
-        text
-      )
+      const xpathText = this.buildXPathText(text)
+      await this.page.waitForXPath(`//*[contains(normalize-space(.), ${xpathText})]`, { timeout: timeoutMs })
       return true
     } catch {
       return false
