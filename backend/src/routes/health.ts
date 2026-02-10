@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import type { Database } from 'bun:sqlite'
 import { opencodeServerManager } from '../services/opencode-single-server'
-import { telegramService } from '../services/telegram'
+import { channelRegistry } from '../services/channel-registry'
+import { messengerService } from '../services/messenger/service'
 
 export function createHealthRoutes(db: Database) {
   const app = new Hono()
@@ -11,7 +12,10 @@ export function createHealthRoutes(db: Database) {
       const dbCheck = db.prepare('SELECT 1').get()
       const opencodeHealthy = await opencodeServerManager.checkHealth()
       const startupError = opencodeServerManager.getLastStartupError()
-      const telegramStatus = telegramService.getStatus()
+      
+      const telegramStatus = channelRegistry.getStatus('telegram') || { running: false }
+      const sessions = messengerService.getAllSessions('telegram')
+      const allowlist = messengerService.getAllowlist('telegram')
 
       const status = startupError && !opencodeHealthy
         ? 'unhealthy'
@@ -28,8 +32,8 @@ export function createHealthRoutes(db: Database) {
         opencodeVersionSupported: opencodeServerManager.isVersionSupported(),
         telegram: {
           running: telegramStatus.running,
-          sessions: telegramStatus.activeSessions,
-          allowlist: telegramStatus.allowlistCount,
+          sessions: sessions.length,
+          allowlist: allowlist.length,
         },
       }
 
