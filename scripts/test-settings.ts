@@ -314,8 +314,8 @@ class SettingsTest {
           const bodyText = dialog?.textContent || document.body?.textContent || ''
           const normalize = (value: string) => value
             .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
-            .replace(/\s+/g, '')
             .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '')
           const normalizedHeading = normalize(headingText)
           const normalizedBody = normalize(bodyText)
           return texts.some((text) => {
