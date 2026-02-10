@@ -15,6 +15,8 @@ const CONFIG_DIR = path.join(os.homedir(), '.local', 'run', 'opencode-manager')
 const ENDPOINTS_FILE = path.join(CONFIG_DIR, 'endpoints.json')
 const AUTH_FILE = path.join(CONFIG_DIR, 'auth.json')
 const CLOUDFLARED_LOG_FILE = path.join(CONFIG_DIR, 'cloudflared.log')
+const TUNNEL_STATE_FILE = path.join(CONFIG_DIR, 'tunnel.json')
+const TUNNEL_PID_FILE = path.join(CONFIG_DIR, 'tunnel.pid')
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024 // 5MB
 const MAX_LOG_BACKUPS = 3
 
@@ -37,6 +39,20 @@ function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
   }
+}
+
+function writeTunnelState(pid: number, url: string, urlWithAuth: string | null, port: number): void {
+  ensureConfigDir()
+  const state = { pid, url, urlWithAuth, port, startedAt: Date.now() }
+  fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify(state, null, 2))
+  fs.writeFileSync(TUNNEL_PID_FILE, pid.toString())
+}
+
+function clearTunnelState(): void {
+  try {
+    if (fs.existsSync(TUNNEL_STATE_FILE)) fs.unlinkSync(TUNNEL_STATE_FILE)
+    if (fs.existsSync(TUNNEL_PID_FILE)) fs.unlinkSync(TUNNEL_PID_FILE)
+  } catch {}
 }
 
 /**
@@ -373,6 +389,8 @@ async function startCloudflaredTunnel(localPort: number, auth: AuthConfig): Prom
     if (urlWithAuth) {
       console.log(`   Tunnel: ${urlWithAuth}`)
     }
+
+    writeTunnelState(tunnelProcess.pid!, url, urlWithAuth, localPort)
   } else {
     logStream.write(`[${timestamp()}] WARNING: Failed to get tunnel URL within timeout\n`)
   }
@@ -497,6 +515,7 @@ async function commandStart(args: string[]): Promise<void> {
 
   const cleanup = () => {
     console.log('\n\n🛑 Shutting down...')
+    clearTunnelState()
     processes.forEach(p => {
       try { p.kill('SIGTERM') } catch {}
     })
