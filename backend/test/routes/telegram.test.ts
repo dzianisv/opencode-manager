@@ -28,9 +28,7 @@ vi.mock('../../src/services/channel-registry', () => ({
   }
 }))
 
-vi.mock('../../src/services/messenger/providers/telegram', () => ({
-  TelegramProvider: vi.fn()
-}))
+
 
 vi.mock('../../src/utils/logger', () => ({
   logger: {
