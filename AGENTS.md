@@ -732,5 +732,11 @@ Use these skills for common workflows:
 
 ## Architecture
 
+## Messenger Architecture
+The backend uses a generic Multi-Channel Messenger Architecture to support Telegram and future providers.
+- **ChannelRegistry**: Manages channel lifecycles.
+- **MessengerService**: Central logic for session management.
+- **Providers**: Implement the `Channel` interface (e.g., `TelegramProvider`).
+
 @docs/cloudVibeCoding.md
 @./README.md
