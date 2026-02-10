@@ -301,32 +301,14 @@ class SettingsTest {
     try {
       await this.page.waitForFunction(
         (texts) => {
-          const haystack = document.body?.textContent || ''
-          return texts.some((text) => haystack.includes(text))
+          const headingNodes = Array.from(document.querySelectorAll('h2'))
+          const headingText = headingNodes.map(node => node.textContent || '').join('\n')
+          const bodyText = document.body?.textContent || ''
+          return texts.some((text) => headingText.includes(text) || bodyText.includes(text))
         },
         { timeout: timeoutMs },
         headings
       )
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private buildXPathText(text: string): string {
-    if (!text.includes("'")) {
-      return `'${text}'`
-    }
-    const parts = text.split("'").map(part => `'${part}'`)
-    return `concat(${parts.join(', "\'", ')})`
-  }
-
-  private async waitForText(text: string, timeoutMs: number): Promise<boolean> {
-    if (!this.page) return false
-
-    try {
-      const xpathText = this.buildXPathText(text)
-      await this.page.waitForXPath(`//*[contains(normalize-space(.), ${xpathText})]`, { timeout: timeoutMs })
       return true
     } catch {
       return false
@@ -362,7 +344,7 @@ class SettingsTest {
   private async testTTSSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForText('Text-to-Speech', 30000)
+    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 30000)
 
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
@@ -437,7 +419,7 @@ class SettingsTest {
   private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForText('Text-to-Speech', 30000)
+    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 30000)
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
     }
@@ -520,7 +502,7 @@ class SettingsTest {
   private async testSTTSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const sttSection = await this.waitForText('Speech-to-Text', 30000)
+    const sttSection = await this.waitForHeading(['Speech-to-Text'], 30000)
 
     if (!sttSection) {
       return { passed: false, details: 'STT section heading not found' }
@@ -661,7 +643,7 @@ class SettingsTest {
   private async testTalkModeSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const talkModeSection = await this.waitForText('Talk Mode', 30000)
+    const talkModeSection = await this.waitForHeading(['Talk Mode'], 30000)
 
     if (!talkModeSection) {
       return { passed: false, details: 'Talk Mode section heading not found' }
