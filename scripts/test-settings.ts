@@ -249,6 +249,8 @@ class SettingsTest {
 
     if (switched) {
       await new Promise(resolve => setTimeout(resolve, 1000))
+
+      await this.waitForActiveTab(tabName, 15000)
       
       const headingsMap: Record<string, string[]> = {
         'Voice': ['Text-to-Speech', 'Speech-to-Text', 'Talk Mode'],
@@ -268,6 +270,28 @@ class SettingsTest {
       info(`Switched to ${tabName} tab`)
     } else {
       info(`Could not find ${tabName} tab`)
+    }
+  }
+
+  private async waitForActiveTab(tabName: string, timeoutMs: number): Promise<boolean> {
+    if (!this.page) return false
+
+    try {
+      await this.page.waitForFunction(
+        (name) => {
+          const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+          const tab = tabs.find(t => t.textContent?.toLowerCase().includes(name.toLowerCase()))
+          if (!tab) return false
+          const state = tab.getAttribute('data-state')
+          const selected = tab.getAttribute('aria-selected')
+          return state === 'active' || selected === 'true'
+        },
+        { timeout: timeoutMs },
+        tabName
+      )
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -295,7 +319,9 @@ class SettingsTest {
     try {
       await this.page.waitForFunction(
         (target) => {
-          const haystack = document.body?.innerText || ''
+          const panel = document.querySelector('[role="tabpanel"][data-state="active"]') as HTMLElement | null
+          if (!panel) return false
+          const haystack = panel.innerText || ''
           return haystack.includes(target)
         },
         { timeout: timeoutMs },
