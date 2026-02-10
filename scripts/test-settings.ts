@@ -483,8 +483,21 @@ class SettingsTest {
       return { passed: true, details: 'Coqui server not running - skipped model test' }
     }
 
-    const modelInput = await this.page.$('input[placeholder="Select a TTS model..."]')
-    if (!modelInput) {
+    const modelInput = await this.page.evaluateHandle(() => {
+      const label = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('TTS Model'))
+      if (label) {
+        const container = label.closest('div')
+        const input = container?.querySelector('input')
+        if (input) return input
+      }
+      const inputs = Array.from(document.querySelectorAll('input'))
+      return inputs.find(input => {
+        const placeholder = input.getAttribute('placeholder') || ''
+        return placeholder.toLowerCase().includes('tts model')
+      })
+    })
+    const modelInputElement = modelInput.asElement()
+    if (!modelInputElement) {
       return { passed: false, details: 'TTS Model input not found' }
     }
 
@@ -494,7 +507,7 @@ class SettingsTest {
       return match ? parseInt(match[1]) : 0
     })
 
-    await modelInput.click()
+    await modelInputElement.click()
     await this.page.keyboard.down('Meta')
     await this.page.keyboard.press('a')
     await this.page.keyboard.up('Meta')
@@ -502,10 +515,12 @@ class SettingsTest {
     await new Promise(resolve => setTimeout(resolve, 1500))
 
     const dropdownOptions = await this.page.evaluate(() => {
-      const dropdown = document.querySelector('.absolute.z-50')
-      if (!dropdown) return 0
-      const options = dropdown.querySelectorAll('button[data-option]')
-      return options.length
+      const dropdowns = Array.from(document.querySelectorAll('.absolute.z-50'))
+      for (const dropdown of dropdowns) {
+        const options = dropdown.querySelectorAll('button[data-option]')
+        if (options.length > 0) return options.length
+      }
+      return 0
     })
 
     await takeScreenshot(this.page, 'coqui_model_selector', this.config.screenshotsDir)
