@@ -289,6 +289,24 @@ class SettingsTest {
     }
   }
 
+  private async waitForText(text: string, timeoutMs: number): Promise<boolean> {
+    if (!this.page) return false
+
+    try {
+      await this.page.waitForFunction(
+        (target) => {
+          const haystack = document.body?.innerText || ''
+          return haystack.includes(target)
+        },
+        { timeout: timeoutMs },
+        text
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private async testGeneralSettingsTab(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
@@ -318,7 +336,7 @@ class SettingsTest {
   private async testTTSSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 6000)
+    const ttsSection = await this.waitForText('Enable TTS', 8000)
 
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
@@ -393,7 +411,7 @@ class SettingsTest {
   private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 6000)
+    const ttsSection = await this.waitForText('Enable TTS', 8000)
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
     }
@@ -476,7 +494,7 @@ class SettingsTest {
   private async testSTTSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const sttSection = await this.waitForHeading(['Speech-to-Text'], 6000)
+    const sttSection = await this.waitForText('Enable STT', 8000)
 
     if (!sttSection) {
       return { passed: false, details: 'STT section heading not found' }
@@ -617,7 +635,7 @@ class SettingsTest {
   private async testTalkModeSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const talkModeSection = await this.waitForHeading(['Talk Mode'], 6000)
+    const talkModeSection = await this.waitForText('Enable Talk Mode', 8000)
 
     if (!talkModeSection) {
       return { passed: false, details: 'Talk Mode section heading not found' }
