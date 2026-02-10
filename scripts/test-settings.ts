@@ -248,7 +248,31 @@ class SettingsTest {
     }, tabName)
 
     if (switched) {
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      const headingsMap: Record<string, string[]> = {
+        'Voice': ['Text-to-Speech', 'Speech-to-Text', 'Talk Mode'],
+        'General': ['General Preferences', 'Notifications'],
+        'Shortcuts': ['Keyboard Shortcuts'],
+        'OpenCode': ['OpenCode'],
+        'Providers': ['AI Providers', 'Provider'],
+        'Tunnel': ['Cloudflare Tunnel', 'Tunnel'],
+        'Telegram': ['Telegram'],
+      }
+      const expectedHeadings = headingsMap[tabName] || []
+      
+      if (expectedHeadings.length > 0) {
+        for (let i = 0; i < 5; i++) {
+          const found = await this.page.evaluate((headings) => {
+            const allH2s = Array.from(document.querySelectorAll('h2'))
+            return headings.some(h => allH2s.some(el => el.textContent?.includes(h)))
+          }, expectedHeadings)
+          
+          if (found) break
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+      
       info(`Switched to ${tabName} tab`)
     } else {
       info(`Could not find ${tabName} tab`)
