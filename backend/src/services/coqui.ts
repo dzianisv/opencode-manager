@@ -14,6 +14,49 @@ const COQUI_DEVICE = process.env.COQUI_DEVICE || 'auto'
 const COQUI_MODEL = process.env.COQUI_MODEL || 'tts_models/en/jenny/jenny'
 const DEFAULT_VENV_DIR = path.join(os.homedir(), '.opencode-manager', 'coqui-venv')
 
+const RECOMMENDED_MODELS = [
+  {
+    id: "tts_models/en/vctk/vits",
+    name: "VCTK VITS",
+    description: "VCTK VITS (109 speakers, recommended)",
+    quality: "high",
+    speed: "fast",
+    multi_speaker: true
+  },
+  {
+    id: "tts_models/en/ljspeech/vits",
+    name: "LJSpeech VITS",
+    description: "LJSpeech single speaker",
+    quality: "high",
+    speed: "fast",
+    multi_speaker: false
+  },
+  {
+    id: "tts_models/en/jenny/jenny",
+    name: "Jenny",
+    description: "Jenny voice",
+    quality: "high",
+    speed: "medium",
+    multi_speaker: false
+  },
+  {
+    id: "tts_models/multilingual/multi-dataset/xtts_v2",
+    name: "XTTS v2",
+    description: "XTTS v2 with voice cloning",
+    quality: "very_high",
+    speed: "slow",
+    multi_speaker: true
+  },
+  {
+    id: "tts_models/multilingual/multi-dataset/bark",
+    name: "Bark",
+    description: "Multilingual neural TTS",
+    quality: "high",
+    speed: "slow",
+    multi_speaker: false
+  }
+]
+
 interface CoquiServerStatus {
   running: boolean
   port: number
@@ -410,13 +453,7 @@ class CoquiServerManager {
   }> {
     if (!this.status.running) {
       return {
-        models: [{
-          id: 'tts_models/en/jenny/jenny',
-          name: 'Jenny',
-          description: 'High-quality English female voice (recommended)',
-          quality: 'high',
-          speed: 'fast'
-        }],
+        models: RECOMMENDED_MODELS,
         currentModel: COQUI_MODEL
       }
     }
@@ -440,13 +477,7 @@ class CoquiServerManager {
     }
 
     return {
-      models: [{
-        id: 'tts_models/en/jenny/jenny',
-        name: 'Jenny',
-        description: 'High-quality English female voice (recommended)',
-        quality: 'high',
-        speed: 'fast'
-      }],
+      models: RECOMMENDED_MODELS,
       currentModel: COQUI_MODEL
     }
   }

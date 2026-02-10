@@ -723,7 +723,6 @@ return (
               }
             }}
             disabled={disabled}
-            className="hidden md:block"
           />
           <ContinuousVoiceButton
             onTranscriptUpdate={(text) => {
@@ -750,7 +749,6 @@ return (
               }
             }}
             disabled={disabled}
-            className="hidden md:block"
           />
             <button
                data-submit-prompt
