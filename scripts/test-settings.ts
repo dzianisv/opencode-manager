@@ -236,21 +236,25 @@ class SettingsTest {
   private async switchToTab(tabName: string): Promise<void> {
     if (!this.page) return
 
-    const switched = await this.page.evaluate((name) => {
-      const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
-      for (const tab of tabs) {
-        if (tab.textContent?.toLowerCase().includes(name.toLowerCase())) {
-          (tab as HTMLElement).click()
-          return true
-        }
+    await this.page.waitForSelector('[role="dialog"]')
+
+    const dialog = await this.page.$('[role="dialog"]')
+    const tabs = dialog ? await dialog.$$('[role="tab"]') : []
+    let switched = false
+
+    for (const tab of tabs) {
+      const text = await this.page.evaluate(el => el.textContent || '', tab)
+      if (text.toLowerCase().includes(tabName.toLowerCase())) {
+        await tab.click()
+        switched = true
+        break
       }
-      return false
-    }, tabName)
+    }
 
     if (switched) {
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      await this.waitForActiveTab(tabName, 15000)
+      await this.waitForActiveTab(tabName, 20000)
       
       const headingsMap: Record<string, string[]> = {
         'Voice': ['Text-to-Speech', 'Speech-to-Text', 'Talk Mode'],
@@ -279,7 +283,8 @@ class SettingsTest {
     try {
       await this.page.waitForFunction(
         (name) => {
-          const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+          const dialog = document.querySelector('[role="dialog"]')
+          const tabs = Array.from((dialog || document).querySelectorAll('[role="tab"]'))
           const tab = tabs.find(t => t.textContent?.toLowerCase().includes(name.toLowerCase()))
           if (!tab) return false
           const state = tab.getAttribute('data-state')
@@ -299,19 +304,13 @@ class SettingsTest {
     if (!this.page) return false
 
     try {
-      await this.page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]')
-        if (!dialog) return
-        const headings = Array.from(dialog.querySelectorAll('h2'))
-        const debug = headings.map(h => h.textContent || '').join('\n')
-        ;(window as any).__settingsDialogHeadingText = debug
-      })
       await this.page.waitForFunction(
         (texts) => {
           const dialog = document.querySelector('[role="dialog"]')
-          const headingNodes = Array.from((dialog || document).querySelectorAll('h2'))
+          const activePanel = dialog?.querySelector('[role="tabpanel"][data-state="active"]') || dialog
+          const headingNodes = Array.from((activePanel || document).querySelectorAll('h2'))
           const headingText = headingNodes.map(node => node.textContent || '').join('\n')
-          const bodyText = dialog?.textContent || document.body?.textContent || ''
+          const bodyText = activePanel?.textContent || dialog?.textContent || document.body?.textContent || ''
           const normalize = (value: string) => value
             .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
             .toLowerCase()
@@ -338,7 +337,8 @@ class SettingsTest {
     return this.page.evaluate(() => {
       const dialog = document.querySelector('[role="dialog"]')
       if (!dialog) return ''
-      const headings = Array.from(dialog.querySelectorAll('h2'))
+      const activePanel = dialog.querySelector('[role="tabpanel"][data-state="active"]') || dialog
+      const headings = Array.from(activePanel.querySelectorAll('h2'))
       return headings.map(h => h.textContent || '').join(' | ')
     })
   }
