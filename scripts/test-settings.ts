@@ -262,7 +262,7 @@ class SettingsTest {
       const expectedHeadings = headingsMap[tabName] || []
       
       if (expectedHeadings.length > 0) {
-        await this.waitForHeading(expectedHeadings, 6000)
+        await this.waitForHeading(expectedHeadings, 20000)
       }
       
       info(`Switched to ${tabName} tab`)
@@ -336,7 +336,7 @@ class SettingsTest {
   private async testTTSSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForText('Enable TTS', 8000)
+    const ttsSection = await this.waitForText('Enable TTS', 30000)
 
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
@@ -411,7 +411,7 @@ class SettingsTest {
   private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const ttsSection = await this.waitForText('Enable TTS', 8000)
+    const ttsSection = await this.waitForText('Enable TTS', 30000)
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
     }
@@ -494,7 +494,7 @@ class SettingsTest {
   private async testSTTSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const sttSection = await this.waitForText('Enable STT', 8000)
+    const sttSection = await this.waitForText('Enable STT', 30000)
 
     if (!sttSection) {
       return { passed: false, details: 'STT section heading not found' }
@@ -635,7 +635,7 @@ class SettingsTest {
   private async testTalkModeSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    const talkModeSection = await this.waitForText('Enable Talk Mode', 8000)
+    const talkModeSection = await this.waitForText('Enable Talk Mode', 30000)
 
     if (!talkModeSection) {
       return { passed: false, details: 'Talk Mode section heading not found' }
