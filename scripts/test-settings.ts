@@ -262,20 +262,30 @@ class SettingsTest {
       const expectedHeadings = headingsMap[tabName] || []
       
       if (expectedHeadings.length > 0) {
-        for (let i = 0; i < 5; i++) {
-          const found = await this.page.evaluate((headings) => {
-            const allH2s = Array.from(document.querySelectorAll('h2'))
-            return headings.some(h => allH2s.some(el => el.textContent?.includes(h)))
-          }, expectedHeadings)
-          
-          if (found) break
-          await new Promise(resolve => setTimeout(resolve, 500))
-        }
+        await this.waitForHeading(expectedHeadings, 6000)
       }
       
       info(`Switched to ${tabName} tab`)
     } else {
       info(`Could not find ${tabName} tab`)
+    }
+  }
+
+  private async waitForHeading(headings: string[], timeoutMs: number): Promise<boolean> {
+    if (!this.page) return false
+
+    try {
+      await this.page.waitForFunction(
+        (texts) => {
+          const allH2s = Array.from(document.querySelectorAll('h2'))
+          return texts.some((text) => allH2s.some(h => (h.textContent || '').includes(text)))
+        },
+        { timeout: timeoutMs },
+        headings
+      )
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -308,16 +318,7 @@ class SettingsTest {
   private async testTTSSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    await this.page.evaluate(() => {
-      const ttsHeading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Text-to-Speech'))
-      if (ttsHeading) ttsHeading.scrollIntoView({ behavior: 'instant', block: 'center' })
-    })
-    await new Promise(resolve => setTimeout(resolve, 300))
-
-    const ttsSection = await this.page.evaluate(() => {
-      const heading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Text-to-Speech'))
-      return !!heading
-    })
+    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 6000)
 
     if (!ttsSection) {
       return { passed: false, details: 'TTS section heading not found' }
@@ -392,22 +393,26 @@ class SettingsTest {
   private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    await this.page.evaluate(() => {
-      const ttsHeading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Text-to-Speech'))
-      if (ttsHeading) ttsHeading.scrollIntoView({ behavior: 'instant', block: 'center' })
-    })
-    await new Promise(resolve => setTimeout(resolve, 300))
+    const ttsSection = await this.waitForHeading(['Text-to-Speech'], 6000)
+    if (!ttsSection) {
+      return { passed: false, details: 'TTS section heading not found' }
+    }
 
-    const coquiButton = await this.page.evaluateHandle(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      return buttons.find(btn => btn.textContent?.includes('Coqui'))
-    })
+    const buttons = await this.page.$$('button')
+    let coquiButton = null as null | import('puppeteer').ElementHandle
+    for (const button of buttons) {
+      const text = await this.page.evaluate(el => el.textContent || '', button)
+      if (text.includes('Coqui')) {
+        coquiButton = button
+        break
+      }
+    }
 
     if (!coquiButton) {
       return { passed: false, details: 'Coqui provider button not found' }
     }
 
-    await (coquiButton as import('puppeteer').ElementHandle<Element>).click()
+    await coquiButton.click()
     await new Promise(resolve => setTimeout(resolve, 3000))
 
     const coquiServerStatus = await this.page.evaluate(() => {
@@ -471,16 +476,7 @@ class SettingsTest {
   private async testSTTSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    await this.page.evaluate(() => {
-      const sttHeading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Speech-to-Text'))
-      if (sttHeading) sttHeading.scrollIntoView({ behavior: 'instant', block: 'center' })
-    })
-    await new Promise(resolve => setTimeout(resolve, 300))
-
-    const sttSection = await this.page.evaluate(() => {
-      const heading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Speech-to-Text'))
-      return !!heading
-    })
+    const sttSection = await this.waitForHeading(['Speech-to-Text'], 6000)
 
     if (!sttSection) {
       return { passed: false, details: 'STT section heading not found' }
@@ -621,16 +617,7 @@ class SettingsTest {
   private async testTalkModeSettings(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
-    await this.page.evaluate(() => {
-      const heading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Talk Mode'))
-      if (heading) heading.scrollIntoView({ behavior: 'instant', block: 'center' })
-    })
-    await new Promise(resolve => setTimeout(resolve, 300))
-
-    const talkModeSection = await this.page.evaluate(() => {
-      const heading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent?.includes('Talk Mode'))
-      return !!heading
-    })
+    const talkModeSection = await this.waitForHeading(['Talk Mode'], 6000)
 
     if (!talkModeSection) {
       return { passed: false, details: 'Talk Mode section heading not found' }
