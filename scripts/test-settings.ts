@@ -304,7 +304,16 @@ class SettingsTest {
           const headingNodes = Array.from(document.querySelectorAll('h2'))
           const headingText = headingNodes.map(node => node.textContent || '').join('\n')
           const bodyText = document.body?.textContent || ''
-          return texts.some((text) => headingText.includes(text) || bodyText.includes(text))
+          const normalize = (value: string) => value
+            .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
+            .replace(/\s+/g, '')
+            .toLowerCase()
+          const normalizedHeading = normalize(headingText)
+          const normalizedBody = normalize(bodyText)
+          return texts.some((text) => {
+            const normalizedText = normalize(text)
+            return normalizedHeading.includes(normalizedText) || normalizedBody.includes(normalizedText)
+          })
         },
         { timeout: timeoutMs },
         headings
