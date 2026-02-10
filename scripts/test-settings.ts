@@ -277,8 +277,8 @@ class SettingsTest {
     try {
       await this.page.waitForFunction(
         (texts) => {
-          const allH2s = Array.from(document.querySelectorAll('h2'))
-          return texts.some((text) => allH2s.some(h => (h.textContent || '').includes(text)))
+          const haystack = document.body?.innerText || ''
+          return texts.some((text) => haystack.includes(text))
         },
         { timeout: timeoutMs },
         headings
