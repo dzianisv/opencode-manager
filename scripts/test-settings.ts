@@ -299,11 +299,19 @@ class SettingsTest {
     if (!this.page) return false
 
     try {
+      await this.page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"]')
+        if (!dialog) return
+        const headings = Array.from(dialog.querySelectorAll('h2'))
+        const debug = headings.map(h => h.textContent || '').join('\n')
+        ;(window as any).__settingsDialogHeadingText = debug
+      })
       await this.page.waitForFunction(
         (texts) => {
-          const headingNodes = Array.from(document.querySelectorAll('h2'))
+          const dialog = document.querySelector('[role="dialog"]')
+          const headingNodes = Array.from((dialog || document).querySelectorAll('h2'))
           const headingText = headingNodes.map(node => node.textContent || '').join('\n')
-          const bodyText = document.body?.textContent || ''
+          const bodyText = dialog?.textContent || document.body?.textContent || ''
           const normalize = (value: string) => value
             .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
             .replace(/\s+/g, '')
