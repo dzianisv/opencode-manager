@@ -332,6 +332,17 @@ class SettingsTest {
     }
   }
 
+  private async getDialogHeadingText(): Promise<string> {
+    if (!this.page) return ''
+
+    return this.page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]')
+      if (!dialog) return ''
+      const headings = Array.from(dialog.querySelectorAll('h2'))
+      return headings.map(h => h.textContent || '').join(' | ')
+    })
+  }
+
   private async testGeneralSettingsTab(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
@@ -364,6 +375,8 @@ class SettingsTest {
     const ttsSection = await this.waitForHeading(['Text-to-Speech'], 30000)
 
     if (!ttsSection) {
+      const dialogHeadings = await this.getDialogHeadingText()
+      info(`Dialog headings: ${dialogHeadings || 'none'}`)
       return { passed: false, details: 'TTS section heading not found' }
     }
 
@@ -438,6 +451,8 @@ class SettingsTest {
 
     const ttsSection = await this.waitForHeading(['Text-to-Speech'], 30000)
     if (!ttsSection) {
+      const dialogHeadings = await this.getDialogHeadingText()
+      info(`Dialog headings: ${dialogHeadings || 'none'}`)
       return { passed: false, details: 'TTS section heading not found' }
     }
 
@@ -522,6 +537,8 @@ class SettingsTest {
     const sttSection = await this.waitForHeading(['Speech-to-Text'], 30000)
 
     if (!sttSection) {
+      const dialogHeadings = await this.getDialogHeadingText()
+      info(`Dialog headings: ${dialogHeadings || 'none'}`)
       return { passed: false, details: 'STT section heading not found' }
     }
 
@@ -663,6 +680,8 @@ class SettingsTest {
     const talkModeSection = await this.waitForHeading(['Talk Mode'], 30000)
 
     if (!talkModeSection) {
+      const dialogHeadings = await this.getDialogHeadingText()
+      info(`Dialog headings: ${dialogHeadings || 'none'}`)
       return { passed: false, details: 'Talk Mode section heading not found' }
     }
 
