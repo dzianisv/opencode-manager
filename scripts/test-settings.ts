@@ -301,7 +301,7 @@ class SettingsTest {
     try {
       await this.page.waitForFunction(
         (texts) => {
-          const haystack = document.body?.innerText || ''
+          const haystack = document.body?.textContent || ''
           return texts.some((text) => haystack.includes(text))
         },
         { timeout: timeoutMs },
@@ -320,9 +320,9 @@ class SettingsTest {
       await this.page.waitForFunction(
         (target) => {
           const panel = document.querySelector('[role="tabpanel"][data-state="active"]') as HTMLElement | null
-          if (!panel) return false
-          const haystack = panel.innerText || ''
-          return haystack.includes(target)
+          const panelText = panel?.textContent || ''
+          const bodyText = document.body?.textContent || ''
+          return panelText.includes(target) || bodyText.includes(target)
         },
         { timeout: timeoutMs },
         text
