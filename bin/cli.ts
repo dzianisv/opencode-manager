@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as crypto from 'crypto'
 
-const VERSION = '0.5.4'
+const VERSION = '0.5.5'
 const DEFAULT_PORT = 5001
 const DEFAULT_OPENCODE_PORT = 5551
 const MANAGED_PORTS = [5001, 5002, 5003, 5173, 5174, 5175, 5176, 5552, 5553, 5554]
