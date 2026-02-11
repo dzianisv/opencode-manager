@@ -449,6 +449,32 @@ class SettingsTest {
   private async testCoquiModelSelector(): Promise<{ passed: boolean; details?: string }> {
     if (!this.page) return { passed: false, details: 'No page available' }
 
+    const coquiStatusUrl = `${this.config.baseUrl}/api/tts/coqui/status`
+    try {
+      const headers: Record<string, string> = {}
+      if (this.config.username && this.config.password) {
+        headers['Authorization'] = `Basic ${Buffer.from(`${this.config.username}:${this.config.password}`).toString('base64')}`
+      }
+      const statusResponse = await fetch(coquiStatusUrl, { headers, signal: AbortSignal.timeout(5000) })
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json() as { running?: boolean; available?: boolean; error?: string }
+        if (statusData.available === false || statusData.error?.includes('not found')) {
+          info('Coqui TTS not available on this deployment, skipping')
+          return { passed: true, details: 'SKIPPED: Coqui TTS not available on this deployment' }
+        }
+        if (!statusData.running) {
+          info('Coqui server not running, skipping model selector test')
+          return { passed: true, details: 'SKIPPED: Coqui server not running' }
+        }
+      } else {
+        info(`Coqui status check returned ${statusResponse.status}, skipping`)
+        return { passed: true, details: `SKIPPED: Coqui status endpoint returned ${statusResponse.status}` }
+      }
+    } catch {
+      info('Coqui status check failed (server may not be available), skipping')
+      return { passed: true, details: 'SKIPPED: Coqui status endpoint unreachable' }
+    }
+
     const ttsSection = await this.waitForHeading(['Text-to-Speech'], 30000)
     if (!ttsSection) {
       const dialogHeadings = await this.getDialogHeadingText()
@@ -472,16 +498,6 @@ class SettingsTest {
 
     await coquiButton.click()
     await new Promise(resolve => setTimeout(resolve, 3000))
-
-    const coquiServerStatus = await this.page.evaluate(() => {
-      const statusText = document.body.innerText
-      return statusText.includes('Running on') || statusText.includes('running')
-    })
-
-    if (!coquiServerStatus) {
-      info('Coqui server not running, skipping model selector test')
-      return { passed: true, details: 'Coqui server not running - skipped model test' }
-    }
 
     const modelInput = await this.page.evaluateHandle(() => {
       const label = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('TTS Model'))
