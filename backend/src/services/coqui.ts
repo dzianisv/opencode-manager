@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename)
 const COQUI_PORT = parseInt(process.env.COQUI_PORT || '5554')
 const COQUI_HOST = process.env.COQUI_HOST || '127.0.0.1'
 const COQUI_DEVICE = process.env.COQUI_DEVICE || 'auto'
-const COQUI_MODEL = process.env.COQUI_MODEL || 'tts_models/en/jenny/jenny'
+const COQUI_MODEL = process.env.COQUI_MODEL || 'tts_models/en/vctk/vits'
 const DEFAULT_VENV_DIR = path.join(os.homedir(), '.opencode-manager', 'coqui-venv')
 
 const RECOMMENDED_MODELS = [

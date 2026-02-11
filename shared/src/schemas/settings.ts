@@ -190,7 +190,7 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
   provider: 'coqui',
   endpoint: "https://api.openai.com",
   apiKey: "",
-  voice: "alloy",
+  voice: "p256",
   model: "tts-1",
   speed: 1.0,
   availableVoices: [],

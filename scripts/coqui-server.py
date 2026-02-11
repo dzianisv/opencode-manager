@@ -55,7 +55,7 @@ app = FastAPI(title="Coqui TTS Server", version="2.0.0")
 COQUI_PORT = int(os.environ.get("COQUI_PORT", "5554"))
 COQUI_HOST = os.environ.get("COQUI_HOST", "127.0.0.1")
 COQUI_DEVICE = os.environ.get("COQUI_DEVICE", "auto")
-COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/jenny/jenny")
+COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits")
 
 # Global state
 model: Optional[TTS] = None
@@ -142,6 +142,7 @@ VCTK_METADATA = {
     "p249": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
     "p250": {"gender": "Female", "accent": "English", "desc": "Standard"},
     "p251": {"gender": "Male", "accent": "Indian", "desc": "Indian English"},
+    "p256": {"gender": "Male", "accent": "English", "desc": "Natural, clear (default)"},
 }
 
 
