@@ -557,6 +557,18 @@ function getFullPath(): string {
     '/opt/homebrew/sbin',
   ]
   
+  const wellKnownDirs = [
+    path.join(os.homedir(), '.opencode', 'bin'),
+    path.join(os.homedir(), '.bun', 'bin'),
+    path.join(os.homedir(), '.local', 'bin'),
+    path.join(os.homedir(), '.cargo', 'bin'),
+  ]
+  for (const dir of wellKnownDirs) {
+    if (fs.existsSync(dir)) {
+      basePaths.push(dir)
+    }
+  }
+  
   try {
     const bunPath = execSync('which bun', { encoding: 'utf8' }).trim()
     basePaths.push(path.dirname(bunPath))
@@ -587,11 +599,6 @@ function getFullPath(): string {
     } catch {}
   }
   
-  const userLocalBin = path.join(os.homedir(), '.local', 'bin')
-  if (fs.existsSync(userLocalBin)) {
-    basePaths.push(userLocalBin)
-  }
-  
   const uniquePaths = [...new Set(basePaths)]
   return uniquePaths.join(':')
 }
@@ -609,6 +616,23 @@ function commandInstallService(args: string[]): void {
   const cliPath = path.join(packageDir, 'bin', 'cli.ts')
   const bunPath = execSync('which bun', { encoding: 'utf8' }).trim()
   const fullPath = getFullPath()
+
+  let opencodeBinFound = false
+  try {
+    execSync('which opencode', { encoding: 'utf8' }).trim()
+    opencodeBinFound = true
+  } catch {}
+  if (!opencodeBinFound) {
+    const fallback = path.join(os.homedir(), '.opencode', 'bin', 'opencode')
+    opencodeBinFound = fs.existsSync(fallback)
+  }
+  if (!opencodeBinFound) {
+    console.warn('⚠️  Warning: "opencode" binary not found in PATH or ~/.opencode/bin')
+    console.warn('   The service will fail to start without it.')
+    console.warn('   Install opencode: curl -fsSL https://opencode.ai/install | bash\n')
+  }
+
+  console.log(`   PATH: ${fullPath}\n`)
 
   const startArgs = ['start', '--client']
   if (hasTunnel) startArgs.push('--tunnel')
@@ -637,6 +661,8 @@ ${startArgs.map(a => `    <string>${a}</string>`).join('\n')}
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
   <key>WorkingDirectory</key>
   <string>${packageDir}</string>
   <key>StandardOutPath</key>
