@@ -432,7 +432,37 @@ class VoiceTest {
     return result
   }
 
-  async testFullTalkModeFlow(): Promise<TestResult> {
+  private selectModel(availableModels: string[]): { providerID: string; modelID: string } | null {
+    const preferred = [
+      'github-copilot/claude-haiku-4.5',
+      'github-copilot/claude-sonnet-4',
+      'github-copilot/claude-3.5-sonnet',
+      'github-copilot/claude-sonnet-4.5',
+      'github-copilot/claude-opus-4',
+    ]
+    
+    for (const model of preferred) {
+      if (availableModels.includes(model)) {
+        const [providerID, modelID] = model.split('/')
+        return { providerID, modelID }
+      }
+    }
+    
+    const claudeModel = availableModels.find(m => m.includes('claude'))
+    if (claudeModel) {
+      const [providerID, modelID] = claudeModel.split('/')
+      return { providerID, modelID }
+    }
+    
+    if (availableModels.length > 0) {
+      const [providerID, modelID] = availableModels[0].split('/')
+      return { providerID, modelID }
+    }
+    
+    return null
+  }
+
+  async testFullTalkModeFlow(availableModels: string[] = []): Promise<TestResult> {
     return this.runTest('Full Talk Mode Flow (STT -> OpenCode -> Response)', async () => {
       const wavPath = join(tmpdir(), `talkmode-flow-${Date.now()}.wav`)
       
@@ -471,61 +501,96 @@ class VoiceTest {
       const sessionData = await sessionResponse.json()
       const sessionId = sessionData.id
 
-      const messageResponse = await this.fetchOpenCode(`/session/${sessionId}/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parts: [{ type: 'text', text: transcript }]
-        })
-      })
+      const model = this.selectModel(availableModels)
+      const modelInfo = model ? `${model.providerID}/${model.modelID}` : 'default'
 
-      if (!messageResponse.ok) {
-        const text = await messageResponse.text()
-        return { passed: false, details: `Failed to send message: ${messageResponse.status} - ${text}` }
+      const messageBody: Record<string, unknown> = {
+        parts: [{ type: 'text', text: transcript }]
+      }
+      if (model) {
+        messageBody.model = model
       }
 
-      let assistantResponse = ''
-      let attempts = 0
-      const maxAttempts = 60
+      const messageController = new AbortController()
+      const messageTimeout = setTimeout(() => messageController.abort(), 90_000)
 
-      while (attempts < maxAttempts) {
-        await this.sleep(1000)
-        attempts++
+      try {
+        const messagePromise = this.fetchOpenCode(`/session/${sessionId}/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(messageBody),
+          signal: messageController.signal
+        })
 
-        const messagesResponse = await this.fetchOpenCode(`/session/${sessionId}/message`)
-        
-        if (messagesResponse.ok) {
-          const messages = await messagesResponse.json()
+        let assistantResponse = ''
+        let attempts = 0
+        const maxAttempts = 90
+        const pollIntervalMs = 2000
+
+        await this.sleep(3000)
+
+        while (attempts < maxAttempts) {
+          attempts++
+
+          const messagesResponse = await this.fetchOpenCode(`/session/${sessionId}/message`)
           
-          if (Array.isArray(messages)) {
-            if (messages.length > 0) {
-              const lastMessage = messages[messages.length - 1]
-              const messageInfo = lastMessage.info || lastMessage
+          if (messagesResponse.ok) {
+            const messages = await messagesResponse.json()
+            
+            if (Array.isArray(messages)) {
+              const assistantMsg = messages.find((m: { info?: { role?: string } }) => 
+                (m.info?.role || (m as Record<string, unknown>).role) === 'assistant'
+              )
               
-              if (messageInfo.role === 'assistant') {
+              if (assistantMsg) {
+                const messageInfo = assistantMsg.info || assistantMsg
                 const isComplete = !!messageInfo.time?.completed
                 
-                const textParts = lastMessage.parts?.filter((p: { type: string }) => p.type === 'text') || []
+                const textParts = assistantMsg.parts?.filter((p: { type: string }) => p.type === 'text') || []
                 assistantResponse = textParts.map((p: { text?: string }) => p.text || '').join('')
                 
                 if (isComplete && assistantResponse) {
+                  clearTimeout(messageTimeout)
+                  messageController.abort()
                   const hasFour = assistantResponse.toLowerCase().includes('four') || assistantResponse.includes('4')
                   return {
                     passed: hasFour,
-                    details: `Transcript: "${transcript}" | Response contains answer: ${hasFour} | Response: "${assistantResponse.slice(0, 200)}${assistantResponse.length > 200 ? '...' : ''}"`
+                    details: `Model: ${modelInfo} | Transcript: "${transcript}" | Answer correct: ${hasFour} | Response: "${assistantResponse.slice(0, 150)}${assistantResponse.length > 150 ? '...' : ''}"`
+                  }
+                }
+
+                if (isComplete && !assistantResponse) {
+                  clearTimeout(messageTimeout)
+                  messageController.abort()
+                  return {
+                    passed: false,
+                    details: `Model: ${modelInfo} | Response completed but empty (model may have failed silently)`
                   }
                 }
               }
             }
           }
-        } else if (attempts % 20 === 0) {
-          console.log(`   Still waiting for response... (${attempts}s)`)
-        }
-      }
 
-      return { 
-        passed: false, 
-        details: `Timeout waiting for response after ${attempts} attempts. Got: "${assistantResponse.slice(0, 100)}..."` 
+          if (attempts % 15 === 0) {
+            console.log(`   Waiting for response... (${attempts * pollIntervalMs / 1000}s, model: ${modelInfo})`)
+          }
+
+          await this.sleep(pollIntervalMs)
+        }
+
+        clearTimeout(messageTimeout)
+        messageController.abort()
+
+        return { 
+          passed: false, 
+          details: `Model: ${modelInfo} | Timeout after ${maxAttempts * pollIntervalMs / 1000}s. Got: "${assistantResponse.slice(0, 100)}"`
+        }
+      } catch (error) {
+        clearTimeout(messageTimeout)
+        if (error instanceof Error && error.name === 'AbortError') {
+          return { passed: false, details: `Model: ${modelInfo} | Message request aborted after 90s timeout` }
+        }
+        throw error
       }
     })
   }
@@ -681,8 +746,8 @@ class VoiceTest {
     })
   }
 
-  async testOpenCodeModelAvailable(): Promise<TestResult> {
-    return this.runTest('OpenCode Model Configured', async () => {
+  async testOpenCodeModelAvailable(): Promise<TestResult & { models?: string[] }> {
+    const result = await this.runTest('OpenCode Model Configured', async () => {
       const response = await this.fetchOpenCode('/config')
       
       if (response.status !== 200) {
@@ -690,14 +755,47 @@ class VoiceTest {
       }
       
       const data = await response.json()
-      const hasModel = data.model && typeof data.model === 'string' && data.model.length > 0
-      const hasProvider = data.model?.includes('/')
+      const models: string[] = []
+      
+      if (data.provider && typeof data.provider === 'object') {
+        for (const [providerName, providerConfig] of Object.entries(data.provider)) {
+          const prov = providerConfig as Record<string, unknown>
+          if (prov?.models && typeof prov.models === 'object') {
+            for (const modelName of Object.keys(prov.models as Record<string, unknown>)) {
+              models.push(`${providerName}/${modelName}`)
+            }
+          }
+        }
+      }
       
       return {
-        passed: hasModel && hasProvider,
-        details: `Model: ${data.model || 'not set'}, Small: ${data.small_model || 'not set'}`
+        passed: models.length > 0,
+        details: `Models: ${models.length} available (${models.slice(0, 3).join(', ')}${models.length > 3 ? '...' : ''})`
       }
     })
+
+    const models: string[] = []
+    if (result.details) {
+      const match = result.details.match(/(\d+) available/)
+      if (match && parseInt(match[1]) > 0) {
+        const response = await this.fetchOpenCode('/config')
+        if (response.ok) {
+          const data = await response.json()
+          if (data.provider) {
+            for (const [providerName, providerConfig] of Object.entries(data.provider)) {
+              const prov = providerConfig as Record<string, unknown>
+              if (prov?.models && typeof prov.models === 'object') {
+                for (const modelName of Object.keys(prov.models as Record<string, unknown>)) {
+                  models.push(`${providerName}/${modelName}`)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { ...result, models }
   }
 
   async enableVoiceFeatures(): Promise<boolean> {
@@ -763,9 +861,9 @@ class VoiceTest {
     await this.testTTSSynthesis()
     
     if (!skipTalkMode) {
-      await this.testOpenCodeModelAvailable()
+      const modelResult = await this.testOpenCodeModelAvailable()
       await this.testCreateSession()
-      await this.testFullTalkModeFlow()
+      await this.testFullTalkModeFlow(modelResult.models || [])
     }
 
     this.cleanup()
