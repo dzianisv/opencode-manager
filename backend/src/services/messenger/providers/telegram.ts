@@ -1,6 +1,9 @@
 import { Bot, GrammyError, HttpError } from 'grammy'
 import type { Context } from 'grammy'
 import { logger } from '../../../utils/logger'
+import { 
+  chunkText,
+} from '@opencode-manager/shared'
 import type { 
   Channel, 
   ChannelCapabilities, 
@@ -23,35 +26,6 @@ const TELEGRAM_CAPABILITIES: ChannelCapabilities = {
   maxMessageLength: MAX_MESSAGE_LENGTH,
 }
 
-function chunkText(text: string, maxLength: number = MAX_MESSAGE_LENGTH): string[] {
-  if (text.length <= maxLength) {
-    return [text]
-  }
-  
-  const chunks: string[] = []
-  let remaining = text
-  
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining)
-      break
-    }
-    
-    let splitIndex = remaining.lastIndexOf('\n', maxLength)
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = remaining.lastIndexOf(' ', maxLength)
-    }
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = maxLength
-    }
-    
-    chunks.push(remaining.slice(0, splitIndex))
-    remaining = remaining.slice(splitIndex).trimStart()
-  }
-  
-  return chunks
-}
-
 export class TelegramProvider implements Channel {
   readonly id = 'telegram' as const
   readonly name = 'Telegram'
@@ -60,7 +34,6 @@ export class TelegramProvider implements Channel {
   private bot: Bot | null = null
   private botToken: string | null = null
   private startedAt: number | null = null
-  private messageQueue: Map<string, Promise<void>> = new Map()
   private messageHandlers: MessageHandler[] = []
 
   constructor(token?: string) {

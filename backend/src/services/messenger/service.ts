@@ -3,41 +3,13 @@ import { logger } from '../../utils/logger'
 import { opencodeSdkClient } from '../opencode-sdk-client'
 import { channelRegistry } from '../channel-registry'
 import { 
+  chunkText,
+} from '@opencode-manager/shared'
+import type {
   InboundMessage, 
   OutboundMessage, 
   ChannelId 
 } from '@opencode-manager/shared'
-
-const MAX_MESSAGE_LENGTH = 4096
-
-function chunkText(text: string, maxLength: number = MAX_MESSAGE_LENGTH): string[] {
-  if (text.length <= maxLength) {
-    return [text]
-  }
-  
-  const chunks: string[] = []
-  let remaining = text
-  
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining)
-      break
-    }
-    
-    let splitIndex = remaining.lastIndexOf('\n', maxLength)
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = remaining.lastIndexOf(' ', maxLength)
-    }
-    if (splitIndex === -1 || splitIndex < maxLength / 2) {
-      splitIndex = maxLength
-    }
-    
-    chunks.push(remaining.slice(0, splitIndex))
-    remaining = remaining.slice(splitIndex).trimStart()
-  }
-  
-  return chunks
-}
 
 export class MessengerService {
   private db: Database | null = null
