@@ -142,6 +142,10 @@ describe('MessengerService', () => {
     vi.clearAllMocks()
     registryHandlers.length = 0
 
+    const { opencodeSdkClient } = await import('../../src/services/opencode-sdk-client')
+    ;(opencodeSdkClient.isConfigured as any).mockReturnValue(true)
+    ;(opencodeSdkClient.getBaseUrl as any).mockReturnValue('http://localhost:5551')
+
     mockDb = createMockDb()
 
     const serviceModule = await import('../../src/services/messenger/service')

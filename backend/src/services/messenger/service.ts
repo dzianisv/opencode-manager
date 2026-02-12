@@ -65,12 +65,12 @@ export class MessengerService {
     }
 
     try {
-        const session = await this.getOrCreateSession(channelId, chatId)
-
         if (!opencodeSdkClient.isConfigured()) {
             await channelRegistry.send(channelId, chatId, { text: 'OpenCode server is not available. Please try again later.' })
             return
         }
+
+        const session = await this.getOrCreateSession(channelId, chatId)
 
         const response = await this.sendToOpenCode(session.opencode_session_id, text)
 
