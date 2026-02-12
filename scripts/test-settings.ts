@@ -1,9 +1,16 @@
 #!/usr/bin/env bun
 
 import puppeteer, { Browser, Page } from 'puppeteer'
-import { mkdirSync } from 'fs'
-import { join } from 'path'
-import { AutoScreenshotter, VideoRecorder } from './lib/video-recorder'
+import {
+  createTestOutputDir,
+  takeScreenshot,
+  log,
+  success,
+  fail,
+  info,
+  createScreencast,
+  AutoScreenshotter,
+} from './lib/browser-test-utils'
 
 interface TestConfig {
   baseUrl: string
@@ -23,15 +30,7 @@ interface TestResult {
   error?: string
 }
 
-function createTestOutputDir(): { outputDir: string; screenshotsDir: string } {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const outputDir = join(process.cwd(), '.test', `SettingsE2E-${timestamp}`)
-  const screenshotsDir = join(outputDir, 'screenshots')
-  mkdirSync(screenshotsDir, { recursive: true })
-  return { outputDir, screenshotsDir }
-}
-
-const testDirs = createTestOutputDir()
+const testDirs = createTestOutputDir('SettingsE2E')
 
 const DEFAULT_CONFIG: TestConfig = {
   baseUrl: process.env.OPENCODE_URL || 'http://localhost:5001',
@@ -41,34 +40,6 @@ const DEFAULT_CONFIG: TestConfig = {
   timeout: 60000,
   outputDir: testDirs.outputDir,
   screenshotsDir: testDirs.screenshotsDir,
-}
-
-function log(message: string, indent = 0) {
-  const prefix = '  '.repeat(indent)
-  const timestamp = new Date().toISOString().slice(11, 19)
-  console.log(`[${timestamp}] ${prefix}${message}`)
-}
-
-function success(message: string) {
-  log(`PASS ${message}`)
-}
-
-function fail(message: string) {
-  log(`FAIL ${message}`)
-}
-
-function info(message: string) {
-  log(`INFO ${message}`)
-}
-
-let screenshotCounter = 0
-
-async function takeScreenshot(page: Page, name: string, screenshotsDir: string): Promise<void> {
-  screenshotCounter++
-  const filename = `${String(screenshotCounter).padStart(2, '0')}_${name.replace(/\s+/g, '_')}.png`
-  const filepath = join(screenshotsDir, filename)
-  await page.screenshot({ path: filepath, fullPage: false })
-  log(`Screenshot: ${filename}`, 1)
 }
 
 class SettingsTest {
@@ -856,7 +827,11 @@ class SettingsTest {
         this.autoScreenshotter.stop()
       }
 
-      await this.createScreencast()
+      await createScreencast(this.config.outputDir, {
+        width: 1200,
+        height: 800,
+        finalFrameSeconds: 2,
+      })
 
       if (this.browser) {
         await this.browser.close()
@@ -864,24 +839,6 @@ class SettingsTest {
     }
 
     this.printResults()
-  }
-
-  private async createScreencast(): Promise<void> {
-    console.log('\nCreating screencast GIF...')
-    const result = await VideoRecorder.fromTestDirectory(this.config.outputDir, {
-      outputName: 'screencast.gif',
-      secondsPerFrame: 0.5,
-      finalFrameSeconds: 2,
-      deduplicate: true,
-      width: 1200,
-      height: 800
-    })
-
-    if (result.success) {
-      console.log(`Screencast: ${result.videoPath} (${result.sizeMB}MB, ${result.duration?.toFixed(1)}s)`)
-    } else {
-      console.log(`Screencast creation failed: ${result.error}`)
-    }
   }
 
   private printResults(): void {

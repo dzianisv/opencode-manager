@@ -2,10 +2,19 @@
 
 import puppeteer, { Browser, Page } from "puppeteer";
 import { spawn, execSync } from "child_process";
-import { existsSync, unlinkSync, readFileSync, mkdirSync } from "fs";
+import { existsSync, unlinkSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { VideoRecorder, AutoScreenshotter } from "./lib/video-recorder";
+import {
+  createTestOutputDir,
+  takeScreenshot,
+  log,
+  success,
+  fail,
+  info,
+  createScreencast,
+  AutoScreenshotter,
+} from "./lib/browser-test-utils";
 
 interface TestConfig {
   baseUrl: string;
@@ -28,15 +37,11 @@ interface TestResult {
   error?: string;
 }
 
-function createTestOutputDir(): { outputDir: string; screenshotsDir: string } {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const outputDir = join(process.cwd(), ".test", `BrowserE2E-${timestamp}`);
-  const screenshotsDir = join(outputDir, "screenshots");
-  mkdirSync(screenshotsDir, { recursive: true });
-  return { outputDir, screenshotsDir };
+function createTestOutputDirLocal(): { outputDir: string; screenshotsDir: string } {
+  return createTestOutputDir("BrowserE2E");
 }
 
-const testDirs = createTestOutputDir();
+const testDirs = createTestOutputDirLocal();
 
 const DEFAULT_CONFIG: TestConfig = {
   baseUrl: process.env.OPENCODE_URL || "http://localhost:5001",
@@ -50,38 +55,6 @@ const DEFAULT_CONFIG: TestConfig = {
   outputDir: testDirs.outputDir,
   screenshotsDir: testDirs.screenshotsDir,
 };
-
-function log(message: string, indent = 0) {
-  const prefix = "  ".repeat(indent);
-  const timestamp = new Date().toISOString().slice(11, 19);
-  console.log(`[${timestamp}] ${prefix}${message}`);
-}
-
-function success(message: string) {
-  log(`PASS ${message}`);
-}
-
-function fail(message: string) {
-  log(`FAIL ${message}`);
-}
-
-function info(message: string) {
-  log(`INFO ${message}`);
-}
-
-let screenshotCounter = 0;
-
-async function takeScreenshot(
-  page: Page,
-  name: string,
-  screenshotsDir: string,
-): Promise<void> {
-  screenshotCounter++;
-  const filename = `${String(screenshotCounter).padStart(2, "0")}_${name.replace(/\s+/g, "_")}.png`;
-  const filepath = join(screenshotsDir, filename);
-  await page.screenshot({ path: filepath, fullPage: false });
-  log(`Screenshot: ${filename}`, 1);
-}
 
 function execCommand(
   command: string,
@@ -1156,23 +1129,11 @@ async function runBrowserTest(config: TestConfig): Promise<boolean> {
       autoScreenshotter.stop();
     }
 
-    info("Creating screencast GIF...");
-    const gifResult = await VideoRecorder.fromTestDirectory(config.outputDir, {
-      secondsPerFrame: 0.5,
+    await createScreencast(config.outputDir, {
       width: 1280,
       height: 800,
-      outputName: "screencast.gif",
       finalFrameSeconds: 3,
-      deduplicate: true,
     });
-
-    if (gifResult.success) {
-      success(
-        `Screencast: ${gifResult.videoPath} (${gifResult.sizeMB} MB, ${gifResult.duration?.toFixed(1)}s)`,
-      );
-    } else {
-      log(`Screencast creation failed: ${gifResult.error}`, 1);
-    }
 
     if (browser) {
       await browser.close();
