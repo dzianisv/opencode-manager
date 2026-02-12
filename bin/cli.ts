@@ -1,85 +1,148 @@
 #!/usr/bin/env bun
-import { spawn, execSync, spawnSync } from 'child_process'
-import { createInterface } from 'readline'
-import * as path from 'path'
-import * as fs from 'fs'
-import * as os from 'os'
-import * as crypto from 'crypto'
+import { spawn, execSync, spawnSync } from "child_process";
+import { createInterface } from "readline";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+import * as crypto from "crypto";
 
-const VERSION = '0.5.5'
-const DEFAULT_PORT = 5001
-const DEFAULT_OPENCODE_PORT = 5551
-const MANAGED_PORTS = [5001, 5002, 5003, 5173, 5174, 5175, 5176, 5552, 5553, 5554]
+const VERSION = "0.5.5";
+const DEFAULT_PORT = 5001;
+const DEFAULT_OPENCODE_PORT = 5551;
+const MANAGED_PORTS = [
+  5001, 5002, 5003, 5173, 5174, 5175, 5176, 5552, 5553, 5554,
+];
 
-const CONFIG_DIR = path.join(os.homedir(), '.local', 'run', 'opencode-manager')
-const ENDPOINTS_FILE = path.join(CONFIG_DIR, 'endpoints.json')
-const AUTH_FILE = path.join(CONFIG_DIR, 'auth.json')
-const CLOUDFLARED_LOG_FILE = path.join(CONFIG_DIR, 'cloudflared.log')
-const TUNNEL_STATE_FILE = path.join(CONFIG_DIR, 'tunnel.json')
-const TUNNEL_PID_FILE = path.join(CONFIG_DIR, 'tunnel.pid')
-const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024 // 5MB
-const MAX_LOG_BACKUPS = 3
+const CONFIG_DIR = path.join(os.homedir(), ".local", "run", "opencode-manager");
+const ENDPOINTS_FILE = path.join(CONFIG_DIR, "endpoints.json");
+const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
+const CLOUDFLARED_LOG_FILE = path.join(CONFIG_DIR, "cloudflared.log");
+const TUNNEL_STATE_FILE = path.join(CONFIG_DIR, "tunnel.json");
+const TUNNEL_PID_FILE = path.join(CONFIG_DIR, "tunnel.pid");
+const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+const MAX_LOG_BACKUPS = 3;
 
 interface AuthConfig {
-  username: string
-  password: string
+  username: string;
+  password: string;
 }
 
 interface Endpoint {
-  type: 'local' | 'tunnel'
-  url: string
-  timestamp: string
+  type: "local" | "tunnel";
+  url: string;
+  timestamp: string;
 }
 
 interface EndpointsConfig {
-  endpoints: Endpoint[]
+  endpoints: Endpoint[];
 }
 
 function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
 }
 
-function writeTunnelState(pid: number, url: string, urlWithAuth: string | null, port: number): void {
-  ensureConfigDir()
-  const state = { pid, url, urlWithAuth, port, startedAt: Date.now() }
-  fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify(state, null, 2))
-  fs.writeFileSync(TUNNEL_PID_FILE, pid.toString())
+function writeTunnelState(
+  pid: number,
+  url: string,
+  urlWithAuth: string | null,
+  port: number,
+): void {
+  ensureConfigDir();
+  const state = { pid, url, urlWithAuth, port, startedAt: Date.now() };
+  fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify(state, null, 2));
+  fs.writeFileSync(TUNNEL_PID_FILE, pid.toString());
 }
 
 function clearTunnelState(): void {
   try {
-    if (fs.existsSync(TUNNEL_STATE_FILE)) fs.unlinkSync(TUNNEL_STATE_FILE)
-    if (fs.existsSync(TUNNEL_PID_FILE)) fs.unlinkSync(TUNNEL_PID_FILE)
+    if (fs.existsSync(TUNNEL_STATE_FILE)) fs.unlinkSync(TUNNEL_STATE_FILE);
+    if (fs.existsSync(TUNNEL_PID_FILE)) fs.unlinkSync(TUNNEL_PID_FILE);
   } catch {}
 }
 
 function isProcessRunning(pid: number): boolean {
   try {
-    process.kill(pid, 0)
-    return true
+    process.kill(pid, 0);
+    return true;
   } catch {
-    return false
+    return false;
   }
+}
+
+function waitForProcessDeath(pid: number, maxMs: number): boolean {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    if (!isProcessRunning(pid)) return true;
+    spawnSync("sleep", ["0.1"]);
+  }
+  return !isProcessRunning(pid);
+}
+
+function killAllCloudflared(): void {
+  try {
+    const output = execSync('pgrep -f "cloudflared tunnel"', {
+      encoding: "utf8",
+    }).trim();
+    if (!output) return;
+    const pids = output
+      .split("\n")
+      .filter(Boolean)
+      .map((p) => parseInt(p))
+      .filter((p) => !isNaN(p));
+    for (const pid of pids) {
+      try {
+        console.log(`   Killing orphaned cloudflared (PID ${pid})...`);
+        process.kill(pid, "SIGTERM");
+      } catch {}
+    }
+    // Wait for all to die, then SIGKILL stragglers
+    const deadline = Date.now() + 3000;
+    for (const pid of pids) {
+      const remaining = Math.max(0, deadline - Date.now());
+      if (remaining > 0 && !waitForProcessDeath(pid, remaining)) {
+        try {
+          console.log(`   Force killing cloudflared (PID ${pid})...`);
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    }
+  } catch {}
 }
 
 function cleanupStaleTunnelState(): void {
   try {
-    if (!fs.existsSync(TUNNEL_STATE_FILE)) return
-    const state = JSON.parse(fs.readFileSync(TUNNEL_STATE_FILE, 'utf8'))
-    if (state.pid && !isProcessRunning(state.pid)) {
-      console.log(`   Clearing stale tunnel state (PID ${state.pid} no longer running)`)
-      clearTunnelState()
-    } else if (state.pid && isProcessRunning(state.pid)) {
-      console.log(`   Stopping previous tunnel (PID ${state.pid})...`)
-      try {
-        process.kill(state.pid, 'SIGTERM')
-      } catch {}
-      clearTunnelState()
+    if (!fs.existsSync(TUNNEL_STATE_FILE)) {
+      // Even without state file, kill any orphaned cloudflared processes
+      killAllCloudflared();
+      return;
     }
+    const state = JSON.parse(fs.readFileSync(TUNNEL_STATE_FILE, "utf8"));
+    if (state.pid && !isProcessRunning(state.pid)) {
+      console.log(
+        `   Clearing stale tunnel state (PID ${state.pid} no longer running)`,
+      );
+      clearTunnelState();
+    } else if (state.pid && isProcessRunning(state.pid)) {
+      console.log(`   Stopping previous tunnel (PID ${state.pid})...`);
+      try {
+        process.kill(state.pid, "SIGTERM");
+      } catch {}
+      if (!waitForProcessDeath(state.pid, 3000)) {
+        console.log(`   Force killing previous tunnel (PID ${state.pid})...`);
+        try {
+          process.kill(state.pid, "SIGKILL");
+        } catch {}
+        waitForProcessDeath(state.pid, 1000);
+      }
+      clearTunnelState();
+    }
+    // Also kill any OTHER cloudflared processes not tracked by state file
+    killAllCloudflared();
   } catch {
-    clearTunnelState()
+    killAllCloudflared();
+    clearTunnelState();
   }
 }
 
@@ -89,89 +152,94 @@ function cleanupStaleTunnelState(): void {
  */
 function rotateLogFile(logPath: string): void {
   try {
-    if (!fs.existsSync(logPath)) return
-    
-    const stats = fs.statSync(logPath)
-    if (stats.size < MAX_LOG_SIZE_BYTES) return
-    
-    console.log(`📜 Rotating log file (${Math.round(stats.size / 1024)}KB): ${path.basename(logPath)}`)
-    
+    if (!fs.existsSync(logPath)) return;
+
+    const stats = fs.statSync(logPath);
+    if (stats.size < MAX_LOG_SIZE_BYTES) return;
+
+    console.log(
+      `📜 Rotating log file (${Math.round(stats.size / 1024)}KB): ${path.basename(logPath)}`,
+    );
+
     // Remove oldest backup if it exists
-    const oldestBackup = `${logPath}.${MAX_LOG_BACKUPS}`
+    const oldestBackup = `${logPath}.${MAX_LOG_BACKUPS}`;
     if (fs.existsSync(oldestBackup)) {
-      fs.unlinkSync(oldestBackup)
+      fs.unlinkSync(oldestBackup);
     }
-    
+
     // Shift existing backups: .2 -> .3, .1 -> .2
     for (let i = MAX_LOG_BACKUPS - 1; i >= 1; i--) {
-      const current = `${logPath}.${i}`
-      const next = `${logPath}.${i + 1}`
+      const current = `${logPath}.${i}`;
+      const next = `${logPath}.${i + 1}`;
       if (fs.existsSync(current)) {
-        fs.renameSync(current, next)
+        fs.renameSync(current, next);
       }
     }
-    
+
     // Move current log to .1
-    fs.renameSync(logPath, `${logPath}.1`)
-    
+    fs.renameSync(logPath, `${logPath}.1`);
   } catch (err) {
-    console.warn('⚠️  Failed to rotate log file:', err)
+    console.warn("⚠️  Failed to rotate log file:", err);
   }
 }
 
 function getOrCreateAuth(): AuthConfig {
-  ensureConfigDir()
-  
+  ensureConfigDir();
+
   if (fs.existsSync(AUTH_FILE)) {
     try {
-      const content = fs.readFileSync(AUTH_FILE, 'utf8')
-      const auth = JSON.parse(content) as AuthConfig
+      const content = fs.readFileSync(AUTH_FILE, "utf8");
+      const auth = JSON.parse(content) as AuthConfig;
       if (auth.username && auth.password) {
-        return auth
+        return auth;
       }
     } catch {}
   }
-  
+
   const auth: AuthConfig = {
-    username: 'admin',
-    password: crypto.randomBytes(16).toString('base64url'),
-  }
-  
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 })
-  console.log(`\n🔐 Generated new credentials:`)
-  console.log(`   Username: ${auth.username}`)
-  console.log(`   Password: ${auth.password}`)
-  console.log(`   Saved to: ${AUTH_FILE}\n`)
-  
-  return auth
+    username: "admin",
+    password: crypto.randomBytes(16).toString("base64url"),
+  };
+
+  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 });
+  console.log(`\n🔐 Generated new credentials:`);
+  console.log(`   Username: ${auth.username}`);
+  console.log(`   Password: ${auth.password}`);
+  console.log(`   Saved to: ${AUTH_FILE}\n`);
+
+  return auth;
 }
 
 function updateEndpoints(localUrl: string, tunnelUrl?: string): void {
-  ensureConfigDir()
-  
-  let config: EndpointsConfig = { endpoints: [] }
-  
+  ensureConfigDir();
+
+  let config: EndpointsConfig = { endpoints: [] };
+
   if (fs.existsSync(ENDPOINTS_FILE)) {
     try {
-      config = JSON.parse(fs.readFileSync(ENDPOINTS_FILE, 'utf8'))
+      config = JSON.parse(fs.readFileSync(ENDPOINTS_FILE, "utf8"));
     } catch {}
   }
-  
-  const timestamp = new Date().toISOString()
-  
-  config.endpoints = config.endpoints.filter(e => e.url !== localUrl)
-  config.endpoints.push({ type: 'local', url: localUrl, timestamp })
-  
+
+  const timestamp = new Date().toISOString();
+
+  config.endpoints = config.endpoints.filter((e) => e.url !== localUrl);
+  config.endpoints.push({ type: "local", url: localUrl, timestamp });
+
   if (tunnelUrl) {
-    config.endpoints = config.endpoints.filter(e => e.type !== 'tunnel' || e.url === tunnelUrl)
-    config.endpoints.push({ type: 'tunnel', url: tunnelUrl, timestamp })
+    config.endpoints = config.endpoints.filter(
+      (e) => e.type !== "tunnel" || e.url === tunnelUrl,
+    );
+    config.endpoints.push({ type: "tunnel", url: tunnelUrl, timestamp });
   }
-  
-  fs.writeFileSync(ENDPOINTS_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+
+  fs.writeFileSync(ENDPOINTS_FILE, JSON.stringify(config, null, 2), {
+    mode: 0o600,
+  });
 }
 
 function getPackageDir(): string {
-  return path.resolve(import.meta.dir, '..')
+  return path.resolve(import.meta.dir, "..");
 }
 
 function printHelp(): void {
@@ -218,462 +286,660 @@ Examples:
   opencode-manager status
   opencode-manager install-service
   opencode-manager install-service --no-tunnel
-`)
+`);
 }
 
 async function checkServerHealth(port: number): Promise<boolean> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/doc`, {
-      signal: AbortSignal.timeout(2000)
-    })
-    return response.status > 0
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.status > 0;
   } catch {
-    return false
+    return false;
   }
 }
 
 function isPortInUse(port: number): boolean {
   try {
-    const output = execSync(`lsof -ti:${port}`, { encoding: 'utf8' }).trim()
-    return output.length > 0
+    const output = execSync(`lsof -ti:${port}`, { encoding: "utf8" }).trim();
+    return output.length > 0;
   } catch {
-    return false
+    return false;
   }
 }
 
-async function waitForBackendHealth(port: number, auth: AuthConfig, maxSeconds: number): Promise<boolean> {
+async function waitForBackendHealth(
+  port: number,
+  auth: AuthConfig,
+  maxSeconds: number,
+): Promise<boolean> {
   const headers: Record<string, string> = {
-    'Authorization': `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`
-  }
-  
+    Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`,
+  };
+
   for (let i = 0; i < maxSeconds; i++) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
         signal: AbortSignal.timeout(2000),
-        headers
-      })
+        headers,
+      });
       if (response.ok) {
-        const data = await response.json() as { status?: string }
-        if (data.status === 'healthy') {
-          return true
+        const data = (await response.json()) as { status?: string };
+        if (data.status === "healthy") {
+          return true;
         }
       }
     } catch {}
     if (i > 0 && i % 10 === 0) {
-      console.log(`   Still waiting... (${i}s)`)
+      console.log(`   Still waiting... (${i}s)`);
     }
-    await new Promise(r => setTimeout(r, 1000))
+    await new Promise((r) => setTimeout(r, 1000));
   }
-  return false
+  return false;
 }
 
 function killProcessOnPort(port: number): boolean {
   try {
-    const output = execSync(`lsof -ti:${port}`, { encoding: 'utf8' }).trim()
-    if (!output) return false
-    
-    const pids = output.split('\n').filter(Boolean).map(p => parseInt(p))
+    const output = execSync(`lsof -ti:${port}`, { encoding: "utf8" }).trim();
+    if (!output) return false;
+
+    const pids = output
+      .split("\n")
+      .filter(Boolean)
+      .map((p) => parseInt(p));
     for (const pid of pids) {
       try {
-        process.kill(pid, 'SIGTERM')
-        console.log(`   Killed orphaned process on port ${port} (PID ${pid})`)
+        process.kill(pid, "SIGTERM");
+        console.log(`   Killed orphaned process on port ${port} (PID ${pid})`);
       } catch {
         try {
-          process.kill(pid, 'SIGKILL')
+          process.kill(pid, "SIGKILL");
         } catch {}
       }
     }
-    return pids.length > 0
+    return pids.length > 0;
   } catch {
-    return false
+    return false;
   }
 }
 
 function cleanupManagedPorts(): void {
-  let cleaned = false
+  let cleaned = false;
   for (const port of MANAGED_PORTS) {
     if (killProcessOnPort(port)) {
-      cleaned = true
+      cleaned = true;
     }
   }
   if (cleaned) {
-    execSync('sleep 1')
+    execSync("sleep 1");
   }
 }
 
 async function startOpenCodeServer(port: number): Promise<boolean> {
   if (isPortInUse(port)) {
-    console.log(`\n⚠️  Port ${port} is already in use`)
+    console.log(`\n⚠️  Port ${port} is already in use`);
     for (let i = 0; i < 10; i++) {
       if (await checkServerHealth(port)) {
-        console.log(`✓ Existing server on port ${port} is responding`)
-        return true
+        console.log(`✓ Existing server on port ${port} is responding`);
+        return true;
       }
-      await new Promise(r => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 500));
     }
-    console.log(`   Server on port ${port} not responding, killing and restarting...`)
-    killProcessOnPort(port)
-    await new Promise(r => setTimeout(r, 1000))
+    console.log(
+      `   Server on port ${port} not responding, killing and restarting...`,
+    );
+    killProcessOnPort(port);
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
-  console.log(`\n🚀 Starting opencode server on port ${port}...`)
-  
-  const serverProcess = spawn('opencode', ['serve', '--port', port.toString(), '--hostname', '127.0.0.1'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  })
-  
-  serverProcess.unref()
+  console.log(`\n🚀 Starting opencode server on port ${port}...`);
+
+  const serverProcess = spawn(
+    "opencode",
+    ["serve", "--port", port.toString(), "--hostname", "127.0.0.1"],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    },
+  );
+
+  serverProcess.unref();
 
   for (let i = 0; i < 30; i++) {
     if (await checkServerHealth(port)) {
-      console.log(`✓ OpenCode server started on port ${port}`)
-      return true
+      console.log(`✓ OpenCode server started on port ${port}`);
+      return true;
     }
-    await new Promise(r => setTimeout(r, 500))
+    await new Promise((r) => setTimeout(r, 500));
   }
-  
-  console.error('❌ Failed to start opencode server')
-  return false
+
+  console.error("❌ Failed to start opencode server");
+  return false;
 }
 
-async function startCloudflaredTunnel(localPort: number, auth: AuthConfig): Promise<{ process: ReturnType<typeof spawn>, url: string | null, urlWithAuth: string | null }> {
-  console.log('\n🌐 Starting Cloudflare tunnel...')
+async function startCloudflaredTunnel(
+  localPort: number,
+  auth: AuthConfig,
+): Promise<{
+  process: ReturnType<typeof spawn>;
+  url: string | null;
+  urlWithAuth: string | null;
+}> {
+  console.log("\n🌐 Starting Cloudflare tunnel...");
 
   // Ensure config directory exists
   if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true })
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
 
-  cleanupStaleTunnelState()
+  cleanupStaleTunnelState();
 
   // Rotate log file if needed
-  rotateLogFile(CLOUDFLARED_LOG_FILE)
+  rotateLogFile(CLOUDFLARED_LOG_FILE);
 
   // Open log file for appending
-  const logStream = fs.createWriteStream(CLOUDFLARED_LOG_FILE, { flags: 'a' })
-  const timestamp = () => new Date().toISOString()
-  
+  const logStream = fs.createWriteStream(CLOUDFLARED_LOG_FILE, { flags: "a" });
+  const timestamp = () => new Date().toISOString();
+
   // Write startup marker
-  logStream.write(`\n${'='.repeat(80)}\n`)
-  logStream.write(`[${timestamp()}] Cloudflare tunnel starting...\n`)
-  logStream.write(`[${timestamp()}] Target: http://localhost:${localPort}\n`)
-  logStream.write(`${'='.repeat(80)}\n\n`)
+  logStream.write(`\n${"=".repeat(80)}\n`);
+  logStream.write(`[${timestamp()}] Cloudflare tunnel starting...\n`);
+  logStream.write(`[${timestamp()}] Target: http://localhost:${localPort}\n`);
+  logStream.write(`${"=".repeat(80)}\n\n`);
 
-  const tunnelProcess = spawn('cloudflared', ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', `http://localhost:${localPort}`], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const tunnelProcess = spawn(
+    "cloudflared",
+    [
+      "tunnel",
+      "--no-autoupdate",
+      "--protocol",
+      "http2",
+      "--url",
+      `http://localhost:${localPort}`,
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
-  let tunnelUrl: string | null = null
+  let tunnelUrl: string | null = null;
 
   const urlPromise = new Promise<string | null>((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 30000)
+    const timeout = setTimeout(() => resolve(null), 30000);
 
     const handleOutput = (data: Buffer) => {
-      const output = data.toString()
-      
+      const output = data.toString();
+
       // Log to file with timestamp
-      const lines = output.split('\n').filter(line => line.trim())
+      const lines = output.split("\n").filter((line) => line.trim());
       for (const line of lines) {
-        logStream.write(`[${timestamp()}] ${line}\n`)
+        logStream.write(`[${timestamp()}] ${line}\n`);
       }
-      
-      const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+
+      const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
       if (urlMatch && !tunnelUrl) {
-        tunnelUrl = urlMatch[0]
-        clearTimeout(timeout)
-        resolve(tunnelUrl)
+        tunnelUrl = urlMatch[0];
+        clearTimeout(timeout);
+        resolve(tunnelUrl);
       }
-    }
+    };
 
-    tunnelProcess.stdout?.on('data', handleOutput)
-    tunnelProcess.stderr?.on('data', handleOutput)
-  })
+    tunnelProcess.stdout?.on("data", handleOutput);
+    tunnelProcess.stderr?.on("data", handleOutput);
+  });
 
-  tunnelProcess.on('error', (err) => {
-    logStream.write(`[${timestamp()}] ERROR: Failed to start cloudflared: ${err.message}\n`)
-    console.error('\n❌ Failed to start cloudflared:', err.message)
-    console.log('Install cloudflared: brew install cloudflared')
-  })
+  tunnelProcess.on("error", (err) => {
+    logStream.write(
+      `[${timestamp()}] ERROR: Failed to start cloudflared: ${err.message}\n`,
+    );
+    console.error("\n❌ Failed to start cloudflared:", err.message);
+    console.log("Install cloudflared: brew install cloudflared");
+  });
 
-  tunnelProcess.on('exit', (code, signal) => {
-    logStream.write(`[${timestamp()}] Process exited with code ${code}, signal ${signal}\n`)
-    logStream.end()
-    clearTunnelState()
-  })
+  tunnelProcess.on("exit", (code, signal) => {
+    logStream.write(
+      `[${timestamp()}] Process exited with code ${code}, signal ${signal}\n`,
+    );
+    logStream.end();
+    clearTunnelState();
+  });
 
-  const url = await urlPromise
+  const url = await urlPromise;
 
-  let urlWithAuth: string | null = null
+  let urlWithAuth: string | null = null;
   if (url && auth.username && auth.password) {
     try {
-      const parsedUrl = new URL(url)
-      parsedUrl.username = auth.username
-      parsedUrl.password = auth.password
-      urlWithAuth = parsedUrl.toString().replace(/\/$/, '')
+      const parsedUrl = new URL(url);
+      parsedUrl.username = auth.username;
+      parsedUrl.password = auth.password;
+      urlWithAuth = parsedUrl.toString().replace(/\/$/, "");
     } catch {}
   }
 
   if (url) {
-    logStream.write(`[${timestamp()}] Tunnel established: ${url}\n`)
-    console.log(`✓ Tunnel URL: ${url}`)
+    logStream.write(`[${timestamp()}] Tunnel established: ${url}\n`);
+    console.log(`✓ Tunnel URL: ${url}`);
     if (urlWithAuth) {
-      console.log(`   Tunnel: ${urlWithAuth}`)
+      console.log(`   Tunnel: ${urlWithAuth}`);
     }
 
-    writeTunnelState(tunnelProcess.pid!, url, urlWithAuth, localPort)
+    writeTunnelState(tunnelProcess.pid!, url, urlWithAuth, localPort);
   } else {
-    logStream.write(`[${timestamp()}] WARNING: Failed to get tunnel URL within timeout\n`)
+    logStream.write(
+      `[${timestamp()}] WARNING: Failed to get tunnel URL within timeout\n`,
+    );
   }
 
-  return { process: tunnelProcess, url, urlWithAuth }
+  return { process: tunnelProcess, url, urlWithAuth };
 }
 
-async function startBackend(port: number, auth: AuthConfig, opencodePort?: number): Promise<ReturnType<typeof spawn>> {
-  const packageDir = getPackageDir()
-  
+const TUNNEL_WATCHDOG_INTERVAL_MS = 30_000;
+const TUNNEL_WATCHDOG_FAIL_THRESHOLD = 3;
+const TUNNEL_METRICS_PORTS = [20241, 20242, 20243, 20244, 20245];
+
+async function findTunnelMetricsPort(): Promise<number | null> {
+  for (const port of TUNNEL_METRICS_PORTS) {
+    try {
+      const response = await fetch(`http://localhost:${port}/metrics`, {
+        signal: AbortSignal.timeout(500),
+      });
+      if (response.ok) return port;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function checkTunnelConnected(): Promise<boolean> {
+  const port = await findTunnelMetricsPort();
+  if (!port) return false;
+  try {
+    const response = await fetch(`http://localhost:${port}/metrics`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!response.ok) return false;
+    const text = await response.text();
+    for (const line of text.split("\n")) {
+      if (line.startsWith("cloudflared_tunnel_ha_connections ")) {
+        const count = parseInt(line.split(" ")[1], 10);
+        return count > 0;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function startTunnelWatchdog(
+  localPort: number,
+  auth: AuthConfig,
+  onRestart: (tunnel: {
+    process: ReturnType<typeof spawn>;
+    url: string | null;
+    urlWithAuth: string | null;
+  }) => void,
+): NodeJS.Timeout {
+  const state = { failures: 0, restarting: false };
+
+  const timer = setInterval(async () => {
+    if (state.restarting) return;
+
+    const connected = await checkTunnelConnected();
+    if (connected) {
+      if (state.failures > 0) {
+        console.log(
+          `[watchdog] Tunnel recovered after ${state.failures} failed check(s)`,
+        );
+      }
+      state.failures = 0;
+      return;
+    }
+
+    state.failures += 1;
+    console.log(
+      `[watchdog] Tunnel disconnected (${state.failures}/${TUNNEL_WATCHDOG_FAIL_THRESHOLD})`,
+    );
+
+    if (state.failures < TUNNEL_WATCHDOG_FAIL_THRESHOLD) return;
+
+    state.restarting = true;
+    state.failures = 0;
+    console.log("[watchdog] Restarting tunnel...");
+
+    try {
+      const tunnel = await startCloudflaredTunnel(localPort, auth);
+      onRestart(tunnel);
+      if (!tunnel.url) {
+        console.log("[watchdog] Tunnel restarted but no URL obtained");
+        return;
+      }
+      console.log(`[watchdog] Tunnel restored: ${tunnel.url}`);
+      const localUrl = `http://localhost:${localPort}`;
+      updateEndpoints(localUrl, tunnel.urlWithAuth || tunnel.url);
+    } catch (err) {
+      console.error(
+        "[watchdog] Failed to restart tunnel:",
+        err instanceof Error ? err.message : err,
+      );
+    } finally {
+      state.restarting = false;
+    }
+  }, TUNNEL_WATCHDOG_INTERVAL_MS);
+
+  return timer;
+}
+
+async function startBackend(
+  port: number,
+  auth: AuthConfig,
+  opencodePort?: number,
+): Promise<ReturnType<typeof spawn>> {
+  const packageDir = getPackageDir();
+
   const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...(process.env as Record<string, string>),
     PORT: port.toString(),
-    NODE_ENV: 'production',
+    NODE_ENV: "production",
     AUTH_USERNAME: auth.username,
     AUTH_PASSWORD: auth.password,
-  }
+  };
 
   if (opencodePort) {
-    env.OPENCODE_SERVER_PORT = opencodePort.toString()
-    env.OPENCODE_CLIENT_MODE = 'true'
+    env.OPENCODE_SERVER_PORT = opencodePort.toString();
+    env.OPENCODE_CLIENT_MODE = "true";
   }
 
-  console.log(`\n🚀 Starting backend on port ${port}...`)
+  console.log(`\n🚀 Starting backend on port ${port}...`);
   if (opencodePort) {
-    console.log(`   Connecting to opencode server on port ${opencodePort}`)
+    console.log(`   Connecting to opencode server on port ${opencodePort}`);
   }
 
-  const backendProcess = spawn('bun', [path.join(packageDir, 'backend', 'dist', 'index.js')], {
-    cwd: packageDir,
-    stdio: 'inherit',
-    env,
-  })
+  const backendProcess = spawn(
+    "bun",
+    [path.join(packageDir, "backend", "dist", "index.js")],
+    {
+      cwd: packageDir,
+      stdio: "inherit",
+      env,
+    },
+  );
 
-  return backendProcess
+  return backendProcess;
 }
 
 async function commandStart(args: string[]): Promise<void> {
-  const hasClient = args.includes('--client') || args.includes('-c')
-  const hasTunnel = args.includes('--tunnel') || args.includes('-t')
-  const noAuth = args.includes('--no-auth')
-  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
+  const hasClient = args.includes("--client") || args.includes("-c");
+  const hasTunnel = args.includes("--tunnel") || args.includes("-t");
+  const noAuth = args.includes("--no-auth");
+  const portIdx = args.findIndex((a) => a === "--port" || a === "-p");
+  const port =
+    portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT;
 
-  console.log('\n╔═══════════════════════════════════════╗')
-  console.log('║      OpenCode Manager - Start         ║')
-  console.log('╚═══════════════════════════════════════╝')
+  console.log("\n╔═══════════════════════════════════════╗");
+  console.log("║      OpenCode Manager - Start         ║");
+  console.log("╚═══════════════════════════════════════╝");
 
   // Rotate log files if they're too large
-  ensureConfigDir()
-  rotateLogFile(path.join(CONFIG_DIR, 'stdout.log'))
-  rotateLogFile(path.join(CONFIG_DIR, 'stderr.log'))
-  rotateLogFile(CLOUDFLARED_LOG_FILE)
+  ensureConfigDir();
+  rotateLogFile(path.join(CONFIG_DIR, "stdout.log"));
+  rotateLogFile(path.join(CONFIG_DIR, "stderr.log"));
+  rotateLogFile(CLOUDFLARED_LOG_FILE);
 
-  const auth = noAuth ? { username: '', password: '' } : getOrCreateAuth()
+  const auth = noAuth ? { username: "", password: "" } : getOrCreateAuth();
 
-  let opencodePort: number | undefined
+  let opencodePort: number | undefined;
 
   if (hasClient) {
-    console.log('\n🔍 Checking for opencode server on port', DEFAULT_OPENCODE_PORT, '...')
-    
+    console.log(
+      "\n🔍 Checking for opencode server on port",
+      DEFAULT_OPENCODE_PORT,
+      "...",
+    );
+
     if (await checkServerHealth(DEFAULT_OPENCODE_PORT)) {
-      console.log(`✓ Found existing server`)
-      opencodePort = DEFAULT_OPENCODE_PORT
+      console.log(`✓ Found existing server`);
+      opencodePort = DEFAULT_OPENCODE_PORT;
     } else {
-      console.log('   No server found, starting one...')
-      if (!await startOpenCodeServer(DEFAULT_OPENCODE_PORT)) {
-        process.exit(1)
+      console.log("   No server found, starting one...");
+      if (!(await startOpenCodeServer(DEFAULT_OPENCODE_PORT))) {
+        process.exit(1);
       }
-      opencodePort = DEFAULT_OPENCODE_PORT
+      opencodePort = DEFAULT_OPENCODE_PORT;
     }
   }
 
-  console.log('\n🧹 Cleaning up orphaned processes...')
-  cleanupManagedPorts()
+  console.log("\n🧹 Cleaning up orphaned processes...");
+  cleanupManagedPorts();
 
-  const processes: ReturnType<typeof spawn>[] = []
-  const backendProcess = await startBackend(port, auth, opencodePort)
-  processes.push(backendProcess)
+  const processes: ReturnType<typeof spawn>[] = [];
+  const backendProcess = await startBackend(port, auth, opencodePort);
+  processes.push(backendProcess);
+  const tunnelState: {
+    process: ReturnType<typeof spawn> | null;
+    url?: string;
+    urlWithAuth?: string;
+  } = { process: null };
+  const watchdog = { timer: null as NodeJS.Timeout | null };
 
-  console.log('\n⏳ Waiting for backend to be ready...')
-  const backendReady = await waitForBackendHealth(port, auth, 120)
+  console.log("\n⏳ Waiting for backend to be ready...");
+  const backendReady = await waitForBackendHealth(port, auth, 120);
   if (!backendReady) {
-    console.error('❌ Backend failed to start within timeout')
-    process.exit(1)
+    console.error("❌ Backend failed to start within timeout");
+    process.exit(1);
   }
-  console.log('✓ Backend is ready!')
+  console.log("✓ Backend is ready!");
 
-  const localUrl = `http://localhost:${port}`
-  let tunnelUrl: string | undefined
-  let tunnelUrlWithAuth: string | undefined
+  const localUrl = `http://localhost:${port}`;
+  let tunnelUrl: string | undefined;
+  let tunnelUrlWithAuth: string | undefined;
 
   if (hasTunnel) {
-    const tunnel = await startCloudflaredTunnel(port, auth)
-    processes.push(tunnel.process)
-    tunnelUrl = tunnel.url || undefined
-    tunnelUrlWithAuth = tunnel.urlWithAuth || undefined
+    const tunnel = await startCloudflaredTunnel(port, auth);
+    processes.push(tunnel.process);
+    tunnelState.process = tunnel.process;
+    tunnelState.url = tunnel.url || undefined;
+    tunnelState.urlWithAuth = tunnel.urlWithAuth || undefined;
+    tunnelUrl = tunnel.url || undefined;
+    tunnelUrlWithAuth = tunnel.urlWithAuth || undefined;
 
     if (tunnel.url) {
-      console.log('\n═══════════════════════════════════════')
-      console.log(`🌍 Public URL: ${tunnel.url}`)
+      console.log("\n═══════════════════════════════════════");
+      console.log(`🌍 Public URL: ${tunnel.url}`);
       if (tunnel.urlWithAuth) {
-        console.log(`🔐 With auth:  ${tunnel.urlWithAuth}`)
+        console.log(`🔐 With auth:  ${tunnel.urlWithAuth}`);
       }
-      console.log('═══════════════════════════════════════\n')
+      console.log("═══════════════════════════════════════\n");
     }
+
+    watchdog.timer = startTunnelWatchdog(port, auth, (next) => {
+      processes.push(next.process);
+      tunnelState.process = next.process;
+      tunnelState.url = next.url || undefined;
+      tunnelState.urlWithAuth = next.urlWithAuth || undefined;
+    });
   }
 
-  updateEndpoints(localUrl, tunnelUrlWithAuth || tunnelUrl)
+  updateEndpoints(localUrl, tunnelUrlWithAuth || tunnelUrl);
 
-  console.log('\n📍 Endpoints:')
-  console.log(`   Local: ${localUrl}`)
+  console.log("\n📍 Endpoints:");
+  console.log(`   Local: ${localUrl}`);
   if (tunnelUrlWithAuth) {
-    console.log(`   Tunnel: ${tunnelUrlWithAuth}`)
+    console.log(`   Tunnel: ${tunnelUrlWithAuth}`);
   } else if (tunnelUrl) {
-    console.log(`   Tunnel: ${tunnelUrl}`)
+    console.log(`   Tunnel: ${tunnelUrl}`);
   }
   if (!noAuth) {
-    console.log(`\n🔐 Auth: ${auth.username}:${auth.password}`)
+    console.log(`\n🔐 Auth: ${auth.username}:${auth.password}`);
   }
-  console.log('\nPress Ctrl+C to stop\n')
+  console.log("\nPress Ctrl+C to stop\n");
 
   const cleanup = () => {
-    console.log('\n\n🛑 Shutting down...')
-    clearTunnelState()
-    processes.forEach(p => {
-      try { p.kill('SIGTERM') } catch {}
-    })
-    process.exit(0)
-  }
+    console.log("\n\n🛑 Shutting down...");
+    clearTunnelState();
+    if (watchdog.timer) {
+      clearInterval(watchdog.timer);
+    }
+    processes.forEach((p) => {
+      try {
+        p.kill("SIGTERM");
+      } catch {}
+    });
+    if (tunnelState.process && !processes.includes(tunnelState.process)) {
+      try {
+        tunnelState.process.kill("SIGTERM");
+      } catch {}
+    }
+    process.exit(0);
+  };
 
-  process.on('SIGINT', cleanup)
-  process.on('SIGTERM', cleanup)
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
 
-  await Promise.race(processes.map(p => new Promise((_, reject) => {
-    p.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
-        reject(new Error(`Process exited with code ${code}`))
-      }
-    })
-  })))
+  await Promise.race(
+    [backendProcess].map(
+      (p) =>
+        new Promise((_, reject) => {
+          p.on("exit", (code) => {
+            if (code !== 0 && code !== null) {
+              reject(new Error(`Process exited with code ${code}`));
+            }
+          });
+        }),
+    ),
+  );
 }
 
 function getServiceName(): string {
-  return 'opencode-manager'
+  return "opencode-manager";
 }
 
 function getMacOSPlistPath(): string {
-  return path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.opencode-manager.plist')
+  return path.join(
+    os.homedir(),
+    "Library",
+    "LaunchAgents",
+    "com.opencode-manager.plist",
+  );
 }
 
 function getLinuxServicePath(): string {
-  return path.join(os.homedir(), '.config', 'systemd', 'user', 'opencode-manager.service')
+  return path.join(
+    os.homedir(),
+    ".config",
+    "systemd",
+    "user",
+    "opencode-manager.service",
+  );
 }
 
 function getFullPath(): string {
   const basePaths = [
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-    '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-  ]
-  
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+  ];
+
   const wellKnownDirs = [
-    path.join(os.homedir(), '.opencode', 'bin'),
-    path.join(os.homedir(), '.bun', 'bin'),
-    path.join(os.homedir(), '.local', 'bin'),
-    path.join(os.homedir(), '.cargo', 'bin'),
-  ]
+    path.join(os.homedir(), ".opencode", "bin"),
+    path.join(os.homedir(), ".bun", "bin"),
+    path.join(os.homedir(), ".local", "bin"),
+    path.join(os.homedir(), ".cargo", "bin"),
+  ];
   for (const dir of wellKnownDirs) {
     if (fs.existsSync(dir)) {
-      basePaths.push(dir)
+      basePaths.push(dir);
     }
   }
-  
+
   try {
-    const bunPath = execSync('which bun', { encoding: 'utf8' }).trim()
-    basePaths.push(path.dirname(bunPath))
+    const bunPath = execSync("which bun", { encoding: "utf8" }).trim();
+    basePaths.push(path.dirname(bunPath));
   } catch {}
-  
+
   try {
-    const opencodePath = execSync('which opencode', { encoding: 'utf8' }).trim()
-    basePaths.push(path.dirname(opencodePath))
+    const opencodePath = execSync("which opencode", {
+      encoding: "utf8",
+    }).trim();
+    basePaths.push(path.dirname(opencodePath));
   } catch {}
-  
+
   try {
-    const cloudflaredPath = execSync('which cloudflared', { encoding: 'utf8' }).trim()
-    basePaths.push(path.dirname(cloudflaredPath))
+    const cloudflaredPath = execSync("which cloudflared", {
+      encoding: "utf8",
+    }).trim();
+    basePaths.push(path.dirname(cloudflaredPath));
   } catch {}
-  
+
   try {
-    const pythonPath = execSync('which python3', { encoding: 'utf8' }).trim()
-    basePaths.push(path.dirname(pythonPath))
+    const pythonPath = execSync("which python3", { encoding: "utf8" }).trim();
+    basePaths.push(path.dirname(pythonPath));
   } catch {}
-  
-  const nvmDir = path.join(os.homedir(), '.nvm', 'versions', 'node')
+
+  const nvmDir = path.join(os.homedir(), ".nvm", "versions", "node");
   if (fs.existsSync(nvmDir)) {
     try {
-      const versions = fs.readdirSync(nvmDir)
+      const versions = fs.readdirSync(nvmDir);
       for (const v of versions) {
-        basePaths.push(path.join(nvmDir, v, 'bin'))
+        basePaths.push(path.join(nvmDir, v, "bin"));
       }
     } catch {}
   }
-  
-  const uniquePaths = [...new Set(basePaths)]
-  return uniquePaths.join(':')
+
+  const uniquePaths = [...new Set(basePaths)];
+  return uniquePaths.join(":");
 }
 
 function commandInstallService(args: string[]): void {
-  const noTunnel = args.includes('--no-tunnel')
-  const hasTunnel = !noTunnel
-  const platform = os.platform()
+  const noTunnel = args.includes("--no-tunnel");
+  const hasTunnel = !noTunnel;
+  const platform = os.platform();
 
-  console.log('\n🔧 Installing OpenCode Manager as a user service...\n')
+  console.log("\n🔧 Installing OpenCode Manager as a user service...\n");
 
-  const auth = getOrCreateAuth()
+  const auth = getOrCreateAuth();
 
-  const packageDir = getPackageDir()
-  const cliPath = path.join(packageDir, 'bin', 'cli.ts')
-  const bunPath = execSync('which bun', { encoding: 'utf8' }).trim()
-  const fullPath = getFullPath()
+  const packageDir = getPackageDir();
+  const cliPath = path.join(packageDir, "bin", "cli.ts");
+  const bunPath = execSync("which bun", { encoding: "utf8" }).trim();
+  const fullPath = getFullPath();
 
-  let opencodeBinFound = false
+  let opencodeBinFound = false;
   try {
-    execSync('which opencode', { encoding: 'utf8' }).trim()
-    opencodeBinFound = true
+    execSync("which opencode", { encoding: "utf8" }).trim();
+    opencodeBinFound = true;
   } catch {}
   if (!opencodeBinFound) {
-    const fallback = path.join(os.homedir(), '.opencode', 'bin', 'opencode')
-    opencodeBinFound = fs.existsSync(fallback)
+    const fallback = path.join(os.homedir(), ".opencode", "bin", "opencode");
+    opencodeBinFound = fs.existsSync(fallback);
   }
   if (!opencodeBinFound) {
-    console.warn('⚠️  Warning: "opencode" binary not found in PATH or ~/.opencode/bin')
-    console.warn('   The service will fail to start without it.')
-    console.warn('   Install opencode: curl -fsSL https://opencode.ai/install | bash\n')
+    console.warn(
+      '⚠️  Warning: "opencode" binary not found in PATH or ~/.opencode/bin',
+    );
+    console.warn("   The service will fail to start without it.");
+    console.warn(
+      "   Install opencode: curl -fsSL https://opencode.ai/install | bash\n",
+    );
   }
 
-  console.log(`   PATH: ${fullPath}\n`)
+  console.log(`   PATH: ${fullPath}\n`);
 
-  const startArgs = ['start', '--client']
-  if (hasTunnel) startArgs.push('--tunnel')
+  const startArgs = ["start", "--client"];
+  if (hasTunnel) startArgs.push("--tunnel");
 
-  if (platform === 'darwin') {
-    const plistPath = getMacOSPlistPath()
-    const plistDir = path.dirname(plistPath)
-    
+  if (platform === "darwin") {
+    const plistPath = getMacOSPlistPath();
+    const plistDir = path.dirname(plistPath);
+
     if (!fs.existsSync(plistDir)) {
-      fs.mkdirSync(plistDir, { recursive: true })
+      fs.mkdirSync(plistDir, { recursive: true });
     }
 
     const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
@@ -686,7 +952,7 @@ function commandInstallService(args: string[]): void {
   <array>
     <string>${bunPath}</string>
     <string>${cliPath}</string>
-${startArgs.map(a => `    <string>${a}</string>`).join('\n')}
+${startArgs.map((a) => `    <string>${a}</string>`).join("\n")}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -697,9 +963,9 @@ ${startArgs.map(a => `    <string>${a}</string>`).join('\n')}
   <key>WorkingDirectory</key>
   <string>${packageDir}</string>
   <key>StandardOutPath</key>
-  <string>${path.join(CONFIG_DIR, 'stdout.log')}</string>
+  <string>${path.join(CONFIG_DIR, "stdout.log")}</string>
   <key>StandardErrorPath</key>
-  <string>${path.join(CONFIG_DIR, 'stderr.log')}</string>
+  <string>${path.join(CONFIG_DIR, "stderr.log")}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -709,35 +975,52 @@ ${startArgs.map(a => `    <string>${a}</string>`).join('\n')}
     <key>AUTH_USERNAME</key>
     <string>${auth.username}</string>
     <key>AUTH_PASSWORD</key>
-    <string>${auth.password}</string>${process.env.GEMINI_API_KEY ? `
+    <string>${auth.password}</string>${
+      process.env.GEMINI_API_KEY
+        ? `
     <key>GEMINI_API_KEY</key>
-    <string>${process.env.GEMINI_API_KEY}</string>` : ''}${process.env.OPENAI_API_KEY ? `
+    <string>${process.env.GEMINI_API_KEY}</string>`
+        : ""
+    }${
+      process.env.OPENAI_API_KEY
+        ? `
     <key>OPENAI_API_KEY</key>
-    <string>${process.env.OPENAI_API_KEY}</string>` : ''}${process.env.ANTHROPIC_API_KEY ? `
+    <string>${process.env.OPENAI_API_KEY}</string>`
+        : ""
+    }${
+      process.env.ANTHROPIC_API_KEY
+        ? `
     <key>ANTHROPIC_API_KEY</key>
-    <string>${process.env.ANTHROPIC_API_KEY}</string>` : ''}${process.env.XAI_API_KEY ? `
+    <string>${process.env.ANTHROPIC_API_KEY}</string>`
+        : ""
+    }${
+      process.env.XAI_API_KEY
+        ? `
     <key>XAI_API_KEY</key>
-    <string>${process.env.XAI_API_KEY}</string>` : ''}
+    <string>${process.env.XAI_API_KEY}</string>`
+        : ""
+    }
   </dict>
 </dict>
-</plist>`
+</plist>`;
 
-    fs.writeFileSync(plistPath, plistContent)
-    console.log(`✓ Created plist: ${plistPath}`)
+    fs.writeFileSync(plistPath, plistContent);
+    console.log(`✓ Created plist: ${plistPath}`);
 
     try {
-      execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { encoding: 'utf8' })
+      execSync(`launchctl unload "${plistPath}" 2>/dev/null`, {
+        encoding: "utf8",
+      });
     } catch {}
-    
-    execSync(`launchctl load "${plistPath}"`, { encoding: 'utf8' })
-    console.log('✓ Service loaded and started')
 
-  } else if (platform === 'linux') {
-    const servicePath = getLinuxServicePath()
-    const serviceDir = path.dirname(servicePath)
-    
+    execSync(`launchctl load "${plistPath}"`, { encoding: "utf8" });
+    console.log("✓ Service loaded and started");
+  } else if (platform === "linux") {
+    const servicePath = getLinuxServicePath();
+    const serviceDir = path.dirname(servicePath);
+
     if (!fs.existsSync(serviceDir)) {
-      fs.mkdirSync(serviceDir, { recursive: true })
+      fs.mkdirSync(serviceDir, { recursive: true });
     }
 
     const serviceContent = `[Unit]
@@ -746,7 +1029,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${bunPath} ${cliPath} ${startArgs.join(' ')}
+ExecStart=${bunPath} ${cliPath} ${startArgs.join(" ")}
 WorkingDirectory=${packageDir}
 Restart=always
 RestartSec=10
@@ -757,200 +1040,210 @@ Environment="AUTH_PASSWORD=${auth.password}"
 
 [Install]
 WantedBy=default.target
-`
+`;
 
-    fs.writeFileSync(servicePath, serviceContent)
-    console.log(`✓ Created service file: ${servicePath}`)
+    fs.writeFileSync(servicePath, serviceContent);
+    console.log(`✓ Created service file: ${servicePath}`);
 
-    execSync('systemctl --user daemon-reload', { encoding: 'utf8' })
-    execSync('systemctl --user enable opencode-manager', { encoding: 'utf8' })
-    execSync('systemctl --user start opencode-manager', { encoding: 'utf8' })
-    console.log('✓ Service enabled and started')
-
+    execSync("systemctl --user daemon-reload", { encoding: "utf8" });
+    execSync("systemctl --user enable opencode-manager", { encoding: "utf8" });
+    execSync("systemctl --user start opencode-manager", { encoding: "utf8" });
+    console.log("✓ Service enabled and started");
   } else {
-    console.error(`❌ Unsupported platform: ${platform}`)
-    console.log('   Supported: macOS (darwin), Linux')
-    process.exit(1)
+    console.error(`❌ Unsupported platform: ${platform}`);
+    console.log("   Supported: macOS (darwin), Linux");
+    process.exit(1);
   }
 
-  console.log('\n✅ Installation complete!')
-  console.log(`\n🔐 Credentials saved to: ${AUTH_FILE}`)
-  console.log(`   Username: ${auth.username}`)
-  console.log(`   Password: ${auth.password}`)
-  console.log(`\n📍 Endpoints will be written to: ${ENDPOINTS_FILE}`)
-  console.log('\nCommands:')
-  console.log('  opencode-manager status  - Check service status')
-  console.log('  opencode-manager logs    - View logs')
+  console.log("\n✅ Installation complete!");
+  console.log(`\n🔐 Credentials saved to: ${AUTH_FILE}`);
+  console.log(`   Username: ${auth.username}`);
+  console.log(`   Password: ${auth.password}`);
+  console.log(`\n📍 Endpoints will be written to: ${ENDPOINTS_FILE}`);
+  console.log("\nCommands:");
+  console.log("  opencode-manager status  - Check service status");
+  console.log("  opencode-manager logs    - View logs");
 }
 
 function commandUninstallService(): void {
-  const platform = os.platform()
+  const platform = os.platform();
 
-  console.log('\n🔧 Uninstalling OpenCode Manager service...\n')
+  console.log("\n🔧 Uninstalling OpenCode Manager service...\n");
 
-  if (platform === 'darwin') {
-    const plistPath = getMacOSPlistPath()
-    
+  if (platform === "darwin") {
+    const plistPath = getMacOSPlistPath();
+
     try {
-      execSync(`launchctl unload "${plistPath}"`, { encoding: 'utf8' })
-      console.log('✓ Service stopped')
+      execSync(`launchctl unload "${plistPath}"`, { encoding: "utf8" });
+      console.log("✓ Service stopped");
     } catch {}
 
     if (fs.existsSync(plistPath)) {
-      fs.unlinkSync(plistPath)
-      console.log(`✓ Removed plist: ${plistPath}`)
+      fs.unlinkSync(plistPath);
+      console.log(`✓ Removed plist: ${plistPath}`);
     }
-
-  } else if (platform === 'linux') {
+  } else if (platform === "linux") {
     try {
-      execSync('systemctl --user stop opencode-manager', { encoding: 'utf8' })
-      console.log('✓ Service stopped')
+      execSync("systemctl --user stop opencode-manager", { encoding: "utf8" });
+      console.log("✓ Service stopped");
     } catch {}
 
     try {
-      execSync('systemctl --user disable opencode-manager', { encoding: 'utf8' })
-      console.log('✓ Service disabled')
+      execSync("systemctl --user disable opencode-manager", {
+        encoding: "utf8",
+      });
+      console.log("✓ Service disabled");
     } catch {}
 
-    const servicePath = getLinuxServicePath()
+    const servicePath = getLinuxServicePath();
     if (fs.existsSync(servicePath)) {
-      fs.unlinkSync(servicePath)
-      console.log(`✓ Removed service file: ${servicePath}`)
+      fs.unlinkSync(servicePath);
+      console.log(`✓ Removed service file: ${servicePath}`);
     }
 
-    execSync('systemctl --user daemon-reload', { encoding: 'utf8' })
-
+    execSync("systemctl --user daemon-reload", { encoding: "utf8" });
   } else {
-    console.error(`❌ Unsupported platform: ${platform}`)
-    process.exit(1)
+    console.error(`❌ Unsupported platform: ${platform}`);
+    process.exit(1);
   }
 
-  console.log('\n✅ Uninstallation complete!')
+  console.log("\n✅ Uninstallation complete!");
 }
 
 function commandLogs(): void {
-  const platform = os.platform()
+  const platform = os.platform();
 
-  if (platform === 'darwin') {
-    const stdoutLog = path.join(CONFIG_DIR, 'stdout.log')
-    const stderrLog = path.join(CONFIG_DIR, 'stderr.log')
+  if (platform === "darwin") {
+    const stdoutLog = path.join(CONFIG_DIR, "stdout.log");
+    const stderrLog = path.join(CONFIG_DIR, "stderr.log");
 
-    console.log('\n📜 OpenCode Manager Logs\n')
-    
+    console.log("\n📜 OpenCode Manager Logs\n");
+
     if (fs.existsSync(stdoutLog)) {
-      console.log('=== stdout ===')
-      const result = spawnSync('tail', ['-50', stdoutLog], { stdio: 'inherit' })
+      console.log("=== stdout ===");
+      const result = spawnSync("tail", ["-50", stdoutLog], {
+        stdio: "inherit",
+      });
     }
-    
+
     if (fs.existsSync(stderrLog)) {
-      console.log('\n=== stderr ===')
-      const result = spawnSync('tail', ['-50', stderrLog], { stdio: 'inherit' })
+      console.log("\n=== stderr ===");
+      const result = spawnSync("tail", ["-50", stderrLog], {
+        stdio: "inherit",
+      });
     }
-
-  } else if (platform === 'linux') {
-    spawnSync('journalctl', ['--user', '-u', 'opencode-manager', '-f', '--no-pager', '-n', '100'], { stdio: 'inherit' })
-
+  } else if (platform === "linux") {
+    spawnSync(
+      "journalctl",
+      ["--user", "-u", "opencode-manager", "-f", "--no-pager", "-n", "100"],
+      { stdio: "inherit" },
+    );
   } else {
-    console.log(`❌ Unsupported platform: ${platform}`)
+    console.log(`❌ Unsupported platform: ${platform}`);
   }
 }
 
 interface HealthResponse {
-  status: string
-  timestamp?: string
-  database?: string
-  opencode?: string
-  opencodePort?: number
-  opencodeVersion?: string
-  opencodeMinVersion?: string
-  opencodeVersionSupported?: boolean
+  status: string;
+  timestamp?: string;
+  database?: string;
+  opencode?: string;
+  opencodePort?: number;
+  opencodeVersion?: string;
+  opencodeMinVersion?: string;
+  opencodeVersionSupported?: boolean;
   telegram?: {
-    running: boolean
-    sessions: number
-    allowlist: number
-  }
-  error?: string
+    running: boolean;
+    sessions: number;
+    allowlist: number;
+  };
+  error?: string;
 }
 
 interface SttStatusResponse {
   server: {
-    running: boolean
-    model?: string
-    port?: number
-  }
+    running: boolean;
+    model?: string;
+    port?: number;
+  };
 }
 
 interface TtsStatusResponse {
-  enabled: boolean
-  configured: boolean
-  provider: string
+  enabled: boolean;
+  configured: boolean;
+  provider: string;
   coqui?: {
-    running: boolean
-    device?: string
-    model?: string
-    error?: string
-  }
+    running: boolean;
+    device?: string;
+    model?: string;
+    error?: string;
+  };
   chatterbox?: {
-    running: boolean
-    device?: string
-    error?: string
-  }
+    running: boolean;
+    device?: string;
+    error?: string;
+  };
 }
 
 interface TunnelStatusResponse {
-  connected: boolean
-  url?: string
-  edgeLocation?: string
-  edgeLocationFormatted?: string
-  haConnections?: number
-  error?: string
+  connected: boolean;
+  url?: string;
+  edgeLocation?: string;
+  edgeLocationFormatted?: string;
+  haConnections?: number;
+  error?: string;
 }
 
 async function commandHealth(args: string[]): Promise<void> {
-  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
+  const portIdx = args.findIndex((a) => a === "--port" || a === "-p");
+  const port =
+    portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT;
 
   // Load auth credentials
-  let auth: AuthConfig | null = null
+  let auth: AuthConfig | null = null;
   if (fs.existsSync(AUTH_FILE)) {
     try {
-      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8")) as AuthConfig;
     } catch {}
   }
 
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = {};
   if (auth?.username && auth?.password) {
-    headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`
+    headers["Authorization"] =
+      `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`;
   }
 
   const results: {
-    backend: { ok: boolean; data?: HealthResponse; error?: string }
-    stt: { ok: boolean; data?: SttStatusResponse; error?: string }
-    tts: { ok: boolean; data?: TtsStatusResponse; error?: string }
-    tunnel: { ok: boolean; data?: TunnelStatusResponse; error?: string }
+    backend: { ok: boolean; data?: HealthResponse; error?: string };
+    stt: { ok: boolean; data?: SttStatusResponse; error?: string };
+    tts: { ok: boolean; data?: TtsStatusResponse; error?: string };
+    tunnel: { ok: boolean; data?: TunnelStatusResponse; error?: string };
   } = {
     backend: { ok: false },
     stt: { ok: false },
     tts: { ok: false },
     tunnel: { ok: false },
-  }
+  };
 
   // Check backend health
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
       signal: AbortSignal.timeout(5000),
       headers,
-    })
+    });
     if (response.ok) {
-      const data = await response.json() as HealthResponse
-      results.backend = { ok: data.status === 'healthy', data }
+      const data = (await response.json()) as HealthResponse;
+      results.backend = { ok: data.status === "healthy", data };
     } else if (response.status === 401) {
-      results.backend = { ok: false, error: 'Authentication failed' }
+      results.backend = { ok: false, error: "Authentication failed" };
     } else {
-      results.backend = { ok: false, error: `HTTP ${response.status}` }
+      results.backend = { ok: false, error: `HTTP ${response.status}` };
     }
   } catch (err) {
-    results.backend = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    results.backend = {
+      ok: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+    };
   }
 
   // Check STT status
@@ -958,15 +1251,18 @@ async function commandHealth(args: string[]): Promise<void> {
     const response = await fetch(`http://127.0.0.1:${port}/api/stt/status`, {
       signal: AbortSignal.timeout(5000),
       headers,
-    })
+    });
     if (response.ok) {
-      const data = await response.json() as SttStatusResponse
-      results.stt = { ok: data.server?.running === true, data }
+      const data = (await response.json()) as SttStatusResponse;
+      results.stt = { ok: data.server?.running === true, data };
     } else {
-      results.stt = { ok: false, error: `HTTP ${response.status}` }
+      results.stt = { ok: false, error: `HTTP ${response.status}` };
     }
   } catch (err) {
-    results.stt = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    results.stt = {
+      ok: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+    };
   }
 
   // Check TTS status
@@ -974,21 +1270,24 @@ async function commandHealth(args: string[]): Promise<void> {
     const response = await fetch(`http://127.0.0.1:${port}/api/tts/status`, {
       signal: AbortSignal.timeout(5000),
       headers,
-    })
+    });
     if (response.ok) {
-      const data = await response.json() as TtsStatusResponse
+      const data = (await response.json()) as TtsStatusResponse;
       // TTS is ok if configured and either provider's server is running
-      const providerRunning = 
-        (data.provider === 'coqui' && data.coqui?.running) ||
-        (data.provider === 'chatterbox' && data.chatterbox?.running) ||
-        (data.provider === 'external' && data.configured) ||
-        (data.provider === 'builtin')
-      results.tts = { ok: data.configured && providerRunning, data }
+      const providerRunning =
+        (data.provider === "coqui" && data.coqui?.running) ||
+        (data.provider === "chatterbox" && data.chatterbox?.running) ||
+        (data.provider === "external" && data.configured) ||
+        data.provider === "builtin";
+      results.tts = { ok: data.configured && providerRunning, data };
     } else {
-      results.tts = { ok: false, error: `HTTP ${response.status}` }
+      results.tts = { ok: false, error: `HTTP ${response.status}` };
     }
   } catch (err) {
-    results.tts = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    results.tts = {
+      ok: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+    };
   }
 
   // Check tunnel status
@@ -996,288 +1295,331 @@ async function commandHealth(args: string[]): Promise<void> {
     const response = await fetch(`http://127.0.0.1:${port}/api/tunnel/status`, {
       signal: AbortSignal.timeout(5000),
       headers,
-    })
+    });
     if (response.ok) {
-      const data = await response.json() as TunnelStatusResponse
-      results.tunnel = { ok: data.connected === true, data }
+      const data = (await response.json()) as TunnelStatusResponse;
+      results.tunnel = { ok: data.connected === true, data };
     } else {
-      results.tunnel = { ok: false, error: `HTTP ${response.status}` }
+      results.tunnel = { ok: false, error: `HTTP ${response.status}` };
     }
   } catch (err) {
-    results.tunnel = { ok: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    results.tunnel = {
+      ok: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+    };
   }
 
   // Build YAML output
-  const backendStatus = results.backend.ok ? 'healthy' : 
-    (results.backend.data?.status === 'degraded' ? 'degraded' : 'unhealthy')
-  const sttStatus = results.stt.ok ? 'running' : 'stopped'
-  const ttsStatus = results.tts.ok ? 'running' : 
-    (results.tts.data?.configured ? 'stopped' : 'not_configured')
-  const tunnelStatus = results.tunnel.ok ? 'connected' : 'disconnected'
+  const backendStatus = results.backend.ok
+    ? "healthy"
+    : results.backend.data?.status === "degraded"
+      ? "degraded"
+      : "unhealthy";
+  const sttStatus = results.stt.ok ? "running" : "stopped";
+  const ttsStatus = results.tts.ok
+    ? "running"
+    : results.tts.data?.configured
+      ? "stopped"
+      : "not_configured";
+  const tunnelStatus = results.tunnel.ok ? "connected" : "disconnected";
 
   // Overall health
-  const backendDegraded = results.backend.data?.status === 'degraded'
-  const coreHealthy = results.backend.ok || backendDegraded
-  const allHealthy = results.backend.ok && results.stt.ok && results.tts.ok && results.tunnel.ok
-  const overallStatus = allHealthy ? 'healthy' : (coreHealthy ? 'degraded' : 'unhealthy')
+  const backendDegraded = results.backend.data?.status === "degraded";
+  const coreHealthy = results.backend.ok || backendDegraded;
+  const allHealthy =
+    results.backend.ok && results.stt.ok && results.tts.ok && results.tunnel.ok;
+  const overallStatus = allHealthy
+    ? "healthy"
+    : coreHealthy
+      ? "degraded"
+      : "unhealthy";
 
   // YAML output
-  console.log(`status: ${overallStatus}`)
-  console.log(`port: ${port}`)
-  console.log('')
-  console.log('backend:')
-  console.log(`  status: ${backendStatus}`)
+  console.log(`status: ${overallStatus}`);
+  console.log(`port: ${port}`);
+  console.log("");
+  console.log("backend:");
+  console.log(`  status: ${backendStatus}`);
   if (results.backend.data) {
-    console.log(`  database: ${results.backend.data.database || 'unknown'}`)
-    console.log(`  opencode: ${results.backend.data.opencode || 'unknown'}`)
+    console.log(`  database: ${results.backend.data.database || "unknown"}`);
+    console.log(`  opencode: ${results.backend.data.opencode || "unknown"}`);
     if (results.backend.data.opencodeVersion) {
-      console.log(`  opencode_version: ${results.backend.data.opencodeVersion}`)
+      console.log(
+        `  opencode_version: ${results.backend.data.opencodeVersion}`,
+      );
     }
   }
   if (results.backend.error) {
-    console.log(`  error: ${results.backend.error}`)
+    console.log(`  error: ${results.backend.error}`);
   }
 
-  console.log('')
-  console.log('stt:')
-  console.log(`  status: ${sttStatus}`)
+  console.log("");
+  console.log("stt:");
+  console.log(`  status: ${sttStatus}`);
   if (results.stt.data?.server) {
-    console.log(`  model: ${results.stt.data.server.model || 'unknown'}`)
-    console.log(`  port: ${results.stt.data.server.port || 'unknown'}`)
+    console.log(`  model: ${results.stt.data.server.model || "unknown"}`);
+    console.log(`  port: ${results.stt.data.server.port || "unknown"}`);
   }
   if (results.stt.error) {
-    console.log(`  error: ${results.stt.error}`)
+    console.log(`  error: ${results.stt.error}`);
   }
 
-  console.log('')
-  console.log('tts:')
-  console.log(`  status: ${ttsStatus}`)
+  console.log("");
+  console.log("tts:");
+  console.log(`  status: ${ttsStatus}`);
   if (results.tts.data) {
-    console.log(`  provider: ${results.tts.data.provider}`)
+    console.log(`  provider: ${results.tts.data.provider}`);
     if (results.tts.data.coqui?.running) {
-      console.log(`  model: ${results.tts.data.coqui.model || 'unknown'}`)
+      console.log(`  model: ${results.tts.data.coqui.model || "unknown"}`);
     }
   }
   if (results.tts.error) {
-    console.log(`  error: ${results.tts.error}`)
+    console.log(`  error: ${results.tts.error}`);
   }
 
-  console.log('')
-  console.log('tunnel:')
-  console.log(`  status: ${tunnelStatus}`)
+  console.log("");
+  console.log("tunnel:");
+  console.log(`  status: ${tunnelStatus}`);
   if (results.tunnel.data?.url) {
     // Build authenticated URL
-    let tunnelUrl = results.tunnel.data.url
+    let tunnelUrl = results.tunnel.data.url;
     if (auth?.username && auth?.password) {
-      const urlObj = new URL(tunnelUrl)
-      urlObj.username = auth.username
-      urlObj.password = auth.password
-      tunnelUrl = urlObj.toString()
+      const urlObj = new URL(tunnelUrl);
+      urlObj.username = auth.username;
+      urlObj.password = auth.password;
+      tunnelUrl = urlObj.toString();
     }
-    console.log(`  url: ${tunnelUrl}`)
+    console.log(`  url: ${tunnelUrl}`);
     if (results.tunnel.data.edgeLocationFormatted) {
-      console.log(`  edge_location: ${results.tunnel.data.edgeLocationFormatted}`)
+      console.log(
+        `  edge_location: ${results.tunnel.data.edgeLocationFormatted}`,
+      );
     }
   }
   if (results.tunnel.error) {
-    console.log(`  error: ${results.tunnel.error}`)
+    console.log(`  error: ${results.tunnel.error}`);
   }
 
   // Exit code based on overall health
-  process.exit(coreHealthy ? 0 : 1)
+  process.exit(coreHealthy ? 0 : 1);
 }
 
-type ValidService = 'stt' | 'tts' | 'opencode' | 'all'
+type ValidService = "stt" | "tts" | "opencode" | "all";
 
 function isValidService(service: string): service is ValidService {
-  return ['stt', 'tts', 'opencode', 'all'].includes(service)
+  return ["stt", "tts", "opencode", "all"].includes(service);
 }
 
 interface ServiceActionResult {
-  success: boolean
-  error?: string
-  results?: Array<{ service: string; success: boolean; error?: string }>
+  success: boolean;
+  error?: string;
+  results?: Array<{ service: string; success: boolean; error?: string }>;
 }
 
 async function callServiceAPI(
-  port: number, 
-  service: ValidService, 
-  action: 'start' | 'stop' | 'restart',
-  auth: AuthConfig | null
+  port: number,
+  service: ValidService,
+  action: "start" | "stop" | "restart",
+  auth: AuthConfig | null,
 ): Promise<ServiceActionResult> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  }
+    "Content-Type": "application/json",
+  };
   if (auth?.username && auth?.password) {
-    headers['Authorization'] = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`
+    headers["Authorization"] =
+      `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`;
   }
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/services/${service}/${action}`, {
-      method: 'POST',
-      headers,
-      signal: AbortSignal.timeout(120000)
-    })
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/services/${service}/${action}`,
+      {
+        method: "POST",
+        headers,
+        signal: AbortSignal.timeout(120000),
+      },
+    );
 
     if (response.status === 401) {
-      return { success: false, error: 'Authentication required. Check credentials in ~/.local/run/opencode-manager/auth.json' }
+      return {
+        success: false,
+        error:
+          "Authentication required. Check credentials in ~/.local/run/opencode-manager/auth.json",
+      };
     }
 
-    const data = await response.json() as ServiceActionResult
-    return data
+    const data = (await response.json()) as ServiceActionResult;
+    return data;
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { success: false, error: 'Operation timed out after 2 minutes' }
+    if (error instanceof Error && error.name === "AbortError") {
+      return { success: false, error: "Operation timed out after 2 minutes" };
     }
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
 async function commandStop(args: string[]): Promise<void> {
-  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
-  
-  const serviceArgs = portIdx >= 0 
-    ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
-    : args
-  const service = serviceArgs[0] || 'all'
-  
+  const portIdx = args.findIndex((a) => a === "--port" || a === "-p");
+  const port =
+    portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT;
+
+  const serviceArgs =
+    portIdx >= 0
+      ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
+      : args;
+  const service = serviceArgs[0] || "all";
+
   if (!isValidService(service)) {
-    console.error(`Invalid service: ${service}`)
-    console.error('Valid services: stt, tts, opencode, all')
-    process.exit(1)
+    console.error(`Invalid service: ${service}`);
+    console.error("Valid services: stt, tts, opencode, all");
+    process.exit(1);
   }
 
-  let auth: AuthConfig | null = null
+  let auth: AuthConfig | null = null;
   if (fs.existsSync(AUTH_FILE)) {
     try {
-      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8")) as AuthConfig;
     } catch {}
   }
 
-  console.log(`\nStopping ${service === 'all' ? 'all services' : service}...`)
+  console.log(`\nStopping ${service === "all" ? "all services" : service}...`);
 
-  const result = await callServiceAPI(port, service, 'stop', auth)
+  const result = await callServiceAPI(port, service, "stop", auth);
 
   if (result.success) {
     if (result.results) {
-      console.log('\nResults:')
+      console.log("\nResults:");
       for (const r of result.results) {
-        const status = r.success ? '✓' : '✗'
-        console.log(`  ${status} ${r.service}: ${r.success ? 'stopped' : r.error || 'failed'}`)
+        const status = r.success ? "✓" : "✗";
+        console.log(
+          `  ${status} ${r.service}: ${r.success ? "stopped" : r.error || "failed"}`,
+        );
       }
     } else {
-      console.log(`✓ ${service} stopped successfully`)
+      console.log(`✓ ${service} stopped successfully`);
     }
-    process.exit(0)
+    process.exit(0);
   } else {
-    console.error(`\n✗ Failed to stop ${service}: ${result.error}`)
+    console.error(`\n✗ Failed to stop ${service}: ${result.error}`);
     if (result.results) {
-      console.log('\nPartial results:')
+      console.log("\nPartial results:");
       for (const r of result.results) {
-        const status = r.success ? '✓' : '✗'
-        console.log(`  ${status} ${r.service}: ${r.success ? 'stopped' : r.error || 'failed'}`)
+        const status = r.success ? "✓" : "✗";
+        console.log(
+          `  ${status} ${r.service}: ${r.success ? "stopped" : r.error || "failed"}`,
+        );
       }
     }
-    process.exit(1)
+    process.exit(1);
   }
 }
 
 async function commandRestart(args: string[]): Promise<void> {
-  const portIdx = args.findIndex(a => a === '--port' || a === '-p')
-  const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT
-  
-  const serviceArgs = portIdx >= 0 
-    ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
-    : args
-  const service = serviceArgs[0] || 'all'
-  
+  const portIdx = args.findIndex((a) => a === "--port" || a === "-p");
+  const port =
+    portIdx >= 0 ? parseInt(args[portIdx + 1]) || DEFAULT_PORT : DEFAULT_PORT;
+
+  const serviceArgs =
+    portIdx >= 0
+      ? args.filter((_, i) => i !== portIdx && i !== portIdx + 1)
+      : args;
+  const service = serviceArgs[0] || "all";
+
   if (!isValidService(service)) {
-    console.error(`Invalid service: ${service}`)
-    console.error('Valid services: stt, tts, opencode, all')
-    process.exit(1)
+    console.error(`Invalid service: ${service}`);
+    console.error("Valid services: stt, tts, opencode, all");
+    process.exit(1);
   }
 
-  let auth: AuthConfig | null = null
+  let auth: AuthConfig | null = null;
   if (fs.existsSync(AUTH_FILE)) {
     try {
-      auth = JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) as AuthConfig
+      auth = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8")) as AuthConfig;
     } catch {}
   }
 
-  console.log(`\nRestarting ${service === 'all' ? 'all services' : service}...`)
+  console.log(
+    `\nRestarting ${service === "all" ? "all services" : service}...`,
+  );
 
-  const result = await callServiceAPI(port, service, 'restart', auth)
+  const result = await callServiceAPI(port, service, "restart", auth);
 
   if (result.success) {
     if (result.results) {
-      console.log('\nResults:')
+      console.log("\nResults:");
       for (const r of result.results) {
-        const status = r.success ? '✓' : '✗'
-        console.log(`  ${status} ${r.service}: ${r.success ? 'restarted' : r.error || 'failed'}`)
+        const status = r.success ? "✓" : "✗";
+        console.log(
+          `  ${status} ${r.service}: ${r.success ? "restarted" : r.error || "failed"}`,
+        );
       }
     } else {
-      console.log(`✓ ${service} restarted successfully`)
+      console.log(`✓ ${service} restarted successfully`);
     }
-    process.exit(0)
+    process.exit(0);
   } else {
-    console.error(`\n✗ Failed to restart ${service}: ${result.error}`)
+    console.error(`\n✗ Failed to restart ${service}: ${result.error}`);
     if (result.results) {
-      console.log('\nPartial results:')
+      console.log("\nPartial results:");
       for (const r of result.results) {
-        const status = r.success ? '✓' : '✗'
-        console.log(`  ${status} ${r.service}: ${r.success ? 'restarted' : r.error || 'failed'}`)
+        const status = r.success ? "✓" : "✗";
+        console.log(
+          `  ${status} ${r.service}: ${r.success ? "restarted" : r.error || "failed"}`,
+        );
       }
     }
-    process.exit(1)
+    process.exit(1);
   }
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2)
-  const command = args[0] || 'help'
-  const commandArgs = args.slice(1)
+  const args = process.argv.slice(2);
+  const command = args[0] || "help";
+  const commandArgs = args.slice(1);
 
   switch (command) {
-    case 'start':
-      await commandStart(commandArgs)
-      break
-    case 'stop':
-      await commandStop(commandArgs)
-      break
-    case 'restart':
-      await commandRestart(commandArgs)
-      break
-    case 'status':
-      await commandHealth(commandArgs)
-      break
-    case 'install-service':
-      commandInstallService(commandArgs)
-      break
-    case 'uninstall-service':
-      commandUninstallService()
-      break
-    case 'logs':
-      commandLogs()
-      break
-    case 'help':
-    case '--help':
-    case '-h':
-      printHelp()
-      break
-    case 'version':
-    case '--version':
-    case '-v':
-      console.log(`opencode-manager v${VERSION}`)
-      break
+    case "start":
+      await commandStart(commandArgs);
+      break;
+    case "stop":
+      await commandStop(commandArgs);
+      break;
+    case "restart":
+      await commandRestart(commandArgs);
+      break;
+    case "status":
+      await commandHealth(commandArgs);
+      break;
+    case "install-service":
+      commandInstallService(commandArgs);
+      break;
+    case "uninstall-service":
+      commandUninstallService();
+      break;
+    case "logs":
+      commandLogs();
+      break;
+    case "help":
+    case "--help":
+    case "-h":
+      printHelp();
+      break;
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(`opencode-manager v${VERSION}`);
+      break;
     default:
-      console.error(`Unknown command: ${command}`)
-      printHelp()
-      process.exit(1)
+      console.error(`Unknown command: ${command}`);
+      printHelp();
+      process.exit(1);
   }
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err)
-  process.exit(1)
-})
+main().catch((err) => {
+  console.error("Fatal error:", err);
+  process.exit(1);
+});
