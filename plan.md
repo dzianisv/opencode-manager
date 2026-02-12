@@ -1,83 +1,39 @@
-# Plan: Stabilize Settings E2E CI Health Check
+# Plan: Tunnel Resilience - Circuit Breaker, Reachability Check, PID Guard, Watchdog Improvements
 
 ## Goal
 
-Make Settings E2E CI reliably reach a healthy service state by avoiding flaky OpenCode installer version fetches during container startup.
+Prevent Cloudflare tunnel failures from persisting undetected. Address all known failure modes: infinite restart loops, unverified URLs, dual-instance conflicts, and premature process kills.
+
+## Issue: #62
 
 ## Problem
 
-The Settings E2E job fails while waiting for `/api/health` because the container entrypoint installs OpenCode and the installer fails to fetch the latest version from GitHub (`Failed to fetch version information`). This keeps OpenCode from installing, so the service never becomes healthy.
-
-## Approach
-
-Pin the OpenCode installer to a known-good minimum version during container startup, with an override for future updates via `OPENCODE_INSTALL_VERSION`.
-
-## Steps
-
-- [x] Identify CI failure in Settings E2E workflow logs
-- [x] Inspect container entrypoint OpenCode install flow
-- [x] Update entrypoint to pass a pinned version to installer
-- [ ] Re-run Settings E2E workflow to confirm health check passes
-- [ ] Verify no regressions in other E2E jobs
-- [ ] Commit and update PR
-
----
-
-# Plan: Fix Browser E2E Screencast - Actually Show All Test Steps
-
-## Goal
-
-Fix the browser E2E screencast GIF so it shows the full test flow (home → session → voice active → transcription → response) instead of just 2-3 visually identical frames.
-
-## Problem
-
-The AutoScreenshotter was added (commit 823cafc) but the deduplication in `VideoRecorder` is too aggressive:
-- Uses 95% similarity on 32x32 grayscale thumbnails with ±10 pixel tolerance
-- Subtle UI changes (text in chat, button states, spinners) are treated as identical
-- CI logs confirm: "Deduplicated: 17 → 3 screenshots" — 14 of 17 frames removed
-- Result: GIF shows ~2 unique frames + final hold, which is useless as a test record
-
-## Root Cause
-
-The deduplication compares adjacent frames. During idle/waiting periods (which dominate runtime), auto-screenshots look nearly identical. Even meaningful transitions (voice button click, transcription appearing) differ by only a few pixels at 32x32 resolution, so they get removed too.
-
-## Fix
-
-1. **Never deduplicate manual keyframe screenshots** — screenshots from `takeScreenshot()` represent meaningful test milestones and must always be kept
-2. **Reduce deduplication aggressiveness** — lower threshold and/or increase comparison resolution
-3. **Add text annotations** to screenshots showing the current test step, making visually similar frames distinct
+The tunnel watchdog has multiple failure modes:
+1. "Tunnel not found" causes infinite restart loop (cloudflared retries forever, watchdog kills & restarts forever)
+2. No URL reachability check after startup (regex match trusted blindly)
+3. No instance guard (two opencode-manager processes fight over port 5001 via launchd KeepAlive)
+4. Watchdog doesn't re-check before killing (tunnel may have recovered)
 
 ## Steps
 
-- [x] Analyze the problem (dedup too aggressive, 17→3 frames in CI)
-- [x] Read VideoRecorder deduplication code
-- [x] Modify VideoRecorder to support "keyframe" screenshots that skip deduplication
-- [x] Add step name annotations to screenshots via ffmpeg text overlay
-- [x] Lower similarity threshold for auto screenshots (0.95 → 0.85)
-- [x] Test locally to verify GIF shows full flow (22→7 frames, 6 keyframes preserved)
-- [ ] Commit and push
-
----
-
-# Plan: Stabilize Cloudflare Tunnel Recovery
-
-## Goal
-
-Prevent opencode-manager tunnel disconnects from persisting by cleaning up orphaned cloudflared processes and auto-restarting when health drops.
-
-## Problem
-
-Duplicate cloudflared processes can start without coordination, causing the tunnel to disconnect. There is no watchdog to detect `haConnections=0` and restart the tunnel.
-
-## Approach
-
-Add startup cleanup for orphaned cloudflared processes, wait for prior tunnel shutdown, and run a watchdog to monitor tunnel health and restart on failure.
-
-## Steps
-
-- [x] Identify tunnel lifecycle gaps and cleanup behavior
-- [x] Add startup cleanup to terminate orphaned cloudflared processes
-- [x] Wait for previous tunnel PID to exit with SIGKILL fallback
-- [x] Add watchdog to monitor tunnel health and restart on failure
-- [ ] Validate by restarting with `--tunnel` and observing stable recovery
-- [ ] Commit and push
+- [x] Create GitHub issue #62
+- [x] Create branch fix/tunnel-resilience-62
+- [ ] 1. Circuit breaker + error detection
+  - [ ] Parse cloudflared stderr for fatal errors ("Unauthorized", "Tunnel not found")
+  - [ ] Set a `fatalError` flag on the tunnel process when detected
+  - [ ] Track consecutive restart failures in watchdog state
+  - [ ] After MAX_TUNNEL_RESTARTS (5) consecutive failures, stop retrying, log clear error
+  - [ ] Reset counter when a restart succeeds (ha_connections > 0)
+- [ ] 2. URL reachability check after start
+  - [ ] After startCloudflaredTunnel() gets URL, HTTP HEAD to verify
+  - [ ] Retry up to 3 times with 2s backoff
+  - [ ] Only publish to endpoints.json after verification
+- [ ] 3. Lock file / PID guard
+  - [ ] Write PID lock file (~/.local/run/opencode-manager/manager.pid) on startup
+  - [ ] Check lock file before starting; if PID alive, warn and exit
+  - [ ] Clean up lock file on exit (SIGINT/SIGTERM handler)
+- [ ] 4. Watchdog recovery improvements
+  - [ ] Re-check ha_connections immediately before killing cloudflared
+  - [ ] Add ±5s jitter to watchdog interval to desync from launchd ThrottleInterval (30s)
+- [ ] Run tests (pnpm test)
+- [ ] Create PR, verify CI

@@ -19,8 +19,20 @@ const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
 const CLOUDFLARED_LOG_FILE = path.join(CONFIG_DIR, "cloudflared.log");
 const TUNNEL_STATE_FILE = path.join(CONFIG_DIR, "tunnel.json");
 const TUNNEL_PID_FILE = path.join(CONFIG_DIR, "tunnel.pid");
+const LOCK_FILE = path.join(CONFIG_DIR, "manager.lock");
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 const MAX_LOG_BACKUPS = 3;
+
+const TUNNEL_FATAL_PATTERNS = [
+  /Unauthorized/i,
+  /Tunnel not found/i,
+  /failed to unmarshal tunnel/i,
+  /tunnelID.*not found/i,
+  /ERR.*failed to connect to edge/i,
+];
+
+const WATCHDOG_MAX_RESTARTS = 5;
+const WATCHDOG_MAX_RESTART_WINDOW_MS = 10 * 60 * 1000;
 
 interface AuthConfig {
   username: string;
@@ -41,6 +53,34 @@ function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
+}
+
+function acquireLock(): boolean {
+  ensureConfigDir();
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, "utf8").trim();
+      const lockedPid = parseInt(content);
+      if (!isNaN(lockedPid) && isProcessRunning(lockedPid) && lockedPid !== process.pid) {
+        return false;
+      }
+    }
+    fs.writeFileSync(LOCK_FILE, process.pid.toString(), { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseLock(): void {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, "utf8").trim();
+      if (parseInt(content) === process.pid) {
+        fs.unlinkSync(LOCK_FILE);
+      }
+    }
+  } catch {}
 }
 
 function writeTunnelState(
@@ -376,6 +416,30 @@ function cleanupManagedPorts(): void {
   }
 }
 
+function getProcessCommandOnPort(port: number): string | null {
+  try {
+    const pidOutput = execSync(`lsof -ti:${port}`, { encoding: "utf8" }).trim();
+    if (!pidOutput) return null;
+    const pid = parseInt(pidOutput.split("\n")[0]);
+    if (isNaN(pid)) return null;
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: "utf8" }).trim();
+    return cmd;
+  } catch {
+    return null;
+  }
+}
+
+function isOwnedByManager(port: number): boolean {
+  const cmd = getProcessCommandOnPort(port);
+  if (!cmd) return false;
+  return (
+    cmd.includes("opencode-manager") ||
+    cmd.includes("cli.ts") ||
+    cmd.includes("backend/dist/index.js") ||
+    cmd.includes("backend/src/index.ts")
+  );
+}
+
 async function startOpenCodeServer(port: number): Promise<boolean> {
   if (isPortInUse(port)) {
     console.log(`\n⚠️  Port ${port} is already in use`);
@@ -425,6 +489,7 @@ async function startCloudflaredTunnel(
   process: ReturnType<typeof spawn>;
   url: string | null;
   urlWithAuth: string | null;
+  fatalError: string | null;
 }> {
   console.log("\n🌐 Starting Cloudflare tunnel...");
 
@@ -464,6 +529,7 @@ async function startCloudflaredTunnel(
   );
 
   let tunnelUrl: string | null = null;
+  let fatalError: string | null = null;
 
   const urlPromise = new Promise<string | null>((resolve) => {
     const timeout = setTimeout(() => resolve(null), 30000);
@@ -475,6 +541,22 @@ async function startCloudflaredTunnel(
       const lines = output.split("\n").filter((line) => line.trim());
       for (const line of lines) {
         logStream.write(`[${timestamp()}] ${line}\n`);
+
+        if (!fatalError) {
+          for (const pattern of TUNNEL_FATAL_PATTERNS) {
+            if (pattern.test(line)) {
+              fatalError = line.trim();
+              console.error(`\n❌ Cloudflare tunnel fatal error: ${fatalError}`);
+              logStream.write(`[${timestamp()}] FATAL: ${fatalError}\n`);
+              clearTimeout(timeout);
+              resolve(null);
+              try {
+                tunnelProcess.kill("SIGTERM");
+              } catch {}
+              return;
+            }
+          }
+        }
       }
 
       const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
@@ -507,6 +589,10 @@ async function startCloudflaredTunnel(
 
   const url = await urlPromise;
 
+  if (fatalError) {
+    return { process: tunnelProcess, url: null, urlWithAuth: null, fatalError };
+  }
+
   let urlWithAuth: string | null = null;
   if (url && auth.username && auth.password) {
     try {
@@ -518,6 +604,12 @@ async function startCloudflaredTunnel(
   }
 
   if (url) {
+    const reachable = await verifyTunnelReachable(url);
+    if (!reachable) {
+      console.log("⚠️  Tunnel URL obtained but not yet reachable (may take a few seconds)");
+      logStream.write(`[${timestamp()}] WARNING: Tunnel URL not immediately reachable\n`);
+    }
+
     logStream.write(`[${timestamp()}] Tunnel established: ${url}\n`);
     console.log(`✓ Tunnel URL: ${url}`);
     if (urlWithAuth) {
@@ -531,7 +623,23 @@ async function startCloudflaredTunnel(
     );
   }
 
-  return { process: tunnelProcess, url, urlWithAuth };
+  return { process: tunnelProcess, url, urlWithAuth, fatalError: null };
+}
+
+async function verifyTunnelReachable(url: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "HEAD",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.status !== 502 && response.status !== 503 && response.status !== 504) {
+        return true;
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
 }
 
 const TUNNEL_WATCHDOG_INTERVAL_MS = 30_000;
@@ -582,10 +690,32 @@ function startTunnelWatchdog(
     urlWithAuth: string | null;
   }) => void,
 ): NodeJS.Timeout {
-  const state = { failures: 0, restarting: false };
+  const state = {
+    failures: 0,
+    restarting: false,
+    restartTimestamps: [] as number[],
+    halted: false,
+  };
 
-  const timer = setInterval(async () => {
-    if (state.restarting) return;
+  const JITTER_MS = 5000;
+
+  function nextInterval(): number {
+    const jitter = Math.floor(Math.random() * JITTER_MS * 2) - JITTER_MS;
+    return TUNNEL_WATCHDOG_INTERVAL_MS + jitter;
+  }
+
+  function scheduleNext(): NodeJS.Timeout {
+    return setTimeout(tick, nextInterval());
+  }
+
+  let timer: NodeJS.Timeout;
+
+  const tick = async () => {
+    if (state.halted) return;
+    if (state.restarting) {
+      timer = scheduleNext();
+      return;
+    }
 
     const connected = await checkTunnelConnected();
     if (connected) {
@@ -595,6 +725,7 @@ function startTunnelWatchdog(
         );
       }
       state.failures = 0;
+      timer = scheduleNext();
       return;
     }
 
@@ -603,22 +734,62 @@ function startTunnelWatchdog(
       `[watchdog] Tunnel disconnected (${state.failures}/${TUNNEL_WATCHDOG_FAIL_THRESHOLD})`,
     );
 
-    if (state.failures < TUNNEL_WATCHDOG_FAIL_THRESHOLD) return;
+    if (state.failures < TUNNEL_WATCHDOG_FAIL_THRESHOLD) {
+      timer = scheduleNext();
+      return;
+    }
+
+    const now = Date.now();
+    state.restartTimestamps = state.restartTimestamps.filter(
+      (t) => now - t < WATCHDOG_MAX_RESTART_WINDOW_MS,
+    );
+    if (state.restartTimestamps.length >= WATCHDOG_MAX_RESTARTS) {
+      console.error(
+        `[watchdog] Circuit breaker: ${WATCHDOG_MAX_RESTARTS} restarts in ${WATCHDOG_MAX_RESTART_WINDOW_MS / 60000} minutes. Halting tunnel watchdog.`,
+      );
+      console.error(
+        "[watchdog] Manual intervention required. Check: opencode-manager logs",
+      );
+      state.halted = true;
+      return;
+    }
 
     state.restarting = true;
     state.failures = 0;
+    state.restartTimestamps.push(now);
+
+    const recheck = await checkTunnelConnected();
+    if (recheck) {
+      console.log("[watchdog] Tunnel recovered on re-check, skipping restart");
+      state.restarting = false;
+      timer = scheduleNext();
+      return;
+    }
+
     console.log("[watchdog] Restarting tunnel...");
 
     try {
       const tunnel = await startCloudflaredTunnel(localPort, auth);
+
+      if (tunnel.fatalError) {
+        console.error(
+          `[watchdog] Tunnel hit a fatal error: ${tunnel.fatalError}`,
+        );
+        console.error(
+          "[watchdog] Halting watchdog. Manual intervention required.",
+        );
+        state.halted = true;
+        return;
+      }
+
       onRestart(tunnel);
       if (!tunnel.url) {
         console.log("[watchdog] Tunnel restarted but no URL obtained");
-        return;
+      } else {
+        console.log(`[watchdog] Tunnel restored: ${tunnel.url}`);
+        const localUrl = `http://localhost:${localPort}`;
+        updateEndpoints(localUrl, tunnel.urlWithAuth || tunnel.url);
       }
-      console.log(`[watchdog] Tunnel restored: ${tunnel.url}`);
-      const localUrl = `http://localhost:${localPort}`;
-      updateEndpoints(localUrl, tunnel.urlWithAuth || tunnel.url);
     } catch (err) {
       console.error(
         "[watchdog] Failed to restart tunnel:",
@@ -626,9 +797,13 @@ function startTunnelWatchdog(
       );
     } finally {
       state.restarting = false;
+      if (!state.halted) {
+        timer = scheduleNext();
+      }
     }
-  }, TUNNEL_WATCHDOG_INTERVAL_MS);
+  };
 
+  timer = scheduleNext();
   return timer;
 }
 
@@ -682,7 +857,14 @@ async function commandStart(args: string[]): Promise<void> {
   console.log("║      OpenCode Manager - Start         ║");
   console.log("╚═══════════════════════════════════════╝");
 
-  // Rotate log files if they're too large
+  if (!acquireLock()) {
+    const lockContent = fs.existsSync(LOCK_FILE) ? fs.readFileSync(LOCK_FILE, "utf8").trim() : "unknown";
+    console.error(`\n❌ Another opencode-manager instance is already running (PID ${lockContent})`);
+    console.error("   Kill the existing process first or remove the lock file:");
+    console.error(`   rm ${LOCK_FILE}`);
+    process.exit(1);
+  }
+
   ensureConfigDir();
   rotateLogFile(path.join(CONFIG_DIR, "stdout.log"));
   rotateLogFile(path.join(CONFIG_DIR, "stderr.log"));
@@ -712,6 +894,12 @@ async function commandStart(args: string[]): Promise<void> {
   }
 
   console.log("\n🧹 Cleaning up orphaned processes...");
+  if (isPortInUse(port) && !isOwnedByManager(port)) {
+    const cmd = getProcessCommandOnPort(port);
+    console.error(`\n⚠️  Port ${port} is in use by a non-manager process:`);
+    console.error(`   ${cmd}`);
+    console.error("   Proceeding will kill this process.");
+  }
   cleanupManagedPorts();
 
   const processes: ReturnType<typeof spawn>[] = [];
@@ -740,6 +928,12 @@ async function commandStart(args: string[]): Promise<void> {
     const tunnel = await startCloudflaredTunnel(port, auth);
     processes.push(tunnel.process);
     tunnelState.process = tunnel.process;
+
+    if (tunnel.fatalError) {
+      console.error(`\n❌ Tunnel failed with fatal error: ${tunnel.fatalError}`);
+      console.error("   Backend is running locally. Tunnel will not be available.");
+    }
+
     tunnelState.url = tunnel.url || undefined;
     tunnelState.urlWithAuth = tunnel.urlWithAuth || undefined;
     tunnelUrl = tunnel.url || undefined;
@@ -754,12 +948,14 @@ async function commandStart(args: string[]): Promise<void> {
       console.log("═══════════════════════════════════════\n");
     }
 
-    watchdog.timer = startTunnelWatchdog(port, auth, (next) => {
-      processes.push(next.process);
-      tunnelState.process = next.process;
-      tunnelState.url = next.url || undefined;
-      tunnelState.urlWithAuth = next.urlWithAuth || undefined;
-    });
+    if (!tunnel.fatalError) {
+      watchdog.timer = startTunnelWatchdog(port, auth, (next) => {
+        processes.push(next.process);
+        tunnelState.process = next.process;
+        tunnelState.url = next.url || undefined;
+        tunnelState.urlWithAuth = next.urlWithAuth || undefined;
+      });
+    }
   }
 
   updateEndpoints(localUrl, tunnelUrlWithAuth || tunnelUrl);
@@ -778,9 +974,10 @@ async function commandStart(args: string[]): Promise<void> {
 
   const cleanup = () => {
     console.log("\n\n🛑 Shutting down...");
+    releaseLock();
     clearTunnelState();
     if (watchdog.timer) {
-      clearInterval(watchdog.timer);
+      clearTimeout(watchdog.timer);
     }
     processes.forEach((p) => {
       try {
