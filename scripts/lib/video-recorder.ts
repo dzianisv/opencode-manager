@@ -16,6 +16,7 @@ interface Screenshot {
   path: string
   name: string
   timestamp: number
+  keyframe?: boolean
 }
 
 interface VideoRecorderOptions {
@@ -76,15 +77,16 @@ export class VideoRecorder {
       outputName: options.outputName || 'screencast.gif',
       finalFrameSeconds: options.finalFrameSeconds ?? 3,
       deduplicate: options.deduplicate !== false,
-      similarityThreshold: options.similarityThreshold || 0.95
+      similarityThreshold: options.similarityThreshold || 0.85
     }
   }
 
-  addScreenshot(screenshotPath: string, name: string, metadata: { timestamp?: number } = {}): void {
+  addScreenshot(screenshotPath: string, name: string, metadata: { timestamp?: number, keyframe?: boolean } = {}): void {
     this.screenshots.push({
       path: screenshotPath,
       name,
-      timestamp: metadata.timestamp || Date.now()
+      timestamp: metadata.timestamp || Date.now(),
+      keyframe: metadata.keyframe
     })
   }
 
@@ -167,6 +169,12 @@ export class VideoRecorder {
         continue
       }
 
+      if (screenshot.keyframe) {
+        deduplicated.push(screenshot)
+        lastFilePath = screenshot.path
+        continue
+      }
+
       if (lastFilePath && this.areImagesSimilar(lastFilePath, screenshot.path, this.options.similarityThreshold)) {
         continue
       }
@@ -175,8 +183,9 @@ export class VideoRecorder {
       lastFilePath = screenshot.path
     }
 
+    const keyframeCount = deduplicated.filter(s => s.keyframe).length
     if (deduplicated.length < screenshots.length) {
-      console.log(`Deduplicated: ${screenshots.length} → ${deduplicated.length} screenshots (removed ${screenshots.length - deduplicated.length} similar frames)`)
+      console.log(`Deduplicated: ${screenshots.length} → ${deduplicated.length} screenshots (removed ${screenshots.length - deduplicated.length} similar frames, ${keyframeCount} keyframes preserved)`)
     }
 
     return deduplicated
@@ -197,11 +206,13 @@ export class VideoRecorder {
       const filePath = join(this.screenshotsDir, file)
       const stats = statSync(filePath)
       const name = file.replace(/^\d+_/, '').replace(/\.png$/, '')
+      const isAutoScreenshot = file.includes('_auto')
 
       allScreenshots.push({
         path: filePath,
         name,
-        timestamp: stats.mtime.getTime()
+        timestamp: stats.mtime.getTime(),
+        keyframe: !isAutoScreenshot
       })
     }
 
@@ -209,11 +220,12 @@ export class VideoRecorder {
 
     for (const screenshot of deduplicated) {
       this.addScreenshot(screenshot.path, screenshot.name, {
-        timestamp: screenshot.timestamp
+        timestamp: screenshot.timestamp,
+        keyframe: screenshot.keyframe
       })
     }
 
-    console.log(`Collected ${this.screenshots.length} screenshots`)
+    console.log(`Collected ${this.screenshots.length} screenshots (${this.screenshots.filter(s => s.keyframe).length} keyframes)`)
   }
 
   private sampleScreenshots(): Screenshot[] {
@@ -268,17 +280,33 @@ export class VideoRecorder {
       }
 
       const framePath = join(this.framesDir, `frame_${String(this.frameCount).padStart(5, '0')}.png`)
+      const label = screenshot.name.replace(/_/g, ' ')
+      const escapedLabel = label.replace(/'/g, "'\\''").replace(/:/g, '\\:')
 
       const scaleResult = spawnSync('ffmpeg', [
         '-y',
         '-i', screenshot.path,
-        '-vf', `scale=${this.options.width}:${this.options.height}:force_original_aspect_ratio=decrease,pad=${this.options.width}:${this.options.height}:(ow-iw)/2:(oh-ih)/2:white`,
+        '-vf', [
+          `scale=${this.options.width}:${this.options.height}:force_original_aspect_ratio=decrease`,
+          `pad=${this.options.width}:${this.options.height}:(ow-iw)/2:(oh-ih)/2:white`,
+          `drawtext=text='${escapedLabel}':fontsize=20:fontcolor=white:borderw=2:bordercolor=black:x=10:y=h-35`
+        ].join(','),
         '-frames:v', '1',
         framePath
       ], { stdio: 'pipe' })
 
       if (scaleResult.status !== 0) {
-        copyFileSync(screenshot.path, framePath)
+        const fallbackResult = spawnSync('ffmpeg', [
+          '-y',
+          '-i', screenshot.path,
+          '-vf', `scale=${this.options.width}:${this.options.height}:force_original_aspect_ratio=decrease,pad=${this.options.width}:${this.options.height}:(ow-iw)/2:(oh-ih)/2:white`,
+          '-frames:v', '1',
+          framePath
+        ], { stdio: 'pipe' })
+
+        if (fallbackResult.status !== 0) {
+          copyFileSync(screenshot.path, framePath)
+        }
       }
 
       this.frameCount++
