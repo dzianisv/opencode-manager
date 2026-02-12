@@ -39,4 +39,10 @@ Add comprehensive test coverage for the Telegram/Messenger integration and fix c
   - Tests allowlist CRUD via API
   - Tests bot start/stop lifecycle (gracefully handles invalid tokens)
 - [x] 6. Run `pnpm test` to verify all tests pass (235 tests, 13 files)
-- [ ] 7. Create PR referencing issue #65
+- [x] 7. Create PR referencing issue #65 -> https://github.com/dzianisv/opencode-manager/pull/66
+- [x] 8. Fix `bot.init()` bug: grammy requires `bot.init()` before accessing `bot.botInfo`
+  - Changed `bot.api.getMe()` to `await bot.init()` in `start()`
+  - Wrapped `bot.botInfo` access in `getStatus()` with try/catch
+  - Updated unit test mock to include `init` method
+  - Updated test assertion from `getMe` to `init`
+  - All 235 tests pass

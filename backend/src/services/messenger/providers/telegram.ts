@@ -124,8 +124,8 @@ export class TelegramProvider implements Channel {
     })
 
     try {
-      const me = await this.bot.api.getMe()
-      logger.info(`Telegram bot @${me.username} started successfully`)
+      await this.bot.init()
+      logger.info(`Telegram bot @${this.bot.botInfo.username} started successfully`)
       
       this.startedAt = Date.now()
       
@@ -151,11 +151,17 @@ export class TelegramProvider implements Channel {
   }
 
   getStatus(): ChannelStatus {
+    let botUsername: string | undefined
+    try {
+      botUsername = this.bot?.botInfo?.username
+    } catch {
+      botUsername = undefined
+    }
     return {
       running: this.isRunning(),
       connectedAt: this.startedAt ?? undefined,
       metadata: {
-        botUsername: this.bot?.botInfo?.username
+        botUsername
       }
     }
   }
