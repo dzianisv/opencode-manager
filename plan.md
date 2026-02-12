@@ -23,27 +23,39 @@ Pin the OpenCode installer to a known-good minimum version during container star
 
 ---
 
-# Plan: Fix Browser E2E Screencast (sparse GIF)
+# Plan: Fix Browser E2E Screencast - Actually Show All Test Steps
 
 ## Goal
 
-Make the browser E2E test (`test-browser.ts`) produce a rich screencast GIF instead of just 2 frames.
+Fix the browser E2E screencast GIF so it shows the full test flow (home → session → voice active → transcription → response) instead of just 2-3 visually identical frames.
 
 ## Problem
 
-The browser E2E test only takes screenshots at ~8 specific milestones (event-driven). After deduplication, only 2 frames survive, producing a poor demo GIF in PR comments.
+The AutoScreenshotter was added (commit 823cafc) but the deduplication in `VideoRecorder` is too aggressive:
+- Uses 95% similarity on 32x32 grayscale thumbnails with ±10 pixel tolerance
+- Subtle UI changes (text in chat, button states, spinners) are treated as identical
+- CI logs confirm: "Deduplicated: 17 → 3 screenshots" — 14 of 17 frames removed
+- Result: GIF shows ~2 unique frames + final hold, which is useless as a test record
 
-## Approach
+## Root Cause
 
-Add `AutoScreenshotter` (already used in `test-settings.ts`) to `test-browser.ts` with 1-second intervals. This captures the browser state continuously, producing many frames for a smooth GIF.
+The deduplication compares adjacent frames. During idle/waiting periods (which dominate runtime), auto-screenshots look nearly identical. Even meaningful transitions (voice button click, transcription appearing) differ by only a few pixels at 32x32 resolution, so they get removed too.
+
+## Fix
+
+1. **Never deduplicate manual keyframe screenshots** — screenshots from `takeScreenshot()` represent meaningful test milestones and must always be kept
+2. **Reduce deduplication aggressiveness** — lower threshold and/or increase comparison resolution
+3. **Add text annotations** to screenshots showing the current test step, making visually similar frames distinct
 
 ## Steps
 
-- [x] Import `AutoScreenshotter` from `video-recorder.ts`
-- [x] Start auto-screenshotter after first page creation (1s interval)
-- [x] Handle page swap mid-test (stop old, start new screenshotter)
-- [x] Stop screenshotter in `finally` block before GIF creation
-- [ ] Commit and push to trigger CI
+- [x] Analyze the problem (dedup too aggressive, 17→3 frames in CI)
+- [x] Read VideoRecorder deduplication code
+- [x] Modify VideoRecorder to support "keyframe" screenshots that skip deduplication
+- [x] Add step name annotations to screenshots via ffmpeg text overlay
+- [x] Lower similarity threshold for auto screenshots (0.95 → 0.85)
+- [x] Test locally to verify GIF shows full flow (22→7 frames, 6 keyframes preserved)
+- [ ] Commit and push
 
 ---
 
@@ -59,7 +71,7 @@ Duplicate cloudflared processes can start without coordination, causing the tunn
 
 ## Approach
 
-Add startup cleanup for orphaned cloudflared processes, wait for prior tunnel shutdown, and run a watchdog to restart the tunnel after consecutive failed health checks.
+Add startup cleanup for orphaned cloudflared processes, wait for prior tunnel shutdown, and run a watchdog to monitor tunnel health and restart on failure.
 
 ## Steps
 
