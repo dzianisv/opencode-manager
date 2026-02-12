@@ -26,27 +26,33 @@ export function createTelegramRoutes(db: Database) {
 
   app.post('/start', async (c) => {
     try {
-      const body = await c.req.json()
-      const parsed = StartBotSchema.safeParse(body)
-      
-      const channel = channelRegistry.get('telegram')
-      if (!channel) {
-          return c.json({ error: 'Telegram channel not registered' }, 500)
+      let token: string | undefined
+
+      try {
+        const body = await c.req.json()
+        const parsed = StartBotSchema.safeParse(body)
+        if (parsed.success) {
+          token = parsed.data.token
+        }
+      } catch {
+        // No body or invalid JSON — fall through to env token
       }
 
-      // Cast to specific provider to access specific start method signature if needed
-      const telegramProvider = channel as TelegramProvider
-
-      if (!parsed.success) {
-        const token = process.env.TELEGRAM_BOT_TOKEN
+      if (!token) {
+        token = process.env.TELEGRAM_BOT_TOKEN
         if (!token) {
           return c.json({ error: 'No token provided and TELEGRAM_BOT_TOKEN not set' }, 400)
         }
-        await telegramProvider.start(token)
-      } else {
-        await telegramProvider.start(parsed.data.token)
       }
-      
+
+      const channel = channelRegistry.get('telegram')
+      if (!channel) {
+        return c.json({ error: 'Telegram channel not registered' }, 500)
+      }
+
+      const telegramProvider = channel as TelegramProvider
+      await telegramProvider.start(token)
+
       return c.json({ success: true, status: channel.getStatus() })
     } catch (error) {
       logger.error('Failed to start Telegram bot:', error)

@@ -1,0 +1,1 @@
+export { chunkText } from './text'

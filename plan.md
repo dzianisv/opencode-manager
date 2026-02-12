@@ -1,39 +1,48 @@
-# Plan: Tunnel Resilience - Circuit Breaker, Reachability Check, PID Guard, Watchdog Improvements
+# Plan: Telegram Test Coverage & Code Quality
 
 ## Goal
 
-Prevent Cloudflare tunnel failures from persisting undetected. Address all known failure modes: infinite restart loops, unverified URLs, dual-instance conflicts, and premature process kills.
+Add comprehensive test coverage for the Telegram/Messenger integration and fix code quality issues: duplicate `chunkText()`, unused `messageQueue` field.
 
-## Issue: #62
-
-## Problem
-
-The tunnel watchdog has multiple failure modes:
-1. "Tunnel not found" causes infinite restart loop (cloudflared retries forever, watchdog kills & restarts forever)
-2. No URL reachability check after startup (regex match trusted blindly)
-3. No instance guard (two opencode-manager processes fight over port 5001 via launchd KeepAlive)
-4. Watchdog doesn't re-check before killing (tunnel may have recovered)
+## Issue: #65
+## Branch: feature/issue-65-telegram-test-coverage
 
 ## Steps
 
-- [x] Create GitHub issue #62
-- [x] Create branch fix/tunnel-resilience-62
-- [ ] 1. Circuit breaker + error detection
-  - [ ] Parse cloudflared stderr for fatal errors ("Unauthorized", "Tunnel not found")
-  - [ ] Set a `fatalError` flag on the tunnel process when detected
-  - [ ] Track consecutive restart failures in watchdog state
-  - [ ] After MAX_TUNNEL_RESTARTS (5) consecutive failures, stop retrying, log clear error
-  - [ ] Reset counter when a restart succeeds (ha_connections > 0)
-- [ ] 2. URL reachability check after start
-  - [ ] After startCloudflaredTunnel() gets URL, HTTP HEAD to verify
-  - [ ] Retry up to 3 times with 2s backoff
-  - [ ] Only publish to endpoints.json after verification
-- [ ] 3. Lock file / PID guard
-  - [ ] Write PID lock file (~/.local/run/opencode-manager/manager.pid) on startup
-  - [ ] Check lock file before starting; if PID alive, warn and exit
-  - [ ] Clean up lock file on exit (SIGINT/SIGTERM handler)
-- [ ] 4. Watchdog recovery improvements
-  - [ ] Re-check ha_connections immediately before killing cloudflared
-  - [ ] Add ±5s jitter to watchdog interval to desync from launchd ThrottleInterval (30s)
-- [ ] Run tests (pnpm test)
-- [ ] Create PR, verify CI
+- [x] 1. Extract duplicate `chunkText()` to shared utility
+  - Create `shared/src/utils/text.ts` with `chunkText()` function
+  - Export from `shared/src/index.ts`
+  - Update `backend/src/services/messenger/providers/telegram.ts` to import from shared
+  - Update `backend/src/services/messenger/service.ts` to import from shared
+- [x] 2. Remove unused `messageQueue` field from `TelegramProvider`
+  - Delete line 63: `private messageQueue: Map<string, Promise<void>> = new Map()`
+- [x] 3. Create `backend/test/services/channel-registry.test.ts`
+  - register/unregister channels
+  - get/getAll/getAllIds
+  - startAll/stopAll (with mock channels)
+  - start/stop individual channels
+  - getStatus/getAllStatuses
+  - send() routing
+  - onMessage/removeMessageHandler
+  - Message broadcast from channel to registry handlers
+- [x] 4. Create `backend/test/services/messenger-service.test.ts`
+  - isAllowed() authorization logic (empty allowlist = allow all, populated = check)
+  - addToAllowlist/removeFromAllowlist
+  - getAllSessions/getAllowlist
+  - deleteSession
+  - seedAllowlistFromEnv
+  - getOrCreateSession (mocked OpenCode API)
+  - handleMessage flow (authorized vs unauthorized, with/without text)
+  - sendToOpenCode SSE parsing (mocked fetch)
+- [x] 5. Create `scripts/test-telegram.ts` E2E integration test
+  - Tests API endpoints: GET /api/telegram/status, GET /api/telegram/sessions, etc.
+  - Tests allowlist CRUD via API
+  - Tests bot start/stop lifecycle (gracefully handles invalid tokens)
+- [x] 6. Run `pnpm test` to verify all tests pass (235 tests, 13 files)
+- [x] 7. Create PR referencing issue #65 -> https://github.com/dzianisv/opencode-manager/pull/66
+- [x] 8. Fix `bot.init()` bug: grammy requires `bot.init()` before accessing `bot.botInfo`
+  - Changed `bot.api.getMe()` to `await bot.init()` in `start()`
+  - Wrapped `bot.botInfo` access in `getStatus()` with try/catch
+  - Updated unit test mock to include `init` method
+  - Updated test assertion from `getMe` to `init`
+  - All 235 tests pass
