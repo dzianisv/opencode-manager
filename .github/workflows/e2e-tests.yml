@@ -381,6 +381,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -486,6 +491,141 @@ jobs:
               repo: repo.repo,
               issue_number: context.issue.number,
               body: `### ⚙️ Settings E2E Test Recording\n\n![Screencast](${imageUrl})\n\n_Run #${context.runId} | Commit ${context.sha.substring(0, 7)}_`
+            });
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs opencode-manager
+
+  push-browser-e2e-tests:
+    name: Push Browser E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (slim)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: opencode-manager:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: runner-slim
+
+      - name: Start container
+        run: |
+          docker run -d --name opencode-manager \
+            -p 5003:5003 \
+            opencode-manager:test
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Puppeteer browser
+        run: npx puppeteer browsers install chrome
+
+      - name: Wait for service to be ready
+        run: |
+          echo "Waiting for OpenCode Manager to be ready..."
+          for i in {1..90}; do
+            if curl -sf http://localhost:5003/api/health | grep -q '"status":"healthy"'; then
+              echo "Service is healthy!"
+              break
+            fi
+            if [ $i -eq 90 ]; then
+              echo "Service failed to become healthy"
+              docker logs opencode-manager
+              exit 1
+            fi
+            echo "Attempt $i/90 - waiting..."
+            sleep 2
+          done
+
+      - name: Run Push Browser E2E Tests
+        run: bun run scripts/test-push-browser.ts --url http://localhost:5003
+        env:
+          CI: true
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: push-browser-e2e-recording
+          path: .test/
+          retention-days: 7
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+      - name: Prepare Screencast for Comment
+        if: always()
+        id: prepare-screencast
+        run: |
+          GIF_PATH=$(find .test -name "screencast.gif" | head -n 1)
+          if [ -f "$GIF_PATH" ]; then
+            echo "Found screencast at $GIF_PATH"
+            mkdir -p screencasts
+            NEW_NAME="screencast-push-${{ github.run_id }}-${{ github.event.pull_request.number || 'manual' }}.gif"
+            cp "$GIF_PATH" "screencasts/$NEW_NAME"
+            echo "filename=$NEW_NAME" >> $GITHUB_OUTPUT
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "No screencast found"
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Screencast to Assets Branch
+        if: always() && steps.prepare-screencast.outputs.found == 'true'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./screencasts
+          publish_branch: test-assets
+          keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Comment PR with Screencast
+        if: always() && steps.prepare-screencast.outputs.found == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const filename = '${{ steps.prepare-screencast.outputs.filename }}';
+            const repo = context.repo;
+            const imageUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/test-assets/${filename}`;
+            
+            await github.rest.issues.createComment({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number: context.issue.number,
+              body: `### 🔔 Push Browser E2E Test Recording\n\n![Screencast](${imageUrl})\n\n_Run #${context.runId} | Commit ${context.sha.substring(0, 7)}_`
             });
 
       - name: Container logs on failure

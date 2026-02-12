@@ -23,8 +23,18 @@
  */
 
 import puppeteer, { Browser, Page } from 'puppeteer'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import {
+  createTestOutputDir,
+  takeScreenshot,
+  log,
+  success,
+  fail,
+  info,
+  createScreencast,
+  AutoScreenshotter,
+} from './lib/browser-test-utils'
 
 interface TestConfig {
   baseUrl: string
@@ -44,15 +54,7 @@ interface TestResult {
   error?: string
 }
 
-function createTestOutputDir(): { outputDir: string; screenshotsDir: string } {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const outputDir = join(process.cwd(), '.test', `PushBrowserE2E-${timestamp}`)
-  const screenshotsDir = join(outputDir, 'screenshots')
-  mkdirSync(screenshotsDir, { recursive: true })
-  return { outputDir, screenshotsDir }
-}
-
-const testDirs = createTestOutputDir()
+const testDirs = createTestOutputDir('PushBrowserE2E')
 
 const DEFAULT_CONFIG: TestConfig = {
   baseUrl: process.env.OPENCODE_URL || 'http://localhost:5001',
@@ -62,34 +64,6 @@ const DEFAULT_CONFIG: TestConfig = {
   timeout: 60000,
   outputDir: testDirs.outputDir,
   screenshotsDir: testDirs.screenshotsDir,
-}
-
-function log(message: string, indent = 0) {
-  const prefix = '  '.repeat(indent)
-  const timestamp = new Date().toISOString().slice(11, 19)
-  console.log(`[${timestamp}] ${prefix}${message}`)
-}
-
-function success(message: string) {
-  log(`PASS ${message}`)
-}
-
-function fail(message: string) {
-  log(`FAIL ${message}`)
-}
-
-function info(message: string) {
-  log(`INFO ${message}`)
-}
-
-let screenshotCounter = 0
-
-async function takeScreenshot(page: Page, name: string, screenshotsDir: string): Promise<void> {
-  screenshotCounter++
-  const filename = `${String(screenshotCounter).padStart(2, '0')}_${name.replace(/\s+/g, '_')}.png`
-  const filepath = join(screenshotsDir, filename)
-  await page.screenshot({ path: filepath, fullPage: false })
-  log(`Screenshot: ${filename}`, 1)
 }
 
 async function runBrowserPushTest(config: TestConfig): Promise<boolean> {
@@ -102,6 +76,7 @@ async function runBrowserPushTest(config: TestConfig): Promise<boolean> {
   console.log('='.repeat(60) + '\n')
 
   let browser: Browser | null = null
+  let autoScreenshotter: AutoScreenshotter | null = null
   const results: TestResult[] = []
 
   try {
@@ -142,6 +117,14 @@ async function runBrowserPushTest(config: TestConfig): Promise<boolean> {
     const page = await browser.newPage()
     await page.setViewport({ width: 1280, height: 800 })
     page.setDefaultTimeout(config.timeout)
+
+    autoScreenshotter = new AutoScreenshotter({
+      browser,
+      page,
+      screenshotsDir: config.screenshotsDir,
+      intervalMs: 1000,
+    })
+    autoScreenshotter.start()
 
     if (config.username && config.password) {
       await page.setExtraHTTPHeaders({
@@ -450,6 +433,12 @@ async function runBrowserPushTest(config: TestConfig): Promise<boolean> {
     fail(`Test error: ${error instanceof Error ? error.message : error}`)
     return false
   } finally {
+    if (autoScreenshotter) {
+      autoScreenshotter.stop()
+    }
+
+    await createScreencast(config.outputDir)
+
     if (browser) {
       await browser.close()
     }
