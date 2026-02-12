@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import puppeteer, { Browser, Page } from 'puppeteer'
+import { join } from 'path'
 import {
   createTestOutputDir,
   takeScreenshot,
