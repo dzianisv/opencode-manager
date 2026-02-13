@@ -55,6 +55,9 @@ The deduplication compares adjacent frames. During idle/waiting periods (which d
 - [x] Add step name annotations to screenshots via ffmpeg text overlay
 - [x] Lower similarity threshold for auto screenshots (0.95 → 0.85)
 - [x] Test locally to verify GIF shows full flow (22→7 frames, 6 keyframes preserved)
+- [x] Update local E2E runner to start backend/frontend on alternate ports
+- [x] Disable screencast deduplication for UI E2E tests
+- [x] Run local UI E2E tests (no Docker) and capture artifacts
 - [ ] Commit and push
 
 ---

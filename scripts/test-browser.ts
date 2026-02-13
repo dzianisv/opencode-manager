@@ -1163,7 +1163,7 @@ async function runBrowserTest(config: TestConfig): Promise<boolean> {
       height: 800,
       outputName: "screencast.gif",
       finalFrameSeconds: 3,
-      deduplicate: true,
+      deduplicate: false,
     });
 
     if (gifResult.success) {

@@ -304,7 +304,19 @@ bun run scripts/test-browser.ts --web-audio
 6. Wait for OpenCode response
 7. Verify response content
 
-### 7. Unit Tests
+### 7. Local UI E2E (No Docker)
+
+Run Settings + Browser E2E against a locally started backend/frontend on alternate ports:
+
+```bash
+bun run scripts/run-local-ui-e2e.ts --backend-port 5101 --frontend-port 5173 --user admin --pass PASSWORD
+```
+
+**Notes:**
+- Uses `PORT`, `OPENCODE_SERVER_PORT`, `WHISPER_PORT`, `COQUI_PORT` overrides to avoid the main deployment
+- Frontend runs on `5173` and proxies through the backend dev server
+
+### 8. Unit Tests
 
 ```bash
 # Run all backend tests

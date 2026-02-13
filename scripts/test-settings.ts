@@ -872,7 +872,7 @@ class SettingsTest {
       outputName: 'screencast.gif',
       secondsPerFrame: 0.5,
       finalFrameSeconds: 2,
-      deduplicate: true,
+      deduplicate: false,
       width: 1200,
       height: 800
     })
