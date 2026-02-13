@@ -117,6 +117,20 @@ describe('Telegram Routes', () => {
       delete process.env.TELEGRAM_BOT_TOKEN
     })
 
+    it('should use env token when no body is sent', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'env-token'
+      ;(channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
+      
+      const res = await app.request('/api/telegram/start', {
+        method: 'POST',
+      })
+      
+      expect(res.status).toBe(200)
+      expect(mockTelegramChannel.start).toHaveBeenCalledWith('env-token')
+      
+      delete process.env.TELEGRAM_BOT_TOKEN
+    })
+
     it('should return 400 if no token available', async () => {
       delete process.env.TELEGRAM_BOT_TOKEN
       ;(channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
@@ -125,6 +139,17 @@ describe('Telegram Routes', () => {
         method: 'POST',
         body: JSON.stringify({}),
         headers: { 'Content-Type': 'application/json' }
+      })
+      
+      expect(res.status).toBe(400)
+    })
+
+    it('should return 400 if no body and no env token', async () => {
+      delete process.env.TELEGRAM_BOT_TOKEN
+      ;(channelRegistry.get as Mock).mockReturnValue(mockTelegramChannel)
+      
+      const res = await app.request('/api/telegram/start', {
+        method: 'POST',
       })
       
       expect(res.status).toBe(400)

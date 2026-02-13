@@ -27,6 +27,19 @@ function createMockProcess() {
   return proc
 }
 
+function createSuccessFetchMock(tunnelUrl?: string) {
+  return vi.fn().mockImplementation((url: string | URL | Request) => {
+    const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+    if (urlStr.includes('/metrics')) {
+      return Promise.reject(new Error('no metrics server'))
+    }
+    if (tunnelUrl && urlStr.startsWith(tunnelUrl)) {
+      return Promise.resolve({ ok: true, status: 200 })
+    }
+    return Promise.resolve({ ok: true, status: 200 })
+  })
+}
+
 describe('TunnelService', () => {
   let TunnelService: typeof import('../../src/services/tunnel-service').TunnelService
   let service: InstanceType<typeof TunnelService>
@@ -34,8 +47,11 @@ describe('TunnelService', () => {
   let execSyncSpy: ReturnType<typeof vi.spyOn>
   let existsSyncSpy: ReturnType<typeof vi.spyOn>
   let writeFileSyncSpy: ReturnType<typeof vi.spyOn>
+  let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
+    originalFetch = global.fetch
+
     spawnSpy = vi.spyOn(childProcess, 'spawn').mockReturnValue(createMockProcess() as any)
     execSyncSpy = vi.spyOn(childProcess, 'execSync').mockImplementation(() => { throw new Error('no pgrep') })
     vi.spyOn(childProcess, 'spawnSync').mockReturnValue({ status: 0 } as any)
@@ -59,13 +75,14 @@ describe('TunnelService', () => {
 
   afterEach(async () => {
     try { await service.stop() } catch {}
+    global.fetch = originalFetch
     vi.restoreAllMocks()
   })
 
   async function startTunnel(port?: number, url = 'https://test.trycloudflare.com'): Promise<ReturnType<typeof createMockProcess>> {
     const mockProc = createMockProcess()
     spawnSpy.mockReturnValue(mockProc as any)
-    global.fetch = vi.fn().mockRejectedValue(new Error('not reachable'))
+    global.fetch = createSuccessFetchMock(url)
 
     const startPromise = service.start(port)
     await new Promise(r => setTimeout(r, 50))
@@ -201,12 +218,13 @@ describe('TunnelService', () => {
     })
 
     it('should parse HA connections from metrics', async () => {
+      const tunnelUrl = 'https://metrics-test.trycloudflare.com'
       const mockProc = createMockProcess()
       spawnSpy.mockReturnValue(mockProc as any)
 
       global.fetch = vi.fn().mockImplementation((url: string | URL | Request) => {
         const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
-        if (urlStr.includes('/metrics') && urlStr.includes('20241')) {
+        if (urlStr.includes('/metrics')) {
           return Promise.resolve({
             ok: true,
             text: () => Promise.resolve(
@@ -215,12 +233,17 @@ describe('TunnelService', () => {
             ),
           })
         }
-        return Promise.reject(new Error('not reachable'))
+        if (urlStr.startsWith(tunnelUrl)) {
+          return Promise.resolve({ ok: true, status: 200 })
+        }
+        return Promise.resolve({ ok: true, status: 200 })
       })
 
       const startPromise = service.start()
       await new Promise(r => setTimeout(r, 50))
-      mockProc.stderr.emit('data', Buffer.from('https://metrics-test.trycloudflare.com'))
+      mockProc.stderr.emit('data', Buffer.from(
+        `INF Registered tunnel connection connIndex=0 url=${tunnelUrl}`
+      ))
       await startPromise
 
       const status = await service.getDetailedStatus()

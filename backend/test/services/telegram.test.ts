@@ -7,6 +7,7 @@ const mockBotInstance = {
     getMe: vi.fn().mockResolvedValue({ username: 'test_bot' }),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }),
   },
+  init: vi.fn().mockResolvedValue(undefined),
   start: vi.fn(),
   stop: vi.fn(),
   token: 'test-token',
@@ -101,10 +102,10 @@ describe('TelegramProvider', () => {
       expect(mockBotInstance.catch).toHaveBeenCalledWith(expect.any(Function))
     })
 
-    it('should call getMe to verify token', async () => {
+    it('should call init to verify token', async () => {
       await provider.start('test-token')
       
-      expect(mockBotInstance.api.getMe).toHaveBeenCalled()
+      expect(mockBotInstance.init).toHaveBeenCalled()
     })
 
     it('should stop existing bot before starting new one', async () => {

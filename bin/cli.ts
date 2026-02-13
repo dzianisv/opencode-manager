@@ -19,6 +19,7 @@ const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
 const CLOUDFLARED_LOG_FILE = path.join(CONFIG_DIR, "cloudflared.log");
 const TUNNEL_STATE_FILE = path.join(CONFIG_DIR, "tunnel.json");
 const TUNNEL_PID_FILE = path.join(CONFIG_DIR, "tunnel.pid");
+const LOCK_FILE = path.join(CONFIG_DIR, "manager.lock");
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 const MAX_LOG_BACKUPS = 3;
 
@@ -41,6 +42,34 @@ function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
+}
+
+function acquireLock(): boolean {
+  ensureConfigDir();
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, "utf8").trim();
+      const lockedPid = parseInt(content);
+      if (!isNaN(lockedPid) && isProcessRunning(lockedPid) && lockedPid !== process.pid) {
+        return false;
+      }
+    }
+    fs.writeFileSync(LOCK_FILE, process.pid.toString(), { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseLock(): void {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, "utf8").trim();
+      if (parseInt(content) === process.pid) {
+        fs.unlinkSync(LOCK_FILE);
+      }
+    }
+  } catch {}
 }
 
 function clearTunnelState(): void {
@@ -364,6 +393,30 @@ function cleanupManagedPorts(): void {
   }
 }
 
+function getProcessCommandOnPort(port: number): string | null {
+  try {
+    const pidOutput = execSync(`lsof -ti:${port}`, { encoding: "utf8" }).trim();
+    if (!pidOutput) return null;
+    const pid = parseInt(pidOutput.split("\n")[0]);
+    if (isNaN(pid)) return null;
+    const cmd = execSync(`ps -p ${pid} -o command=`, { encoding: "utf8" }).trim();
+    return cmd;
+  } catch {
+    return null;
+  }
+}
+
+function isOwnedByManager(port: number): boolean {
+  const cmd = getProcessCommandOnPort(port);
+  if (!cmd) return false;
+  return (
+    cmd.includes("opencode-manager") ||
+    cmd.includes("cli.ts") ||
+    cmd.includes("backend/dist/index.js") ||
+    cmd.includes("backend/src/index.ts")
+  );
+}
+
 async function startOpenCodeServer(port: number): Promise<boolean> {
   if (isPortInUse(port)) {
     console.log(`\n⚠️  Port ${port} is already in use`);
@@ -506,14 +559,20 @@ async function commandStart(args: string[]): Promise<void> {
   console.log("║      OpenCode Manager - Start         ║");
   console.log("╚═══════════════════════════════════════╝");
 
-  // Rotate log files if they're too large
+  if (!acquireLock()) {
+    const lockContent = fs.existsSync(LOCK_FILE) ? fs.readFileSync(LOCK_FILE, "utf8").trim() : "unknown";
+    console.error(`\n❌ Another opencode-manager instance is already running (PID ${lockContent})`);
+    console.error("   Kill the existing process first or remove the lock file:");
+    console.error(`   rm ${LOCK_FILE}`);
+    process.exit(1);
+  }
+
   ensureConfigDir();
   rotateLogFile(path.join(CONFIG_DIR, "stdout.log"));
   rotateLogFile(path.join(CONFIG_DIR, "stderr.log"));
   rotateLogFile(CLOUDFLARED_LOG_FILE);
 
   const auth = noAuth ? { username: "", password: "" } : getOrCreateAuth();
-
   let opencodePort: number | undefined;
 
   if (hasClient) {
@@ -536,6 +595,12 @@ async function commandStart(args: string[]): Promise<void> {
   }
 
   console.log("\n🧹 Cleaning up orphaned processes...");
+  if (isPortInUse(port) && !isOwnedByManager(port)) {
+    const cmd = getProcessCommandOnPort(port);
+    console.error(`\n⚠️  Port ${port} is in use by a non-manager process:`);
+    console.error(`   ${cmd}`);
+    console.error("   Proceeding will kill this process.");
+  }
   cleanupManagedPorts();
 
   const processes: ReturnType<typeof spawn>[] = [];
@@ -549,7 +614,6 @@ async function commandStart(args: string[]): Promise<void> {
     process.exit(1);
   }
   console.log("✓ Backend is ready!");
-
   const localUrl = `http://localhost:${port}`;
   let tunnelUrl: string | undefined;
   let tunnelUrlWithAuth: string | undefined;
@@ -590,6 +654,7 @@ async function commandStart(args: string[]): Promise<void> {
 
   const cleanup = () => {
     console.log("\n\n🛑 Shutting down...");
+    releaseLock();
     processes.forEach((p) => {
       try {
         p.kill("SIGTERM");
