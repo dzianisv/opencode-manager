@@ -4,14 +4,15 @@ import { whisperServerManager } from '../services/whisper'
 import { coquiServerManager } from '../services/coqui'
 import { chatterboxServerManager } from '../services/chatterbox'
 import { opencodeServerManager } from '../services/opencode-single-server'
+import { tunnelService } from '../services/tunnel-service'
 import { SettingsService } from '../services/settings'
 import { logger } from '../utils/logger'
 import type { Database } from 'bun:sqlite'
 
-type ServiceName = 'stt' | 'tts' | 'opencode'
+type ServiceName = 'stt' | 'tts' | 'opencode' | 'tunnel'
 
 const ServiceParamSchema = z.object({
-  service: z.enum(['stt', 'tts', 'opencode', 'all'])
+  service: z.enum(['stt', 'tts', 'opencode', 'tunnel', 'all'])
 })
 
 interface ServiceStatus {
@@ -87,6 +88,19 @@ async function getServiceStatus(service: ServiceName, db: Database): Promise<Ser
         }
       }
     }
+    case 'tunnel': {
+      const tunnelStatus = tunnelService.getStatus()
+      return {
+        name: 'tunnel',
+        status: tunnelStatus.running ? 'running' : 'stopped',
+        error: tunnelStatus.error || undefined,
+        details: {
+          url: tunnelStatus.url,
+          pid: tunnelStatus.pid,
+          watchdog: tunnelStatus.watchdog
+        }
+      }
+    }
     default:
       return { name: service, status: 'unknown' }
   }
@@ -117,6 +131,9 @@ async function startService(service: ServiceName, db: Database): Promise<{ succe
       }
       case 'opencode':
         await opencodeServerManager.start()
+        return { success: true }
+      case 'tunnel':
+        await tunnelService.start()
         return { success: true }
       default:
         return { success: false, error: `Unknown service: ${service}` }
@@ -152,6 +169,9 @@ async function stopService(service: ServiceName, db: Database): Promise<{ succes
       }
       case 'opencode':
         await opencodeServerManager.stop()
+        return { success: true }
+      case 'tunnel':
+        await tunnelService.stop()
         return { success: true }
       default:
         return { success: false, error: `Unknown service: ${service}` }
@@ -194,6 +214,9 @@ async function restartService(service: ServiceName, db: Database): Promise<{ suc
       case 'opencode':
         await opencodeServerManager.restart()
         return { success: true }
+      case 'tunnel':
+        await tunnelService.restart()
+        return { success: true }
       default:
         return { success: false, error: `Unknown service: ${service}` }
     }
@@ -207,7 +230,7 @@ export function createServicesRoutes(db: Database) {
   const app = new Hono()
 
   app.get('/', async (c) => {
-    const services: ServiceName[] = ['stt', 'tts', 'opencode']
+    const services: ServiceName[] = ['stt', 'tts', 'opencode', 'tunnel']
     const statuses = await Promise.all(services.map(s => getServiceStatus(s, db)))
     return c.json({ services: statuses })
   })
@@ -217,11 +240,11 @@ export function createServicesRoutes(db: Database) {
     const validation = ServiceParamSchema.safeParse({ service })
     
     if (!validation.success) {
-      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'all'] }, 400)
+      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'tunnel', 'all'] }, 400)
     }
     
     if (service === 'all') {
-      const services: ServiceName[] = ['stt', 'tts', 'opencode']
+      const services: ServiceName[] = ['stt', 'tts', 'opencode', 'tunnel']
       const statuses = await Promise.all(services.map(s => getServiceStatus(s, db)))
       return c.json({ services: statuses })
     }
@@ -235,11 +258,11 @@ export function createServicesRoutes(db: Database) {
     const validation = ServiceParamSchema.safeParse({ service })
     
     if (!validation.success) {
-      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'all'] }, 400)
+      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'tunnel', 'all'] }, 400)
     }
     
     if (service === 'all') {
-      const services: ServiceName[] = ['stt', 'tts', 'opencode']
+      const services: ServiceName[] = ['stt', 'tts', 'opencode', 'tunnel']
       const results = await Promise.all(services.map(async s => ({
         service: s,
         ...await startService(s, db)
@@ -257,11 +280,11 @@ export function createServicesRoutes(db: Database) {
     const validation = ServiceParamSchema.safeParse({ service })
     
     if (!validation.success) {
-      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'all'] }, 400)
+      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'tunnel', 'all'] }, 400)
     }
     
     if (service === 'all') {
-      const services: ServiceName[] = ['stt', 'tts', 'opencode']
+      const services: ServiceName[] = ['stt', 'tts', 'opencode', 'tunnel']
       const results = await Promise.all(services.map(async s => ({
         service: s,
         ...await stopService(s, db)
@@ -279,11 +302,11 @@ export function createServicesRoutes(db: Database) {
     const validation = ServiceParamSchema.safeParse({ service })
     
     if (!validation.success) {
-      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'all'] }, 400)
+      return c.json({ error: 'Invalid service name', valid: ['stt', 'tts', 'opencode', 'tunnel', 'all'] }, 400)
     }
     
     if (service === 'all') {
-      const services: ServiceName[] = ['stt', 'tts', 'opencode']
+      const services: ServiceName[] = ['stt', 'tts', 'opencode', 'tunnel']
       const results = await Promise.all(services.map(async s => ({
         service: s,
         ...await restartService(s, db)

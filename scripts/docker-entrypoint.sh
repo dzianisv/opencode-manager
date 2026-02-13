@@ -76,15 +76,16 @@ install_from_fork() {
 }
 
 install_official() {
-  echo "Installing official OpenCode..."
+  echo "Installing official OpenCode (version: $OPENCODE_INSTALL_VERSION)..."
   # Unset GITHUB_ACTIONS to prevent the install script from trying to write to $GITHUB_PATH
   # which doesn't exist inside Docker containers even when running in CI
-  GITHUB_ACTIONS= curl -fsSL https://opencode.ai/install | bash
+  VERSION="$OPENCODE_INSTALL_VERSION" GITHUB_ACTIONS= curl -fsSL https://opencode.ai/install | bash
 }
 
 echo "Checking OpenCode installation..."
 
 MIN_OPENCODE_VERSION="1.0.137"
+OPENCODE_INSTALL_VERSION="${OPENCODE_INSTALL_VERSION:-$MIN_OPENCODE_VERSION}"
 
 version_gte() {
   printf '%s\n%s\n' "$2" "$1" | sort -V -C

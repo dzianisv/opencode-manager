@@ -38,6 +38,7 @@ import { chatterboxServerManager } from './services/chatterbox'
 import { coquiServerManager } from './services/coqui'
 import { startGlobalSSEListener, stopGlobalSSEListener } from './services/global-sse'
 import { autoPruneOnStartup } from './services/session-prune'
+import { tunnelService } from './services/tunnel-service'
 import { startLogMaintenance } from './utils/log-maintenance'
 import { 
   getWorkspacePath, 
@@ -361,7 +362,20 @@ try {
     logger.warn('TTS server failed to start:', error)
   }
 
-  // Start log maintenance routine
+  if (process.env.TUNNEL_ENABLED === 'true') {
+    try {
+      await tunnelService.start(PORT)
+      const status = tunnelService.getStatus()
+      if (status.url) {
+        logger.info(`Cloudflare tunnel running: ${status.url}`)
+      } else {
+        logger.warn('Tunnel started but no URL obtained')
+      }
+    } catch (error) {
+      logger.warn('Cloudflare tunnel failed to start:', error)
+    }
+  }
+
   startLogMaintenance()
 
   try {
@@ -531,6 +545,8 @@ const shutdown = async (signal: string) => {
     logger.info('Scheduler service stopped')
     await messengerService.stop()
     logger.info('Messenger service stopped')
+    await tunnelService.stop()
+    logger.info('Tunnel service stopped')
     await whisperServerManager.stop()
     logger.info('Whisper server stopped')
     await chatterboxServerManager.stop()
