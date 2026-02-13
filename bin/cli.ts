@@ -1534,6 +1534,15 @@ async function commandHealth(args: string[]): Promise<void> {
   // YAML output
   console.log(`status: ${overallStatus}`);
   console.log(`port: ${port}`);
+  const localBaseUrl = `http://127.0.0.1:${port}`
+  if (auth?.username && auth?.password) {
+    const urlObj = new URL(localBaseUrl)
+    urlObj.username = auth.username
+    urlObj.password = auth.password
+    console.log(`local_url: ${urlObj.toString()}`)
+  } else {
+    console.log(`local_url: ${localBaseUrl}`)
+  }
   console.log("");
   console.log("backend:");
   console.log(`  status: ${backendStatus}`);
