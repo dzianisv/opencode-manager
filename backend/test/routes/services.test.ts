@@ -64,10 +64,20 @@ vi.mock('../../src/services/opencode-single-server', () => ({
   }
 }))
 
+vi.mock('../../src/services/tunnel-service', () => ({
+  tunnelService: {
+    getStatus: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    restart: vi.fn(),
+  }
+}))
+
 import { createServicesRoutes } from '../../src/routes/services'
 import { whisperServerManager } from '../../src/services/whisper'
 import { coquiServerManager } from '../../src/services/coqui'
 import { opencodeServerManager } from '../../src/services/opencode-single-server'
+import { tunnelService } from '../../src/services/tunnel-service'
 
 describe('Services Routes', () => {
   let mockDb: any
@@ -103,6 +113,20 @@ describe('Services Routes', () => {
     (opencodeServerManager.start as any).mockResolvedValue(undefined);
     (opencodeServerManager.stop as any).mockResolvedValue(undefined);
     (opencodeServerManager.restart as any).mockResolvedValue(undefined);
+
+    (tunnelService.getStatus as any).mockReturnValue({
+      running: false,
+      url: null,
+      urlWithAuth: null,
+      pid: null,
+      haConnections: 0,
+      startedAt: null,
+      watchdog: { enabled: false, consecutiveFailures: 0, restartsInWindow: 0, halted: false },
+      error: null,
+    });
+    (tunnelService.start as any).mockResolvedValue(undefined);
+    (tunnelService.stop as any).mockResolvedValue(undefined);
+    (tunnelService.restart as any).mockResolvedValue(undefined);
     
     servicesApp = createServicesRoutes(mockDb);
   })
@@ -113,8 +137,8 @@ describe('Services Routes', () => {
       const data = await res.json()
 
       expect(res.status).toBe(200)
-      expect(data.services).toHaveLength(3)
-      expect(data.services.map((s: any) => s.name)).toEqual(['stt', 'tts', 'opencode'])
+      expect(data.services).toHaveLength(4)
+      expect(data.services.map((s: any) => s.name)).toEqual(['stt', 'tts', 'opencode', 'tunnel'])
     })
   })
 
@@ -149,12 +173,21 @@ describe('Services Routes', () => {
       expect(data.details.port).toBe(5551)
     })
 
+    it('should return tunnel service status', async () => {
+      const res = await servicesApp.request('/tunnel')
+      const data = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(data.name).toBe('tunnel')
+      expect(data.status).toBe('stopped')
+    })
+
     it('should return all services for /all', async () => {
       const res = await servicesApp.request('/all')
       const data = await res.json()
 
       expect(res.status).toBe(200)
-      expect(data.services).toHaveLength(3)
+      expect(data.services).toHaveLength(4)
     })
 
     it('should return error for invalid service', async () => {
@@ -194,13 +227,22 @@ describe('Services Routes', () => {
       expect(opencodeServerManager.stop).toHaveBeenCalled()
     })
 
+    it('should stop tunnel service', async () => {
+      const res = await servicesApp.request('/tunnel/stop', { method: 'POST' })
+      const data = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(data.success).toBe(true)
+      expect(tunnelService.stop).toHaveBeenCalled()
+    })
+
     it('should stop all services', async () => {
       const res = await servicesApp.request('/all/stop', { method: 'POST' })
       const data = await res.json()
 
       expect(res.status).toBe(200)
       expect(data.success).toBe(true)
-      expect(data.results).toHaveLength(3)
+      expect(data.results).toHaveLength(4)
     })
   })
 
@@ -231,6 +273,15 @@ describe('Services Routes', () => {
       expect(data.success).toBe(true)
       expect(opencodeServerManager.start).toHaveBeenCalled()
     })
+
+    it('should start tunnel service', async () => {
+      const res = await servicesApp.request('/tunnel/start', { method: 'POST' })
+      const data = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(data.success).toBe(true)
+      expect(tunnelService.start).toHaveBeenCalled()
+    })
   })
 
   describe('POST /:service/restart', () => {
@@ -253,13 +304,22 @@ describe('Services Routes', () => {
       expect(opencodeServerManager.restart).toHaveBeenCalled()
     })
 
+    it('should restart tunnel service', async () => {
+      const res = await servicesApp.request('/tunnel/restart', { method: 'POST' })
+      const data = await res.json()
+
+      expect(res.status).toBe(200)
+      expect(data.success).toBe(true)
+      expect(tunnelService.restart).toHaveBeenCalled()
+    })
+
     it('should restart all services', async () => {
       const res = await servicesApp.request('/all/restart', { method: 'POST' })
       const data = await res.json()
 
       expect(res.status).toBe(200)
       expect(data.success).toBe(true)
-      expect(data.results).toHaveLength(3)
+      expect(data.results).toHaveLength(4)
     })
   })
 

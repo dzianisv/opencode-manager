@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { tunnelService } from '../services/tunnel-service'
+import { logger } from '../utils/logger'
 
 interface TunnelMetrics {
   connected: boolean
@@ -14,16 +16,6 @@ interface TunnelMetrics {
   registrationLatencyMs: number | null
   metricsPort: number | null
   version: string | null
-}
-
-interface EndpointInfo {
-  type: 'tunnel' | 'local'
-  url: string
-  timestamp: string
-}
-
-interface EndpointsFile {
-  endpoints: EndpointInfo[]
 }
 
 async function parseCloudflaredMetrics(metricsPort: number): Promise<Partial<TunnelMetrics>> {
@@ -110,7 +102,7 @@ function getTunnelUrlFromEndpoints(): string | null {
   if (!existsSync(endpointsPath)) return null
   
   try {
-    const data = JSON.parse(readFileSync(endpointsPath, 'utf-8')) as EndpointsFile
+    const data = JSON.parse(readFileSync(endpointsPath, 'utf-8')) as { endpoints?: Array<{ type: string; url: string }> }
     const tunnelEndpoint = data.endpoints?.find(e => e.type === 'tunnel')
     if (tunnelEndpoint?.url) {
       const url = new URL(tunnelEndpoint.url)
@@ -152,42 +144,101 @@ export function createTunnelRoutes() {
   const app = new Hono()
 
   app.get('/status', async (c) => {
-    const metricsPort = await findMetricsPort()
+    const serviceStatus = await tunnelService.getDetailedStatus()
+    const metricsPort = serviceStatus.metricsPort || await findMetricsPort()
     const endpointUrl = getTunnelUrlFromEndpoints()
     
     if (!metricsPort) {
       return c.json({
-        connected: false,
-        url: endpointUrl,
+        connected: serviceStatus.running,
+        url: serviceStatus.url || endpointUrl,
         edgeLocation: null,
         edgeLocationFormatted: null,
-        haConnections: 0,
+        haConnections: serviceStatus.haConnections,
         totalRequests: 0,
         requestErrors: 0,
         responseCodes: {},
         registrationLatencyMs: null,
         metricsPort: null,
         version: null,
-        message: 'Cloudflare tunnel not running or metrics not available'
-      } satisfies TunnelMetrics & { edgeLocationFormatted: string | null, message: string })
+        managedBy: 'backend',
+        watchdog: serviceStatus.watchdog,
+        message: serviceStatus.running
+          ? 'Tunnel running but metrics not available'
+          : 'Cloudflare tunnel not running',
+      } satisfies TunnelMetrics & { edgeLocationFormatted: string | null; message: string; managedBy: string; watchdog: typeof serviceStatus.watchdog })
     }
 
     const metrics = await parseCloudflaredMetrics(metricsPort)
-    const url = metrics.url || endpointUrl
+    const url = metrics.url || serviceStatus.url || endpointUrl
     
     return c.json({
-      connected: (metrics.haConnections ?? 0) > 0,
+      connected: (metrics.haConnections ?? serviceStatus.haConnections) > 0,
       url,
       edgeLocation: metrics.edgeLocation || null,
       edgeLocationFormatted: formatEdgeLocation(metrics.edgeLocation || null),
-      haConnections: metrics.haConnections ?? 0,
+      haConnections: metrics.haConnections ?? serviceStatus.haConnections,
       totalRequests: metrics.totalRequests ?? 0,
       requestErrors: metrics.requestErrors ?? 0,
       responseCodes: metrics.responseCodes ?? {},
       registrationLatencyMs: metrics.registrationLatencyMs ?? null,
       metricsPort,
-      version: metrics.version || null
+      version: metrics.version || null,
+      managedBy: 'backend',
+      watchdog: serviceStatus.watchdog,
     })
+  })
+
+  app.post('/start', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { port?: number }
+      await tunnelService.start(body.port)
+      const status = await tunnelService.getDetailedStatus()
+      return c.json({
+        success: true,
+        url: status.url,
+        urlWithAuth: status.urlWithAuth,
+        pid: status.pid,
+      })
+    } catch (error) {
+      logger.error('Failed to start tunnel:', error)
+      return c.json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, 500)
+    }
+  })
+
+  app.post('/stop', async (c) => {
+    try {
+      await tunnelService.stop()
+      return c.json({ success: true })
+    } catch (error) {
+      logger.error('Failed to stop tunnel:', error)
+      return c.json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, 500)
+    }
+  })
+
+  app.post('/restart', async (c) => {
+    try {
+      await tunnelService.restart()
+      const status = await tunnelService.getDetailedStatus()
+      return c.json({
+        success: true,
+        url: status.url,
+        urlWithAuth: status.urlWithAuth,
+        pid: status.pid,
+      })
+    } catch (error) {
+      logger.error('Failed to restart tunnel:', error)
+      return c.json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, 500)
+    }
   })
 
   app.get('/logs', async (c) => {
@@ -207,7 +258,7 @@ export function createTunnelRoutes() {
       const content = readFileSync(logPath, 'utf-8')
       const allLines = content.split('\n').filter(line => line.trim())
       const totalLines = allLines.length
-      const requestedLines = Math.min(Math.max(1, lines), 1000) // Cap at 1000 lines
+      const requestedLines = Math.min(Math.max(1, lines), 1000)
       const returnedLines = allLines.slice(-requestedLines)
       
       return c.json({

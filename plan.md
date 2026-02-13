@@ -79,5 +79,44 @@ Add startup cleanup for orphaned cloudflared processes, wait for prior tunnel sh
 - [x] Add startup cleanup to terminate orphaned cloudflared processes
 - [x] Wait for previous tunnel PID to exit with SIGKILL fallback
 - [x] Add watchdog to monitor tunnel health and restart on failure
-- [ ] Validate by restarting with `--tunnel` and observing stable recovery
-- [ ] Commit and push
+- [x] Validate by restarting with `--tunnel` and observing stable recovery
+- [x] Commit and push
+
+---
+
+# Plan: Move Tunnel Watchdog from CLI to Backend Service (#67)
+
+## Goal
+
+Move the Cloudflare tunnel lifecycle (start, stop, watchdog) from `bin/cli.ts` into a proper backend service so it survives CLI crashes. The backend is the long-running process and should own the tunnel.
+
+## Problem
+
+The tunnel watchdog lives as an in-process `setInterval` in the CLI. When the CLI crashes, the watchdog dies and zombie cloudflared processes go undetected. The CLI also manages tunnel state files, process spawning, and cleanup — all of which belong in the backend.
+
+## Approach
+
+Create `TunnelService` in the backend following the existing service pattern (`whisper.ts`). Expose start/stop/restart via API. Update CLI to delegate tunnel management to the backend API instead of spawning cloudflared directly.
+
+## Steps
+
+- [x] Research all tunnel-related code across the codebase
+- [x] Create GitHub issue #67
+- [x] Create feature branch `feature/issue-67-backend-tunnel-service`
+- [x] Create `backend/src/services/tunnel-service.ts` with full lifecycle management
+  - Spawn/kill cloudflared, capture URL from stderr
+  - Watchdog with circuit breaker (5 restarts / 10 min)
+  - Health via Prometheus metrics (`cloudflared_tunnel_ha_connections`)
+  - Tunnel reachability verification via HTTP HEAD
+  - State file management (tunnel.json, tunnel.pid, endpoints.json)
+  - Auth from env vars or auth.json
+  - Stale state cleanup and orphan killing on start
+  - Log rotation (10MB max, 2 backups)
+- [x] Update `backend/src/routes/tunnel.ts` — add POST start/stop/restart endpoints
+- [x] Update `backend/src/index.ts` — auto-start on `TUNNEL_ENABLED=true`, add to shutdown sequence
+- [x] Update `bin/cli.ts` — remove ~200 lines of dead tunnel code, delegate to backend API
+- [x] Update `backend/src/routes/services.ts` — add tunnel as managed service
+- [x] Write and fix `backend/test/services/tunnel-service.test.ts` (17 tests pass)
+- [x] Update `backend/test/routes/services.test.ts` (22 tests pass, tunnel included)
+- [x] Run full test suite — 195 pass, 0 fail, 5 skip (no regressions)
+- [x] Create PR

@@ -43,18 +43,6 @@ function ensureConfigDir(): void {
   }
 }
 
-function writeTunnelState(
-  pid: number,
-  url: string,
-  urlWithAuth: string | null,
-  port: number,
-): void {
-  ensureConfigDir();
-  const state = { pid, url, urlWithAuth, port, startedAt: Date.now() };
-  fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify(state, null, 2));
-  fs.writeFileSync(TUNNEL_PID_FILE, pid.toString());
-}
-
 function clearTunnelState(): void {
   try {
     if (fs.existsSync(TUNNEL_STATE_FILE)) fs.unlinkSync(TUNNEL_STATE_FILE);
@@ -250,8 +238,8 @@ Usage: opencode-manager <command> [options]
 
 Commands:
   start              Start the OpenCode Manager server
-  stop [service]     Stop a service (stt, tts, opencode, all)
-  restart [service]  Restart a service (stt, tts, opencode, all)
+  stop [service]     Stop a service (stt, tts, opencode, tunnel, all)
+  restart [service]  Restart a service (stt, tts, opencode, tunnel, all)
   status             Check status of locally running service
   install-service    Install as a user service (macOS/Linux)
   uninstall-service  Remove the user service
@@ -266,7 +254,7 @@ Start Options:
 
 Stop/Restart Options:
   --port, -p <port>  Backend API port (default: 5001)
-  service            Service to stop/restart: stt, tts, opencode, all (default: all)
+  service            Service to stop/restart: stt, tts, opencode, tunnel, all (default: all)
 
 Status Options:
   --port, -p <port>  Backend API port to check (default: 5001)
@@ -418,224 +406,56 @@ async function startOpenCodeServer(port: number): Promise<boolean> {
   return false;
 }
 
-async function startCloudflaredTunnel(
-  localPort: number,
+async function waitForTunnelUrl(
+  port: number,
   auth: AuthConfig,
+  maxSeconds: number,
 ): Promise<{
-  process: ReturnType<typeof spawn>;
   url: string | null;
   urlWithAuth: string | null;
 }> {
-  console.log("\n🌐 Starting Cloudflare tunnel...");
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}`,
+  };
 
-  // Ensure config directory exists
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  }
-
-  cleanupStaleTunnelState();
-
-  // Rotate log file if needed
-  rotateLogFile(CLOUDFLARED_LOG_FILE);
-
-  // Open log file for appending
-  const logStream = fs.createWriteStream(CLOUDFLARED_LOG_FILE, { flags: "a" });
-  const timestamp = () => new Date().toISOString();
-
-  // Write startup marker
-  logStream.write(`\n${"=".repeat(80)}\n`);
-  logStream.write(`[${timestamp()}] Cloudflare tunnel starting...\n`);
-  logStream.write(`[${timestamp()}] Target: http://localhost:${localPort}\n`);
-  logStream.write(`${"=".repeat(80)}\n\n`);
-
-  const tunnelProcess = spawn(
-    "cloudflared",
-    [
-      "tunnel",
-      "--no-autoupdate",
-      "--protocol",
-      "http2",
-      "--url",
-      `http://localhost:${localPort}`,
-    ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-
-  let tunnelUrl: string | null = null;
-
-  const urlPromise = new Promise<string | null>((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 30000);
-
-    const handleOutput = (data: Buffer) => {
-      const output = data.toString();
-
-      // Log to file with timestamp
-      const lines = output.split("\n").filter((line) => line.trim());
-      for (const line of lines) {
-        logStream.write(`[${timestamp()}] ${line}\n`);
-      }
-
-      const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-      if (urlMatch && !tunnelUrl) {
-        tunnelUrl = urlMatch[0];
-        clearTimeout(timeout);
-        resolve(tunnelUrl);
-      }
-    };
-
-    tunnelProcess.stdout?.on("data", handleOutput);
-    tunnelProcess.stderr?.on("data", handleOutput);
-  });
-
-  tunnelProcess.on("error", (err) => {
-    logStream.write(
-      `[${timestamp()}] ERROR: Failed to start cloudflared: ${err.message}\n`,
-    );
-    console.error("\n❌ Failed to start cloudflared:", err.message);
-    console.log("Install cloudflared: brew install cloudflared");
-  });
-
-  tunnelProcess.on("exit", (code, signal) => {
-    logStream.write(
-      `[${timestamp()}] Process exited with code ${code}, signal ${signal}\n`,
-    );
-    logStream.end();
-    clearTunnelState();
-  });
-
-  const url = await urlPromise;
-
-  let urlWithAuth: string | null = null;
-  if (url && auth.username && auth.password) {
+  for (let i = 0; i < maxSeconds; i++) {
     try {
-      const parsedUrl = new URL(url);
-      parsedUrl.username = auth.username;
-      parsedUrl.password = auth.password;
-      urlWithAuth = parsedUrl.toString().replace(/\/$/, "");
-    } catch {}
-  }
-
-  if (url) {
-    logStream.write(`[${timestamp()}] Tunnel established: ${url}\n`);
-    console.log(`✓ Tunnel URL: ${url}`);
-    if (urlWithAuth) {
-      console.log(`   Tunnel: ${urlWithAuth}`);
-    }
-
-    writeTunnelState(tunnelProcess.pid!, url, urlWithAuth, localPort);
-  } else {
-    logStream.write(
-      `[${timestamp()}] WARNING: Failed to get tunnel URL within timeout\n`,
-    );
-  }
-
-  return { process: tunnelProcess, url, urlWithAuth };
-}
-
-const TUNNEL_WATCHDOG_INTERVAL_MS = 30_000;
-const TUNNEL_WATCHDOG_FAIL_THRESHOLD = 3;
-const TUNNEL_METRICS_PORTS = [20241, 20242, 20243, 20244, 20245];
-
-async function findTunnelMetricsPort(): Promise<number | null> {
-  for (const port of TUNNEL_METRICS_PORTS) {
-    try {
-      const response = await fetch(`http://localhost:${port}/metrics`, {
-        signal: AbortSignal.timeout(500),
-      });
-      if (response.ok) return port;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-async function checkTunnelConnected(): Promise<boolean> {
-  const port = await findTunnelMetricsPort();
-  if (!port) return false;
-  try {
-    const response = await fetch(`http://localhost:${port}/metrics`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!response.ok) return false;
-    const text = await response.text();
-    for (const line of text.split("\n")) {
-      if (line.startsWith("cloudflared_tunnel_ha_connections ")) {
-        const count = parseInt(line.split(" ")[1], 10);
-        return count > 0;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function startTunnelWatchdog(
-  localPort: number,
-  auth: AuthConfig,
-  onRestart: (tunnel: {
-    process: ReturnType<typeof spawn>;
-    url: string | null;
-    urlWithAuth: string | null;
-  }) => void,
-): NodeJS.Timeout {
-  const state = { failures: 0, restarting: false };
-
-  const timer = setInterval(async () => {
-    if (state.restarting) return;
-
-    const connected = await checkTunnelConnected();
-    if (connected) {
-      if (state.failures > 0) {
-        console.log(
-          `[watchdog] Tunnel recovered after ${state.failures} failed check(s)`,
-        );
-      }
-      state.failures = 0;
-      return;
-    }
-
-    state.failures += 1;
-    console.log(
-      `[watchdog] Tunnel disconnected (${state.failures}/${TUNNEL_WATCHDOG_FAIL_THRESHOLD})`,
-    );
-
-    if (state.failures < TUNNEL_WATCHDOG_FAIL_THRESHOLD) return;
-
-    state.restarting = true;
-    state.failures = 0;
-    console.log("[watchdog] Restarting tunnel...");
-
-    try {
-      const tunnel = await startCloudflaredTunnel(localPort, auth);
-      onRestart(tunnel);
-      if (!tunnel.url) {
-        console.log("[watchdog] Tunnel restarted but no URL obtained");
-        return;
-      }
-      console.log(`[watchdog] Tunnel restored: ${tunnel.url}`);
-      const localUrl = `http://localhost:${localPort}`;
-      updateEndpoints(localUrl, tunnel.urlWithAuth || tunnel.url);
-    } catch (err) {
-      console.error(
-        "[watchdog] Failed to restart tunnel:",
-        err instanceof Error ? err.message : err,
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/tunnel/status`,
+        { signal: AbortSignal.timeout(2000), headers },
       );
-    } finally {
-      state.restarting = false;
+      if (response.ok) {
+        const data = (await response.json()) as {
+          connected?: boolean;
+          url?: string;
+        };
+        if (data.url) {
+          let urlWithAuth: string | null = null;
+          if (auth.username && auth.password) {
+            try {
+              const parsed = new URL(data.url);
+              parsed.username = auth.username;
+              parsed.password = auth.password;
+              urlWithAuth = parsed.toString().replace(/\/$/, "");
+            } catch {}
+          }
+          return { url: data.url, urlWithAuth };
+        }
+      }
+    } catch {}
+    if (i > 0 && i % 10 === 0) {
+      console.log(`   Still waiting for tunnel URL... (${i}s)`);
     }
-  }, TUNNEL_WATCHDOG_INTERVAL_MS);
-
-  return timer;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return { url: null, urlWithAuth: null };
 }
 
 async function startBackend(
   port: number,
   auth: AuthConfig,
   opencodePort?: number,
+  tunnelEnabled?: boolean,
 ): Promise<ReturnType<typeof spawn>> {
   const packageDir = getPackageDir();
 
@@ -650,6 +470,10 @@ async function startBackend(
   if (opencodePort) {
     env.OPENCODE_SERVER_PORT = opencodePort.toString();
     env.OPENCODE_CLIENT_MODE = "true";
+  }
+
+  if (tunnelEnabled) {
+    env.TUNNEL_ENABLED = "true";
   }
 
   console.log(`\n🚀 Starting backend on port ${port}...`);
@@ -715,14 +539,8 @@ async function commandStart(args: string[]): Promise<void> {
   cleanupManagedPorts();
 
   const processes: ReturnType<typeof spawn>[] = [];
-  const backendProcess = await startBackend(port, auth, opencodePort);
+  const backendProcess = await startBackend(port, auth, opencodePort, hasTunnel);
   processes.push(backendProcess);
-  const tunnelState: {
-    process: ReturnType<typeof spawn> | null;
-    url?: string;
-    urlWithAuth?: string;
-  } = { process: null };
-  const watchdog = { timer: null as NodeJS.Timeout | null };
 
   console.log("\n⏳ Waiting for backend to be ready...");
   const backendReady = await waitForBackendHealth(port, auth, 120);
@@ -737,11 +555,8 @@ async function commandStart(args: string[]): Promise<void> {
   let tunnelUrlWithAuth: string | undefined;
 
   if (hasTunnel) {
-    const tunnel = await startCloudflaredTunnel(port, auth);
-    processes.push(tunnel.process);
-    tunnelState.process = tunnel.process;
-    tunnelState.url = tunnel.url || undefined;
-    tunnelState.urlWithAuth = tunnel.urlWithAuth || undefined;
+    console.log("\n⏳ Waiting for tunnel URL from backend...");
+    const tunnel = await waitForTunnelUrl(port, auth, 60);
     tunnelUrl = tunnel.url || undefined;
     tunnelUrlWithAuth = tunnel.urlWithAuth || undefined;
 
@@ -752,14 +567,11 @@ async function commandStart(args: string[]): Promise<void> {
         console.log(`🔐 With auth:  ${tunnel.urlWithAuth}`);
       }
       console.log("═══════════════════════════════════════\n");
+    } else {
+      console.warn(
+        "⚠️  Tunnel started but URL not available yet. Check: opencode-manager status",
+      );
     }
-
-    watchdog.timer = startTunnelWatchdog(port, auth, (next) => {
-      processes.push(next.process);
-      tunnelState.process = next.process;
-      tunnelState.url = next.url || undefined;
-      tunnelState.urlWithAuth = next.urlWithAuth || undefined;
-    });
   }
 
   updateEndpoints(localUrl, tunnelUrlWithAuth || tunnelUrl);
@@ -778,20 +590,11 @@ async function commandStart(args: string[]): Promise<void> {
 
   const cleanup = () => {
     console.log("\n\n🛑 Shutting down...");
-    clearTunnelState();
-    if (watchdog.timer) {
-      clearInterval(watchdog.timer);
-    }
     processes.forEach((p) => {
       try {
         p.kill("SIGTERM");
       } catch {}
     });
-    if (tunnelState.process && !processes.includes(tunnelState.process)) {
-      try {
-        tunnelState.process.kill("SIGTERM");
-      } catch {}
-    }
     process.exit(0);
   };
 
@@ -1404,10 +1207,10 @@ async function commandHealth(args: string[]): Promise<void> {
   process.exit(coreHealthy ? 0 : 1);
 }
 
-type ValidService = "stt" | "tts" | "opencode" | "all";
+type ValidService = "stt" | "tts" | "opencode" | "tunnel" | "all";
 
 function isValidService(service: string): service is ValidService {
-  return ["stt", "tts", "opencode", "all"].includes(service);
+  return ["stt", "tts", "opencode", "tunnel", "all"].includes(service);
 }
 
 interface ServiceActionResult {
@@ -1474,7 +1277,7 @@ async function commandStop(args: string[]): Promise<void> {
 
   if (!isValidService(service)) {
     console.error(`Invalid service: ${service}`);
-    console.error("Valid services: stt, tts, opencode, all");
+    console.error("Valid services: stt, tts, opencode, tunnel, all");
     process.exit(1);
   }
 
@@ -1530,7 +1333,7 @@ async function commandRestart(args: string[]): Promise<void> {
 
   if (!isValidService(service)) {
     console.error(`Invalid service: ${service}`);
-    console.error("Valid services: stt, tts, opencode, all");
+    console.error("Valid services: stt, tts, opencode, tunnel, all");
     process.exit(1);
   }
 
