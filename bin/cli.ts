@@ -1189,7 +1189,8 @@ async function commandHealth(args: string[]): Promise<void> {
     : results.tts.data?.configured
       ? "stopped"
       : "not_configured";
-  const tunnelStatus = results.tunnel.ok ? "connected" : "disconnected";
+  const tunnelStatus =
+    results.tunnel.ok || results.tunnel.data?.url ? "connected" : "disconnected";
 
   // Overall health
   const backendDegraded = results.backend.data?.status === "degraded";
@@ -1263,6 +1264,11 @@ async function commandHealth(args: string[]): Promise<void> {
         `  edge_location: ${results.tunnel.data.edgeLocationFormatted}`,
       );
     }
+  }
+  if (!results.tunnel.ok && results.tunnel.data?.url) {
+    console.log(
+      "  warning: tunnel metrics not reachable; showing last known URL",
+    );
   }
   if (results.tunnel.error) {
     console.log(`  error: ${results.tunnel.error}`);

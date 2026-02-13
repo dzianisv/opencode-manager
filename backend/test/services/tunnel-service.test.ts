@@ -1,7 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'events'
-import * as childProcess from 'child_process'
+import { execSync, spawn, spawnSync } from 'child_process'
 import * as fs from 'fs'
+
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
+  execSync: vi.fn(),
+  spawnSync: vi.fn(),
+}))
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs')
+  return {
+    ...actual,
+    existsSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    readFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    statSync: vi.fn(),
+    createWriteStream: vi.fn(),
+    renameSync: vi.fn(),
+  }
+})
 
 vi.mock('../../src/utils/logger', () => ({
   logger: {
@@ -43,30 +64,29 @@ function createSuccessFetchMock(tunnelUrl?: string) {
 describe('TunnelService', () => {
   let TunnelService: typeof import('../../src/services/tunnel-service').TunnelService
   let service: InstanceType<typeof TunnelService>
-  let spawnSpy: ReturnType<typeof vi.spyOn>
-  let execSyncSpy: ReturnType<typeof vi.spyOn>
-  let existsSyncSpy: ReturnType<typeof vi.spyOn>
-  let writeFileSyncSpy: ReturnType<typeof vi.spyOn>
+  let execSyncSpy: ReturnType<typeof vi.mocked>
+  let existsSyncSpy: ReturnType<typeof vi.mocked>
+  let writeFileSyncSpy: ReturnType<typeof vi.mocked>
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
     originalFetch = global.fetch
 
-    spawnSpy = vi.spyOn(childProcess, 'spawn').mockReturnValue(createMockProcess() as any)
-    execSyncSpy = vi.spyOn(childProcess, 'execSync').mockImplementation(() => { throw new Error('no pgrep') })
-    vi.spyOn(childProcess, 'spawnSync').mockReturnValue({ status: 0 } as any)
+    vi.mocked(spawn).mockReturnValue(createMockProcess() as any)
+    execSyncSpy = vi.mocked(execSync).mockImplementation(() => { throw new Error('no pgrep') })
+    vi.mocked(spawnSync).mockReturnValue({ status: 0 } as any)
 
-    existsSyncSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(false)
-    vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined as any)
-    writeFileSyncSpy = vi.spyOn(fs, 'writeFileSync').mockReturnValue(undefined)
-    vi.spyOn(fs, 'readFileSync').mockReturnValue('')
-    vi.spyOn(fs, 'unlinkSync').mockReturnValue(undefined)
-    vi.spyOn(fs, 'statSync').mockReturnValue({ size: 0 } as any)
-    vi.spyOn(fs, 'createWriteStream').mockReturnValue({
+    existsSyncSpy = vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined as any)
+    writeFileSyncSpy = vi.mocked(fs.writeFileSync).mockReturnValue(undefined)
+    vi.mocked(fs.readFileSync).mockReturnValue('')
+    vi.mocked(fs.unlinkSync).mockReturnValue(undefined)
+    vi.mocked(fs.statSync).mockReturnValue({ size: 0 } as any)
+    vi.mocked(fs.createWriteStream).mockReturnValue({
       write: vi.fn(),
       end: vi.fn(),
     } as any)
-    vi.spyOn(fs, 'renameSync').mockReturnValue(undefined)
+    vi.mocked(fs.renameSync).mockReturnValue(undefined)
 
     const mod = await import('../../src/services/tunnel-service')
     TunnelService = mod.TunnelService
@@ -81,7 +101,7 @@ describe('TunnelService', () => {
 
   async function startTunnel(port?: number, url = 'https://test.trycloudflare.com'): Promise<ReturnType<typeof createMockProcess>> {
     const mockProc = createMockProcess()
-    spawnSpy.mockReturnValue(mockProc as any)
+    vi.mocked(spawn).mockReturnValue(mockProc as any)
     global.fetch = createSuccessFetchMock(url)
 
     const startPromise = service.start(port)
@@ -126,7 +146,7 @@ describe('TunnelService', () => {
     it('should spawn cloudflared with correct arguments', async () => {
       await startTunnel(5001, 'https://test-tunnel-abc.trycloudflare.com')
 
-      expect(spawnSpy).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         'cloudflared',
         ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', 'http://localhost:5001'],
         { stdio: ['ignore', 'pipe', 'pipe'] }
@@ -156,10 +176,10 @@ describe('TunnelService', () => {
     it('should not start again if already running', async () => {
       await startTunnel(5001)
 
-      spawnSpy.mockClear()
+      vi.mocked(spawn).mockClear()
       await service.start()
 
-      expect(spawnSpy).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
     })
   })
 
@@ -220,7 +240,7 @@ describe('TunnelService', () => {
     it('should parse HA connections from metrics', async () => {
       const tunnelUrl = 'https://metrics-test.trycloudflare.com'
       const mockProc = createMockProcess()
-      spawnSpy.mockReturnValue(mockProc as any)
+      vi.mocked(spawn).mockReturnValue(mockProc as any)
 
       global.fetch = vi.fn().mockImplementation((url: string | URL | Request) => {
         const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
