@@ -46,3 +46,10 @@ Add comprehensive test coverage for the Telegram/Messenger integration and fix c
   - Updated unit test mock to include `init` method
   - Updated test assertion from `getMe` to `init`
   - All 235 tests pass
+- [x] 9. Fix `POST /start` empty body crash: wrap `c.req.json()` in try/catch
+- [x] 10. Fix `isConfigured()` ordering: check before `getOrCreateSession()` to avoid fetch errors in CI
+- [x] 11. Fix `vi.clearAllMocks()` resetting mock return values in tests
+- [x] 12. All 237 tests pass (13 files)
+- [x] 13. CI green on PR #66 (all 5 jobs passed)
+- [x] 14. PR #66 merged (squash) → commit c2665ef
+- [x] 15. Issue #65 closed as completed
