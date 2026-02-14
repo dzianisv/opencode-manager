@@ -44,6 +44,24 @@ function ensureConfigDir(): void {
   }
 }
 
+function getTailscaleIp(): string | null {
+  try {
+    const output = execSync("tailscale ip -4 2>/dev/null", { encoding: "utf8" }).trim();
+    const match = output.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+    return match ? match[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildAuthUrl(baseUrl: string, auth: AuthConfig | null): string {
+  if (!auth?.username || !auth?.password) return baseUrl;
+  const urlObj = new URL(baseUrl);
+  urlObj.username = auth.username;
+  urlObj.password = auth.password;
+  return urlObj.toString();
+}
+
 function acquireLock(): boolean {
   ensureConfigDir();
   try {
@@ -516,6 +534,7 @@ async function startBackend(
     ...(process.env as Record<string, string>),
     PORT: port.toString(),
     NODE_ENV: "production",
+    HOST: process.env.HOST || "0.0.0.0",
     AUTH_USERNAME: auth.username,
     AUTH_PASSWORD: auth.password,
   };
@@ -1206,6 +1225,11 @@ async function commandHealth(args: string[]): Promise<void> {
   // YAML output
   console.log(`status: ${overallStatus}`);
   console.log(`port: ${port}`);
+  const tailscaleIp = getTailscaleIp();
+  if (tailscaleIp) {
+    const tailscaleUrl = buildAuthUrl(`http://${tailscaleIp}:${port}`, auth);
+    console.log(`tailscale_url: ${tailscaleUrl}`);
+  }
   console.log("");
   console.log("backend:");
   console.log(`  status: ${backendStatus}`);
