@@ -150,12 +150,19 @@ function getProviderPriority(source: ProviderSource): number {
 
 
 
-async function getProvidersFromOpenCodeServer(): Promise<Provider[]> {
+interface OpenCodeProviderResponse {
+  providers: Provider[];
+  connected: string[];
+}
+
+async function getProvidersFromOpenCodeServer(): Promise<OpenCodeProviderResponse> {
   try {
     const response = await axios.get(`${API_BASE_URL}/api/opencode/provider`);
     
+    const connected: string[] = Array.isArray(response?.data?.connected) ? response.data.connected : [];
+
     if (response?.data?.all && Array.isArray(response.data.all)) {
-      return response.data.all.map((openCodeProvider: OpenCodeProvider) => {
+      const providers = response.data.all.map((openCodeProvider: OpenCodeProvider) => {
         const models: Record<string, Model> = {};
         
         Object.entries(openCodeProvider.models).forEach(([modelId, openCodeModel]) => {
@@ -198,16 +205,28 @@ async function getProvidersFromOpenCodeServer(): Promise<Provider[]> {
           options: openCodeProvider.options,
         };
       });
+
+      return { providers, connected };
     }
   } catch (error) {
     console.warn("Failed to load providers from OpenCode server", error);
   }
 
-  return [];
+  return { providers: [], connected: [] };
 }
 
 export async function getProviders(): Promise<Provider[]> {
+  const result = await getProvidersFromOpenCodeServer();
+  return result.providers;
+}
+
+export async function getProvidersAndConnected(): Promise<OpenCodeProviderResponse> {
   return await getProvidersFromOpenCodeServer();
+}
+
+export async function getConnectedProviders(): Promise<string[]> {
+  const result = await getProvidersFromOpenCodeServer();
+  return result.connected;
 }
 
 async function getConfiguredProviders(): Promise<ProviderWithModels[]> {

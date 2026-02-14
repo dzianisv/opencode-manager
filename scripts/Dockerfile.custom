@@ -2,7 +2,7 @@
 # Extends the locally built opencode-manager image to add persistent dependencies
 # This requires the base image to be built first via docker compose build
 
-FROM opencode-manager-app:latest
+FROM ghcr.io/dzianisv/opencode-manager:latest
 
 # Switch to root to install packages
 USER root
