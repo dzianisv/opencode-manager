@@ -332,6 +332,7 @@ jobs:
 
       - name: Deploy Screencast to Assets Branch
         if: always() && steps.prepare-screencast.outputs.found == 'true'
+        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -343,6 +344,7 @@ jobs:
 
       - name: Comment PR with Screencast
         if: always() && steps.prepare-screencast.outputs.found == 'true' && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v6
         with:
           script: |
@@ -468,6 +470,7 @@ jobs:
 
       - name: Deploy Screencast to Assets Branch
         if: always() && steps.prepare-screencast.outputs.found == 'true'
+        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -479,6 +482,7 @@ jobs:
 
       - name: Comment PR with Screencast
         if: always() && steps.prepare-screencast.outputs.found == 'true' && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v6
         with:
           script: |
@@ -603,6 +607,7 @@ jobs:
 
       - name: Deploy Screencast to Assets Branch
         if: always() && steps.prepare-screencast.outputs.found == 'true'
+        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -614,6 +619,7 @@ jobs:
 
       - name: Comment PR with Screencast
         if: always() && steps.prepare-screencast.outputs.found == 'true' && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v6
         with:
           script: |
