@@ -203,7 +203,7 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
 };
 
 export const DEFAULT_STT_CONFIG: STTConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'faster-whisper',
   model: 'base',
   language: undefined,

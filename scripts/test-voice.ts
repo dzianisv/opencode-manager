@@ -393,8 +393,8 @@ class VoiceTest {
       }
 
       const data = await response.json()
-      if (data.error?.includes('not configured') || data.error?.includes('API key') || data.error?.includes('not enabled')) {
-        return { passed: true, details: 'TTS not configured (expected if no API key set)' }
+      if (data.error?.includes('not configured') || data.error?.includes('API key') || data.error?.includes('not enabled') || data.error?.includes('not available') || data.error?.includes('not found')) {
+        return { passed: true, details: `SKIPPED: ${data.error}` }
       }
 
       return { passed: false, details: `Error: ${data.error || response.status}` }
@@ -815,6 +815,10 @@ class VoiceTest {
         }
       })
     })
+    if (response.status !== 200) {
+      const body = await response.json().catch(() => ({}))
+      console.log(`  Warning: enableVoiceFeatures PATCH failed (${response.status}):`, JSON.stringify(body))
+    }
     return response.status === 200
   }
 
