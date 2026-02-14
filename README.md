@@ -42,18 +42,19 @@ This fork of [opencode-manager](https://github.com/chriswritescode-dev/opencode-
 | **E2E Voice Tests** | ✅ Browser + API tests | ❌ Not included |
 | **Large Output Fix** | ✅ Context overflow prevention | ❌ Uses official OpenCode |
 
-**Quick Start:**
+**Quick Start (one line):**
 ```bash
-# Install globally
+curl -fsSL https://raw.githubusercontent.com/dzianisv/opencode-manager/main/scripts/setup.sh | bash
+```
+
+This installs Bun, OpenCode, cloudflared, and opencode-manager, then registers it as a system service with a Cloudflare tunnel. Credentials and tunnel URL are printed at the end.
+
+Options: `curl ... | bash -s -- --no-tunnel` (local only) or `--skip-service` (CLI only, no service).
+
+**Or install manually:**
+```bash
 bun install -g github:dzianisv/opencode-manager
-
-# Run as system service (auto-starts on boot, includes tunnel)
 opencode-manager install-service
-
-# Or run manually
-opencode-manager start
-
-# Access from anywhere via Cloudflare tunnel URL
 cat ~/.local/run/opencode-manager/endpoints.json
 ```
 
@@ -233,7 +234,28 @@ Use `@qa-tester` in OpenCode or run `scripts/qa-test.sh` for quick tests.
 
 ## Installation
 
-### Option 1: npm/bun (Recommended for Local Use)
+### Option 1: One-Line Setup (Recommended)
+
+Install everything and start as a system service with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dzianisv/opencode-manager/main/scripts/setup.sh | bash
+```
+
+This automatically installs all prerequisites (Bun, OpenCode, cloudflared), installs opencode-manager, registers it as a system service, and starts a Cloudflare tunnel for remote access. Credentials and tunnel URL are printed at the end.
+
+**Options:**
+```bash
+# Without Cloudflare tunnel (local access only)
+curl -fsSL https://raw.githubusercontent.com/dzianisv/opencode-manager/main/scripts/setup.sh | bash -s -- --no-tunnel
+
+# Install CLI only, don't register as system service
+curl -fsSL https://raw.githubusercontent.com/dzianisv/opencode-manager/main/scripts/setup.sh | bash -s -- --skip-service
+```
+
+**Supported platforms:** macOS (launchd) and Linux (systemd).
+
+### Option 2: Manual Install (npm/bun)
 
 Install OpenCode Manager as a global CLI tool directly from GitHub:
 
@@ -332,7 +354,7 @@ All configuration is stored in `~/.local/run/opencode-manager/`:
 
 On first run, credentials are automatically generated and saved. Use these to authenticate when accessing the web UI.
 
-### Option 2: Docker (Recommended for Servers)
+### Option 3: Docker (Recommended for Servers)
 
 ```bash
 # Simple one-liner
@@ -417,7 +439,7 @@ OpenCode Manager creates a default `AGENTS.md` file in the workspace config dire
 
 This file is merged with any repository-specific `AGENTS.md` files, with repository instructions taking precedence for their respective codebases.
 
-### Option 3: Azure VM Deployment (Quick Start)
+### Option 4: Azure VM Deployment (Quick Start)
 
 Deploy OpenCode Manager to an Azure VM with a single command. Includes automatic HTTPS via Cloudflare tunnel and Basic Auth protection.
 
@@ -536,7 +558,7 @@ ssh azureuser@<VM_IP> "sudo docker logs opencode-manager -f"
 - Standard_D2s_v5 (2 vCPU, 8GB RAM): ~$70/month
 - Use `--destroy` when not in use to avoid charges
 
-### Option 4: Native Local Development (macOS)
+### Option 5: Native Local Development (macOS)
 
 Run OpenCode Manager natively on macOS without Docker. This is ideal for development or when you want the web UI to connect to an existing OpenCode instance running in your terminal.
 
@@ -791,7 +813,7 @@ bun scripts/start-native.ts --port 3000
 bun scripts/start-native.ts --client --port 3000
 ```
 
-### Option 5: Local Development (Hot Reload)
+### Option 6: Local Development (Hot Reload)
 
 ```bash
 # Clone the repository
