@@ -309,8 +309,9 @@ class TunnelService {
     if (reachable) {
       this.updateEndpoints()
     } else {
-      logger.warn('Tunnel URL obtained but not reachable — skipping endpoints.json update')
-      this.logStream?.write(`[${ts()}] WARNING: Tunnel URL not reachable, endpoints.json not updated\n`)
+      logger.warn('Tunnel URL obtained but not yet reachable — deferring endpoints.json update')
+      this.logStream?.write(`[${ts()}] WARNING: Tunnel URL not yet reachable, will retry\n`)
+      this.deferEndpointUpdate()
     }
 
     this.startWatchdog()
@@ -524,6 +525,34 @@ class TunnelService {
       await new Promise(r => setTimeout(r, 2000))
     }
     return false
+  }
+
+  private deferEndpointUpdate(): void {
+    const maxRetries = 5
+    const retryDelayMs = 10_000
+    let attempt = 0
+
+    const retry = async () => {
+      attempt++
+      if (!this.url || !this.isRunning()) return
+
+      const reachable = await this.verifyReachable()
+      if (reachable) {
+        logger.info('Deferred reachability check passed — updating endpoints.json')
+        this.updateEndpoints()
+        return
+      }
+
+      if (attempt < maxRetries) {
+        logger.warn(`Deferred reachability check failed (${attempt}/${maxRetries}), retrying in ${retryDelayMs / 1000}s`)
+        setTimeout(retry, retryDelayMs)
+      } else {
+        logger.warn('Deferred reachability checks exhausted — writing endpoint anyway to satisfy requirements')
+        this.updateEndpoints()
+      }
+    }
+
+    setTimeout(retry, retryDelayMs)
   }
 
   private getAuth(): AuthConfig | null {
