@@ -1079,6 +1079,14 @@ interface TunnelStatusResponse {
   edgeLocationFormatted?: string;
   haConnections?: number;
   error?: string;
+  watchdog?: {
+    enabled: boolean;
+    consecutiveFailures: number;
+    restartsInWindow: number;
+    halted: boolean;
+    cooldownUntil: number | null;
+    cooldownCount: number;
+  };
 }
 
 async function commandHealth(args: string[]): Promise<void> {
@@ -1293,6 +1301,20 @@ async function commandHealth(args: string[]): Promise<void> {
     console.log(
       "  warning: tunnel metrics not reachable; showing last known URL",
     );
+  }
+  if (results.tunnel.data?.watchdog) {
+    const wd = results.tunnel.data.watchdog;
+    if (wd.halted && wd.cooldownUntil) {
+      const remainMs = wd.cooldownUntil - Date.now();
+      const remainMin = Math.max(0, Math.ceil(remainMs / 60000));
+      console.log(
+        `  watchdog: cooling down (attempt ${wd.cooldownCount}), resumes in ${remainMin} min`,
+      );
+    } else if (wd.consecutiveFailures > 0) {
+      console.log(
+        `  watchdog: ${wd.consecutiveFailures} consecutive failure(s)`,
+      );
+    }
   }
   if (results.tunnel.error) {
     console.log(`  error: ${results.tunnel.error}`);

@@ -17,6 +17,8 @@ const WATCHDOG_INTERVAL_MS = 30_000
 const WATCHDOG_FAIL_THRESHOLD = 3
 const MAX_RESTARTS = 5
 const MAX_RESTART_WINDOW_MS = 10 * 60 * 1000
+const COOLDOWN_BASE_MS = 5 * 60 * 1000
+const COOLDOWN_MAX_MS = 30 * 60 * 1000
 const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024
 const MAX_LOG_BACKUPS = 2
 const URL_CAPTURE_TIMEOUT_MS = 30_000
@@ -35,6 +37,8 @@ interface TunnelStatus {
     consecutiveFailures: number
     restartsInWindow: number
     halted: boolean
+    cooldownUntil: number | null
+    cooldownCount: number
   }
   error: string | null
 }
@@ -60,6 +64,8 @@ class TunnelService {
     restarting: false,
     restartTimestamps: [] as number[],
     halted: false,
+    cooldownUntil: null as number | null,
+    cooldownCount: 0,
   }
 
   isRunning(): boolean {
@@ -88,6 +94,8 @@ class TunnelService {
         consecutiveFailures: this.watchdogState.consecutiveFailures,
         restartsInWindow: this.watchdogState.restartTimestamps.length,
         halted: this.watchdogState.halted,
+        cooldownUntil: this.watchdogState.cooldownUntil,
+        cooldownCount: this.watchdogState.cooldownCount,
       },
       error: this.error,
     }
@@ -290,31 +298,57 @@ class TunnelService {
       restarting: false,
       restartTimestamps: [],
       halted: false,
+      cooldownUntil: null,
+      cooldownCount: 0,
     }
 
     logger.info('Starting tunnel watchdog')
 
     this.watchdogTimer = setInterval(async () => {
-      if (this.watchdogState.restarting || this.watchdogState.halted) return
+      if (this.watchdogState.restarting) return
 
-      const connected = await this.checkConnected()
-      if (connected) {
-        if (this.watchdogState.consecutiveFailures > 0) {
-          logger.info(`Tunnel recovered after ${this.watchdogState.consecutiveFailures} failed check(s)`)
-        }
+      if (this.watchdogState.cooldownUntil) {
+        const remaining = this.watchdogState.cooldownUntil - Date.now()
+        if (remaining > 0) return
+        logger.info('Watchdog cooldown expired, resuming monitoring')
+        this.watchdogState.cooldownUntil = null
+        this.watchdogState.halted = false
+        this.watchdogState.restartTimestamps = []
         this.watchdogState.consecutiveFailures = 0
-        return
+        this.error = null
       }
 
-      this.watchdogState.consecutiveFailures++
-      logger.warn(`Tunnel disconnected (${this.watchdogState.consecutiveFailures}/${WATCHDOG_FAIL_THRESHOLD})`)
+      if (!this.process || this.process.killed) {
+        logger.warn('Tunnel process is dead, attempting restart')
+        this.watchdogState.consecutiveFailures = WATCHDOG_FAIL_THRESHOLD
+      } else {
+        const connected = await this.checkConnected()
+        if (connected) {
+          if (this.watchdogState.consecutiveFailures > 0) {
+            logger.info(`Tunnel recovered after ${this.watchdogState.consecutiveFailures} failed check(s)`)
+          }
+          this.watchdogState.consecutiveFailures = 0
+          if (this.watchdogState.cooldownCount > 0) {
+            this.watchdogState.cooldownCount = 0
+          }
+          return
+        }
+        this.watchdogState.consecutiveFailures++
+        logger.warn(`Tunnel disconnected (${this.watchdogState.consecutiveFailures}/${WATCHDOG_FAIL_THRESHOLD})`)
+      }
 
       if (this.watchdogState.consecutiveFailures < WATCHDOG_FAIL_THRESHOLD) return
 
       if (this.isCircuitBroken()) {
-        logger.error(`Circuit breaker triggered: ${MAX_RESTARTS} restarts in ${MAX_RESTART_WINDOW_MS / 60000} min window. Halting watchdog.`)
+        this.watchdogState.cooldownCount++
+        const cooldownMs = Math.min(
+          COOLDOWN_BASE_MS * Math.pow(2, this.watchdogState.cooldownCount - 1),
+          COOLDOWN_MAX_MS
+        )
+        this.watchdogState.cooldownUntil = Date.now() + cooldownMs
         this.watchdogState.halted = true
-        this.error = 'Watchdog halted: too many restarts'
+        this.error = `Watchdog cooling down: ${MAX_RESTARTS} restarts in ${MAX_RESTART_WINDOW_MS / 60000} min. Resuming in ${Math.round(cooldownMs / 60000)} min`
+        logger.warn(this.error)
         return
       }
 
