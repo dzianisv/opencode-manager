@@ -14,6 +14,7 @@ const AUTH_FILE = path.join(CONFIG_DIR, 'auth.json')
 
 const METRICS_PORTS = [20241, 20242, 20243, 20244, 20245]
 const WATCHDOG_INTERVAL_MS = 30_000
+const WATCHDOG_JITTER_MS = 5_000
 const WATCHDOG_FAIL_THRESHOLD = 3
 const MAX_RESTARTS = 5
 const MAX_RESTART_WINDOW_MS = 10 * 60 * 1000
@@ -23,6 +24,16 @@ const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024
 const MAX_LOG_BACKUPS = 2
 const URL_CAPTURE_TIMEOUT_MS = 30_000
 const PROCESS_KILL_TIMEOUT_MS = 5_000
+
+const FATAL_ERROR_PATTERNS = [
+  /unauthorized/i,
+  /tunnel not found/i,
+  /failed to connect to an ideally located cfd server/i,
+  /connection refused/i,
+  /failed to unmarshal tunnel credentials/i,
+  /invalid tunnel credentials/i,
+  /err_tunnel_id/i,
+]
 
 interface TunnelStatus {
   running: boolean
@@ -39,6 +50,7 @@ interface TunnelStatus {
     halted: boolean
     cooldownUntil: number | null
     cooldownCount: number
+    fatalError: string | null
   }
   error: string | null
 }
@@ -51,7 +63,7 @@ interface AuthConfig {
 class TunnelService {
   private process: ChildProcess | null = null
   private logStream: fs.WriteStream | null = null
-  private watchdogTimer: ReturnType<typeof setInterval> | null = null
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null
   private localPort: number = 5001
   private url: string | null = null
   private urlWithAuth: string | null = null
@@ -66,6 +78,7 @@ class TunnelService {
     halted: false,
     cooldownUntil: null as number | null,
     cooldownCount: 0,
+    fatalError: null as string | null,
   }
 
   isRunning(): boolean {
@@ -96,6 +109,7 @@ class TunnelService {
         halted: this.watchdogState.halted,
         cooldownUntil: this.watchdogState.cooldownUntil,
         cooldownCount: this.watchdogState.cooldownCount,
+        fatalError: this.watchdogState.fatalError,
       },
       error: this.error,
     }
@@ -228,6 +242,17 @@ class TunnelService {
           this.logStream?.write(`[${ts()}] ${line}\n`)
         }
 
+        for (const pattern of FATAL_ERROR_PATTERNS) {
+          if (pattern.test(output)) {
+            const fatalMsg = `Fatal cloudflared error: ${output.trim().slice(0, 200)}`
+            logger.error(fatalMsg)
+            this.watchdogState.fatalError = fatalMsg
+            this.watchdogState.halted = true
+            this.error = fatalMsg
+            break
+          }
+        }
+
         const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
         if (urlMatch && !capturedUrl) {
           capturedUrl = urlMatch[0]
@@ -276,15 +301,16 @@ class TunnelService {
 
     this.startedAt = Date.now()
     this.writeTunnelState()
-    this.updateEndpoints()
 
     logger.info(`Tunnel established: ${this.url}`)
     this.logStream?.write(`[${ts()}] Tunnel established: ${this.url}\n`)
 
     const reachable = await this.verifyReachable()
-    if (!reachable) {
-      logger.warn('Tunnel URL obtained but not yet reachable')
-      this.logStream?.write(`[${ts()}] WARNING: Tunnel URL not immediately reachable\n`)
+    if (reachable) {
+      this.updateEndpoints()
+    } else {
+      logger.warn('Tunnel URL obtained but not reachable — skipping endpoints.json update')
+      this.logStream?.write(`[${ts()}] WARNING: Tunnel URL not reachable, endpoints.json not updated\n`)
     }
 
     this.startWatchdog()
@@ -300,82 +326,115 @@ class TunnelService {
       halted: false,
       cooldownUntil: null,
       cooldownCount: 0,
+      fatalError: null,
     }
 
     logger.info('Starting tunnel watchdog')
+    this.scheduleWatchdogTick()
+  }
 
-    this.watchdogTimer = setInterval(async () => {
-      if (this.watchdogState.restarting) return
+  private scheduleWatchdogTick(): void {
+    const jitter = Math.floor(Math.random() * WATCHDOG_JITTER_MS)
+    this.watchdogTimer = setTimeout(() => this.watchdogTick(), WATCHDOG_INTERVAL_MS + jitter)
+  }
 
-      if (this.watchdogState.cooldownUntil) {
-        const remaining = this.watchdogState.cooldownUntil - Date.now()
-        if (remaining > 0) return
-        logger.info('Watchdog cooldown expired, resuming monitoring')
-        this.watchdogState.cooldownUntil = null
-        this.watchdogState.halted = false
-        this.watchdogState.restartTimestamps = []
-        this.watchdogState.consecutiveFailures = 0
-        this.error = null
-      }
+  private async watchdogTick(): Promise<void> {
+    if (this.watchdogState.restarting) {
+      this.scheduleWatchdogTick()
+      return
+    }
 
-      if (!this.process || this.process.killed) {
-        logger.warn('Tunnel process is dead, attempting restart')
-        this.watchdogState.consecutiveFailures = WATCHDOG_FAIL_THRESHOLD
-      } else {
-        const connected = await this.checkConnected()
-        if (connected) {
-          if (this.watchdogState.consecutiveFailures > 0) {
-            logger.info(`Tunnel recovered after ${this.watchdogState.consecutiveFailures} failed check(s)`)
-          }
-          this.watchdogState.consecutiveFailures = 0
-          if (this.watchdogState.cooldownCount > 0) {
-            this.watchdogState.cooldownCount = 0
-          }
-          return
-        }
-        this.watchdogState.consecutiveFailures++
-        logger.warn(`Tunnel disconnected (${this.watchdogState.consecutiveFailures}/${WATCHDOG_FAIL_THRESHOLD})`)
-      }
+    if (this.watchdogState.fatalError) {
+      this.scheduleWatchdogTick()
+      return
+    }
 
-      if (this.watchdogState.consecutiveFailures < WATCHDOG_FAIL_THRESHOLD) return
-
-      if (this.isCircuitBroken()) {
-        this.watchdogState.cooldownCount++
-        const cooldownMs = Math.min(
-          COOLDOWN_BASE_MS * Math.pow(2, this.watchdogState.cooldownCount - 1),
-          COOLDOWN_MAX_MS
-        )
-        this.watchdogState.cooldownUntil = Date.now() + cooldownMs
-        this.watchdogState.halted = true
-        this.error = `Watchdog cooling down: ${MAX_RESTARTS} restarts in ${MAX_RESTART_WINDOW_MS / 60000} min. Resuming in ${Math.round(cooldownMs / 60000)} min`
-        logger.warn(this.error)
+    if (this.watchdogState.cooldownUntil) {
+      const remaining = this.watchdogState.cooldownUntil - Date.now()
+      if (remaining > 0) {
+        this.scheduleWatchdogTick()
         return
       }
-
-      this.watchdogState.restarting = true
+      logger.info('Watchdog cooldown expired, resuming monitoring')
+      this.watchdogState.cooldownUntil = null
+      this.watchdogState.halted = false
+      this.watchdogState.restartTimestamps = []
       this.watchdogState.consecutiveFailures = 0
-      this.watchdogState.restartTimestamps.push(Date.now())
-      logger.info('Watchdog restarting tunnel...')
+      this.error = null
+    }
 
-      try {
-        await this.doRestart()
-        if (this.url) {
-          logger.info(`Watchdog restored tunnel: ${this.url}`)
-        } else {
-          logger.warn('Watchdog restarted tunnel but no URL obtained')
+    if (!this.process || this.process.killed) {
+      logger.warn('Tunnel process is dead, attempting restart')
+      this.watchdogState.consecutiveFailures = WATCHDOG_FAIL_THRESHOLD
+    } else {
+      const connected = await this.checkConnected()
+      if (connected) {
+        if (this.watchdogState.consecutiveFailures > 0) {
+          logger.info(`Tunnel recovered after ${this.watchdogState.consecutiveFailures} failed check(s)`)
         }
-      } catch (err) {
-        logger.error('Watchdog failed to restart tunnel:', err instanceof Error ? err.message : err)
-        this.error = `Watchdog restart failed: ${err instanceof Error ? err.message : 'unknown'}`
-      } finally {
-        this.watchdogState.restarting = false
+        this.watchdogState.consecutiveFailures = 0
+        if (this.watchdogState.cooldownCount > 0) {
+          this.watchdogState.cooldownCount = 0
+        }
+        this.scheduleWatchdogTick()
+        return
       }
-    }, WATCHDOG_INTERVAL_MS)
+      this.watchdogState.consecutiveFailures++
+      logger.warn(`Tunnel disconnected (${this.watchdogState.consecutiveFailures}/${WATCHDOG_FAIL_THRESHOLD})`)
+    }
+
+    if (this.watchdogState.consecutiveFailures < WATCHDOG_FAIL_THRESHOLD) {
+      this.scheduleWatchdogTick()
+      return
+    }
+
+    const stillDisconnected = !this.process || this.process.killed || !(await this.checkConnected())
+    if (!stillDisconnected) {
+      logger.info('Tunnel reconnected before restart — skipping')
+      this.watchdogState.consecutiveFailures = 0
+      this.scheduleWatchdogTick()
+      return
+    }
+
+    if (this.isCircuitBroken()) {
+      this.watchdogState.cooldownCount++
+      const cooldownMs = Math.min(
+        COOLDOWN_BASE_MS * Math.pow(2, this.watchdogState.cooldownCount - 1),
+        COOLDOWN_MAX_MS
+      )
+      this.watchdogState.cooldownUntil = Date.now() + cooldownMs
+      this.watchdogState.halted = true
+      this.error = `Watchdog cooling down: ${MAX_RESTARTS} restarts in ${MAX_RESTART_WINDOW_MS / 60000} min. Resuming in ${Math.round(cooldownMs / 60000)} min`
+      logger.warn(this.error)
+      this.scheduleWatchdogTick()
+      return
+    }
+
+    this.watchdogState.restarting = true
+    this.watchdogState.consecutiveFailures = 0
+    this.watchdogState.restartTimestamps.push(Date.now())
+    logger.info('Watchdog restarting tunnel...')
+
+    try {
+      await this.doRestart()
+      if (this.url) {
+        logger.info(`Watchdog restored tunnel: ${this.url}`)
+      } else {
+        logger.warn('Watchdog restarted tunnel but no URL obtained')
+      }
+    } catch (err) {
+      logger.error('Watchdog failed to restart tunnel:', err instanceof Error ? err.message : err)
+      this.error = `Watchdog restart failed: ${err instanceof Error ? err.message : 'unknown'}`
+    } finally {
+      this.watchdogState.restarting = false
+    }
+
+    this.scheduleWatchdogTick()
   }
 
   private stopWatchdog(): void {
     if (this.watchdogTimer) {
-      clearInterval(this.watchdogTimer)
+      clearTimeout(this.watchdogTimer)
       this.watchdogTimer = null
       logger.info('Tunnel watchdog stopped')
     }

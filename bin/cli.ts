@@ -1086,6 +1086,7 @@ interface TunnelStatusResponse {
     halted: boolean;
     cooldownUntil: number | null;
     cooldownCount: number;
+    fatalError: string | null;
   };
 }
 
@@ -1304,7 +1305,9 @@ async function commandHealth(args: string[]): Promise<void> {
   }
   if (results.tunnel.data?.watchdog) {
     const wd = results.tunnel.data.watchdog;
-    if (wd.halted && wd.cooldownUntil) {
+    if (wd.fatalError) {
+      console.log(`  watchdog: FATAL — ${wd.fatalError}`);
+    } else if (wd.halted && wd.cooldownUntil) {
       const remainMs = wd.cooldownUntil - Date.now();
       const remainMin = Math.max(0, Math.ceil(remainMs / 60000));
       console.log(
