@@ -42,9 +42,23 @@ bun run scripts/deploy.ts --update-env
 
 ### Sync OpenCode Auth
 
+Syncs local OpenCode auth tokens from `~/.local/share/opencode/auth.json` to the VM. This avoids needing separate API keys — all provider OAuth tokens and API keys stored locally are uploaded to the container.
+
+Supported providers (synced automatically):
+- GitHub Copilot (OAuth tokens)
+- Anthropic (OAuth tokens)
+- OpenAI (API key)
+- Google/Gemini (API key)
+- Azure (API key)
+- Kilocode (JWT)
+
 ```bash
 bun run scripts/deploy.ts --sync-auth
 ```
+
+The script uploads `auth.json` into the running container at `/root/.local/share/opencode/auth.json` and restarts the OpenCode server process inside the container.
+
+If you add new provider keys locally, re-run `--sync-auth` to push them to the VM.
 
 ### Enable YOLO Mode
 

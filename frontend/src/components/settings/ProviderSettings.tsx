@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, Check, X, Shield } from 'lucide-react'
-import { providerCredentialsApi, getProviders, type Provider } from '@/api/providers'
+import { providerCredentialsApi, getProvidersAndConnected } from '@/api/providers'
 import { oauthApi, type OAuthAuthorizeResponse } from '@/api/oauth'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { OAuthAuthorizeDialog } from './OAuthAuthorizeDialog'
@@ -16,16 +16,14 @@ export function ProviderSettings() {
   const [oauthResponse, setOauthResponse] = useState<OAuthAuthorizeResponse | null>(null)
   const queryClient = useQueryClient()
 
-  const { data: providers, isLoading: providersLoading } = useQuery<Provider[]>({
-    queryKey: ['providers'],
-    queryFn: () => getProviders(),
+  const { data: providerData, isLoading: providersLoading } = useQuery({
+    queryKey: ['providers-and-connected'],
+    queryFn: () => getProvidersAndConnected(),
     staleTime: 300000,
   })
 
-  const { data: credentialsList, isLoading: credentialsLoading } = useQuery({
-    queryKey: ['provider-credentials'],
-    queryFn: () => providerCredentialsApi.list(),
-  })
+  const providers = providerData?.providers
+  const connectedProviders = providerData?.connected
 
   const { data: authMethods } = useQuery({
     queryKey: ['provider-auth-methods'],
@@ -35,7 +33,7 @@ export function ProviderSettings() {
   const deleteCredentialMutation = useMutation({
     mutationFn: (providerId: string) => providerCredentialsApi.delete(providerId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['provider-credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['providers-and-connected'] })
     },
   })
 
@@ -57,7 +55,7 @@ export function ProviderSettings() {
   }
 
   const handleOAuthSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ['provider-credentials'] })
+    queryClient.invalidateQueries({ queryKey: ['providers-and-connected'] })
     setOauthCallbackDialogOpen(false)
     setOauthResponse(null)
     setSelectedProvider(null)
@@ -68,8 +66,8 @@ export function ProviderSettings() {
     return methods.some(method => method.type === 'oauth')
   }, [authMethods])
 
-  const hasCredentials = (providerId: string) => {
-    return credentialsList?.includes(providerId) || false
+  const isConnected = (providerId: string) => {
+    return connectedProviders?.includes(providerId) || false
   }
 
   const oauthProviders = useMemo(() => {
@@ -82,7 +80,7 @@ export function ProviderSettings() {
     return providers?.find(p => p.id === selectedProvider)?.name || selectedProvider
   }, [selectedProvider, providers])
 
-  if (providersLoading || credentialsLoading) {
+  if (providersLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -110,7 +108,7 @@ export function ProviderSettings() {
       ) : (
         <div className="grid gap-4">
           {oauthProviders.map((provider) => {
-            const hasKey = hasCredentials(provider.id)
+            const hasKey = isConnected(provider.id)
             const modelCount = Object.keys(provider.models || {}).length
 
             return (
