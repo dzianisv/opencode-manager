@@ -805,6 +805,7 @@ class VoiceTest {
       body: JSON.stringify({
         preferences: {
           stt: { enabled: true, model: 'base', autoSubmit: false },
+          tts: { enabled: true, provider: 'coqui' },
           talkMode: { 
             enabled: true, 
             silenceThresholdMs: 800, 

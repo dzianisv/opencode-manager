@@ -213,6 +213,7 @@ async function injectAudioViaWebAPI(
 
             const source = audioContext.createBufferSource();
             source.buffer = decodedBuffer;
+            source.loop = true;
 
             const destination = audioContext.createMediaStreamDestination();
             source.connect(destination);
