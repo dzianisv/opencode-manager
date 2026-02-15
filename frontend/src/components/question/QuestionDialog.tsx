@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { HelpCircle, X, Send, Loader2 } from 'lucide-react'
 
 export function QuestionDialog() {
-  const { currentQuestion, respondToQuestion, rejectQuestion, pendingQuestions } = useQuestionContext()
+  const { currentQuestion, respondToQuestion, rejectQuestion, pendingQuestions, dismissDialog, isDialogDismissed } = useQuestionContext()
   const [selectedAnswers, setSelectedAnswers] = useState<Map<number, string[]>>(new Map())
   const [customAnswers, setCustomAnswers] = useState<Map<number, string>>(new Map())
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -81,7 +81,7 @@ export function QuestionDialog() {
     }
   }, [currentQuestion, rejectQuestion])
 
-  if (!currentQuestion) {
+  if (!currentQuestion || isDialogDismissed) {
     return null
   }
 
@@ -98,7 +98,7 @@ export function QuestionDialog() {
               </span>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={handleReject} disabled={isSubmitting}>
+          <Button variant="ghost" size="sm" onClick={dismissDialog} disabled={isSubmitting} title="Dismiss dialog (answer inline instead)">
             <X className="h-4 w-4" />
           </Button>
         </div>

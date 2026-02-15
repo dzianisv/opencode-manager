@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { components } from '@/api/opencode-types'
 import { useSettings } from '@/hooks/useSettings'
 import { useUserBash } from '@/stores/userBashStore'
 import { usePermissionContext } from '@/contexts/PermissionContext'
+import { useQuestionContext } from '@/contexts/QuestionContext'
 import { detectFileReferences } from '@/lib/fileReferences'
-import { ExternalLink, Loader2, HelpCircle } from 'lucide-react'
+import { ExternalLink, Loader2, HelpCircle, Send, SkipForward, CheckCircle2 } from 'lucide-react'
 import { CopyButton } from '@/components/ui/copy-button'
 import { TodoListDisplay } from './TodoListDisplay'
 import { getToolSpecificRender } from './FileToolRender'
@@ -73,6 +74,7 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
   const { preferences } = useSettings()
   const { userBashCommands } = useUserBash()
   const { getPermissionForCallID } = usePermissionContext()
+  const { pendingQuestions, respondToQuestion, rejectQuestion } = useQuestionContext()
   const outputRef = useRef<HTMLDivElement>(null)
   const isUserBashCommand = part.tool === 'bash' &&
     part.state.status === 'completed' &&
@@ -84,6 +86,74 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
   const pendingPermission = getPermissionForCallID(part.callID, part.sessionID)
   const isWaitingPermission = part.state.status === 'running' && !!pendingPermission
   const isQuestionTool = part.tool === 'question'
+
+  const [selectedOptions, setSelectedOptions] = useState<Map<number, string[]>>(new Map())
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const matchingQuestion = useMemo(() => {
+    if (!isQuestionTool || part.state.status !== 'running') return null
+    return pendingQuestions.find((q) => q.tool?.callID === part.callID) ?? null
+  }, [isQuestionTool, part.state.status, part.callID, pendingQuestions])
+
+  const handleOptionClick = useCallback((questionIndex: number, label: string, multiple: boolean) => {
+    setSelectedOptions((prev) => {
+      const current = prev.get(questionIndex) ?? []
+      if (multiple) {
+        if (current.includes(label)) {
+          return new Map(prev).set(questionIndex, current.filter((l) => l !== label))
+        }
+        return new Map(prev).set(questionIndex, [...current, label])
+      }
+      return new Map(prev).set(questionIndex, [label])
+    })
+  }, [])
+
+  const handleQuestionSubmit = useCallback(async () => {
+    if (!matchingQuestion) return
+
+    const input = part.state.input as { questions?: Array<{ question: string; header: string; options?: Array<{ label: string; description?: string }>; multiple?: boolean }> } | undefined
+    const questions = input?.questions || []
+
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const answers: string[][] = questions.map((_, idx) => {
+        return selectedOptions.get(idx) ?? []
+      })
+
+      const hasAnyAnswer = answers.some((a) => a.length > 0)
+      if (!hasAnyAnswer) {
+        setSubmitError('Please select at least one option')
+        setIsSubmitting(false)
+        return
+      }
+
+      await respondToQuestion(matchingQuestion.id, answers)
+      setSelectedOptions(new Map())
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to submit answer')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [matchingQuestion, part.state.input, selectedOptions, respondToQuestion])
+
+  const handleQuestionReject = useCallback(async () => {
+    if (!matchingQuestion) return
+
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      await rejectQuestion(matchingQuestion.id)
+      setSelectedOptions(new Map())
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to skip question')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [matchingQuestion, rejectQuestion])
 
   useEffect(() => {
     if (part.tool === 'bash' && expanded && outputRef.current) {
@@ -229,16 +299,20 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
   }
 
   if (isQuestionTool) {
-    const input = part.state.input as { questions?: Array<{ question: string; header: string; options?: Array<{ label: string; description?: string }> }> } | undefined
+    const input = part.state.input as { questions?: Array<{ question: string; header: string; options?: Array<{ label: string; description?: string }>; multiple?: boolean; custom?: boolean }> } | undefined
     const questions = input?.questions || []
 
     if (part.state.status === 'running') {
+      const canAnswer = !!matchingQuestion
+
       return (
         <div className="my-2 border border-blue-500/50 rounded-lg overflow-hidden shadow-sm shadow-blue-500/10">
           <div className="px-4 py-2 bg-blue-500/10 flex items-center gap-2">
             <HelpCircle className="w-4 h-4 text-blue-500" />
             <span className="font-medium text-foreground">Question awaiting your answer</span>
-            <span className="text-xs text-blue-500 ml-auto">Click the dialog to respond</span>
+            {!canAnswer && (
+              <span className="text-xs text-muted-foreground ml-auto">Loading...</span>
+            )}
           </div>
           <div className="p-4 bg-card space-y-3">
             {questions.map((q, idx) => (
@@ -246,17 +320,75 @@ export function ToolCallPart({ part, onFileClick, onChildSessionClick }: ToolCal
                 <div className="text-sm text-muted-foreground">{q.header}</div>
                 <div className="text-foreground">{q.question}</div>
                 {q.options && q.options.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {q.options.map((opt, optIdx) => (
-                      <span key={optIdx} className="px-2 py-1 text-xs bg-muted rounded border border-border">
-                        {opt.label}
-                      </span>
-                    ))}
+                  <div className="space-y-1.5">
+                    {q.options.map((opt, optIdx) => {
+                      const isSelected = (selectedOptions.get(idx) ?? []).includes(opt.label)
+                      return (
+                        <button
+                          key={optIdx}
+                          type="button"
+                          disabled={!canAnswer || isSubmitting}
+                          onClick={() => handleOptionClick(idx, opt.label, q.multiple ?? false)}
+                          className={`w-full text-left px-3 py-2 rounded-md border text-sm transition-colors ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-500/10 text-foreground'
+                              : canAnswer
+                                ? 'border-border hover:border-blue-500/50 hover:bg-muted/50 text-foreground cursor-pointer'
+                                : 'border-border text-muted-foreground opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-4 h-4 rounded-sm border flex items-center justify-center flex-shrink-0 ${
+                              isSelected ? 'bg-blue-500 border-blue-500' : 'border-muted-foreground/40'
+                            }`}>
+                              {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                            </div>
+                            <div>
+                              <span className="font-medium">{opt.label}</span>
+                              {opt.description && (
+                                <span className="text-muted-foreground ml-2">{opt.description}</span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
             ))}
+            {submitError && (
+              <div className="text-red-500 text-xs bg-red-500/10 px-2 py-1 rounded">{submitError}</div>
+            )}
           </div>
+          {canAnswer && (
+            <div className="flex justify-end gap-2 px-4 py-2 border-t border-border bg-card">
+              <button
+                type="button"
+                onClick={handleQuestionReject}
+                disabled={isSubmitting}
+                className="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-muted/50 text-muted-foreground transition-colors disabled:opacity-50"
+              >
+                <span className="flex items-center gap-1">
+                  <SkipForward className="w-3 h-3" />
+                  Skip
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={handleQuestionSubmit}
+                disabled={isSubmitting}
+                className="px-3 py-1.5 text-xs bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center gap-1"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Send className="w-3 h-3" />
+                )}
+                Submit
+              </button>
+            </div>
+          )}
         </div>
       )
     }

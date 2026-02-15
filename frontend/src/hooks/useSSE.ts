@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useOpenCodeClient } from './useOpenCode'
 import type { SSEEvent, MessageListResponse } from '@/api/types'
 import { permissionEvents } from './usePermissionRequests'
+import { questionEvents } from '@/contexts/QuestionContext'
 import { showToast } from '@/lib/toast'
 import { settingsApi } from '@/api/settings'
 import { useSessionStatus } from '@/stores/sessionStatusStore'
@@ -352,6 +353,12 @@ export const useSSE = (opcodeUrl: string | null | undefined, directory?: string)
               },
               duration: 10000,
             })
+          }
+          break
+
+        case 'question.asked':
+          if ('id' in event.properties && 'sessionID' in event.properties && 'questions' in event.properties) {
+            questionEvents.emit(event.properties as Parameters<typeof questionEvents.emit>[0])
           }
           break
 

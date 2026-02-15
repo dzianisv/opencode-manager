@@ -116,6 +116,42 @@ export interface SSEInstallationUpdateAvailableEvent {
   }
 }
 
+export interface SSEQuestionAskedEvent {
+  type: 'question.asked'
+  properties: {
+    id: string
+    sessionID: string
+    directory?: string
+    questions: Array<{
+      question: string
+      header: string
+      options: Array<{ label: string; description: string }>
+      multiple?: boolean
+      custom?: boolean
+    }>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
+export interface SSEQuestionRepliedEvent {
+  type: 'question.replied'
+  properties: {
+    sessionID: string
+    requestID: string
+  }
+}
+
+export interface SSEQuestionRejectedEvent {
+  type: 'question.rejected'
+  properties: {
+    sessionID: string
+    requestID: string
+  }
+}
+
 export interface SSESessionIdleEvent {
   type: 'session.idle'
   properties: {
@@ -155,6 +191,9 @@ export type SSEEvent =
   | SSEPermissionRepliedEvent
   | SSEInstallationUpdatedEvent
   | SSEInstallationUpdateAvailableEvent
+  | SSEQuestionAskedEvent
+  | SSEQuestionRepliedEvent
+  | SSEQuestionRejectedEvent
 
 export type ContentPart = 
   | { type: 'text', content: string }
