@@ -86,10 +86,15 @@ export class SettingsService {
     userId: string = 'default'
   ): SettingsResponse {
     const current = this.getSettings(userId)
-    const merged: UserPreferences = {
-      ...current.preferences,
-      ...updates,
+
+    const nestedKeys = ['tts', 'stt', 'talkMode', 'notifications', 'sessionPrune'] as const
+    const deepMerged: Record<string, unknown> = { ...current.preferences, ...updates }
+    for (const key of nestedKeys) {
+      if (updates[key] !== undefined && current.preferences[key] !== undefined) {
+        deepMerged[key] = { ...current.preferences[key], ...updates[key] }
+      }
     }
+    const merged = deepMerged as UserPreferences
 
     const validated = UserPreferencesSchema.parse(merged)
     const updatedAt = Date.now()

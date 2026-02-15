@@ -63,7 +63,7 @@ export function useStreamingVAD(options: UseStreamingVADOptions = {}): UseStream
 
     const audioBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' })
     
-    if (audioBlob.size < 1000) return
+    if (audioBlob.size < 100) return
 
     setIsProcessing(true)
 

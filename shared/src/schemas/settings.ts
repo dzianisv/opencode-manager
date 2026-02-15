@@ -186,7 +186,7 @@ export const UserPreferencesSchema = z.object({
 });
 
 export const DEFAULT_TTS_CONFIG: TTSConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'coqui',
   endpoint: "https://api.openai.com",
   apiKey: "",
@@ -203,7 +203,7 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
 };
 
 export const DEFAULT_STT_CONFIG: STTConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'faster-whisper',
   model: 'base',
   language: undefined,

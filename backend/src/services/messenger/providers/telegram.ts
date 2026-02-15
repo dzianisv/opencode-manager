@@ -143,7 +143,11 @@ export class TelegramProvider implements Channel {
   async stop(): Promise<void> {
     if (this.bot) {
       logger.info('Stopping Telegram bot...')
-      await this.bot.stop()
+      try {
+        await this.bot.stop()
+      } catch (err) {
+        logger.warn('Error during bot.stop():', err instanceof Error ? err.message : err)
+      }
       this.bot = null
       this.startedAt = null
       logger.info('Telegram bot stopped')
