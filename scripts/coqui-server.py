@@ -55,7 +55,7 @@ app = FastAPI(title="Coqui TTS Server", version="2.0.0")
 COQUI_PORT = int(os.environ.get("COQUI_PORT", "5554"))
 COQUI_HOST = os.environ.get("COQUI_HOST", "127.0.0.1")
 COQUI_DEVICE = os.environ.get("COQUI_DEVICE", "auto")
-COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/vctk/vits")
+COQUI_MODEL = os.environ.get("COQUI_MODEL", "tts_models/en/ljspeech/vits")
 
 # Global state
 model: Optional[TTS] = None
@@ -67,23 +67,23 @@ available_models_cache: List[Dict[str, Any]] = []
 # Curated list of high-quality TTS models
 RECOMMENDED_MODELS = [
     {
-        "id": "tts_models/en/vctk/vits",
-        "name": "VCTK VITS",
-        "description": "VCTK VITS (109 speakers, recommended)",
+        "id": "tts_models/en/ljspeech/vits",
+        "name": "LJSpeech VITS",
+        "description": "LJSpeech single speaker (recommended, low memory ~1-2GB)",
         "language": "en",
         "quality": "high",
         "speed": "fast",
-        "multi_speaker": True,
+        "multi_speaker": False,
         "recommended": True
     },
     {
-        "id": "tts_models/en/ljspeech/vits",
-        "name": "LJSpeech VITS",
-        "description": "LJSpeech single speaker",
+        "id": "tts_models/en/vctk/vits",
+        "name": "VCTK VITS",
+        "description": "VCTK VITS (109 speakers, ~9GB memory)",
         "language": "en",
         "quality": "high",
         "speed": "fast",
-        "multi_speaker": False
+        "multi_speaker": True
     },
     {
         "id": "tts_models/en/jenny/jenny",

@@ -168,9 +168,10 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 - **Dual Provider Support** - Browser-native Web Speech API + external OpenAI-compatible endpoints
 - **Browser-Native TTS** - Built-in Web Speech API for instant playback without API keys
 - **Coqui TTS with Multi-Model Support** - 7+ high-quality English voice models with runtime switching:
-  - VCTK VITS (109 multi-speaker voices, default — **p339**, soft American female)
+  - LJSpeech VITS (single speaker, female, **default** — low memory ~1-2GB)
+  - VCTK VITS (109 multi-speaker voices — ~9GB memory)
   - Jenny (single-speaker, fast)
-  - LJSpeech VITS, Tacotron2, Glow-TTS, FastPitch
+  - LJSpeech Tacotron2, Glow-TTS, FastPitch
   - XTTS v2 (multilingual voice cloning)
 - **17 American Female Voices** - Curated selection from the VCTK corpus with detailed metadata (region, age, vocal quality)
 - **AI Message Playback** - Listen to assistant responses with TTS
@@ -350,8 +351,8 @@ stt:
 tts:
   status: running
   provider: coqui
-  model: tts_models/en/vctk/vits
-  voice: p339
+  model: tts_models/en/ljspeech/vits
+  voice: default
 
 tunnel:
   status: connected

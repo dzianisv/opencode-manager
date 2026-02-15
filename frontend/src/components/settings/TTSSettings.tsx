@@ -635,7 +635,7 @@ export function TTSSettings() {
                   <div className="space-y-2">
                     <Label>TTS Model</Label>
                       <Combobox
-                        value={coquiModels?.currentModel || 'tts_models/en/vctk/vits'}
+                        value={coquiModels?.currentModel || 'tts_models/en/ljspeech/vits'}
                         onChange={(modelId) => {
                           if (modelId !== coquiModels?.currentModel) {
                             changeCoquiModelMutation.mutate(modelId)
