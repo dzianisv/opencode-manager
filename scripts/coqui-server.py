@@ -115,34 +115,57 @@ RECOMMENDED_MODELS = [
     }
 ]
 
-# Detailed metadata for popular VCTK speakers
+# Detailed metadata for VCTK speakers
+# Source: VCTK corpus speaker-info.txt (University of Edinburgh)
 VCTK_METADATA = {
-    "p226": {"gender": "Male", "accent": "English", "desc": "Clear, professional (recommended)"},
+    # British English speakers
     "p225": {"gender": "Female", "accent": "English", "desc": "Clear, neutral"},
+    "p226": {"gender": "Male", "accent": "English", "desc": "Clear, professional"},
     "p227": {"gender": "Male", "accent": "English", "desc": "Deep voice"},
     "p228": {"gender": "Female", "accent": "English", "desc": "Warm tone"},
     "p229": {"gender": "Female", "accent": "English", "desc": "Higher pitch"},
     "p230": {"gender": "Female", "accent": "English", "desc": "Soft voice"},
     "p231": {"gender": "Male", "accent": "English", "desc": "Standard"},
     "p232": {"gender": "Male", "accent": "English", "desc": "Casual"},
-    "p233": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
-    "p234": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
     "p236": {"gender": "Female", "accent": "English", "desc": "Professional"},
-    "p237": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
-    "p238": {"gender": "Female", "accent": "N. Irish", "desc": "Northern Irish"},
     "p239": {"gender": "Female", "accent": "English", "desc": "Young voice"},
     "p240": {"gender": "Female", "accent": "English", "desc": "Mature voice"},
-    "p241": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
     "p243": {"gender": "Male", "accent": "English", "desc": "Deep, authoritative"},
     "p244": {"gender": "Female", "accent": "English", "desc": "Bright voice"},
-    "p245": {"gender": "Male", "accent": "Irish", "desc": "Irish accent"},
+    "p250": {"gender": "Female", "accent": "English", "desc": "Standard"},
+    "p256": {"gender": "Male", "accent": "English", "desc": "Natural, clear"},
+    # Scottish speakers
+    "p233": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
+    "p234": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
+    "p237": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
+    "p241": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
     "p246": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
     "p247": {"gender": "Male", "accent": "Scottish", "desc": "Scottish accent"},
-    "p248": {"gender": "Female", "accent": "Indian", "desc": "Indian English"},
     "p249": {"gender": "Female", "accent": "Scottish", "desc": "Scottish accent"},
-    "p250": {"gender": "Female", "accent": "English", "desc": "Standard"},
+    # Irish speakers
+    "p238": {"gender": "Female", "accent": "N. Irish", "desc": "Northern Irish"},
+    "p245": {"gender": "Male", "accent": "Irish", "desc": "Irish accent"},
+    # Indian English speakers
+    "p248": {"gender": "Female", "accent": "Indian", "desc": "Indian English"},
     "p251": {"gender": "Male", "accent": "Indian", "desc": "Indian English"},
-    "p256": {"gender": "Male", "accent": "English", "desc": "Natural, clear (default)"},
+    # American female speakers
+    "p294": {"gender": "Female", "accent": "American", "desc": "San Francisco, age 33, mature"},
+    "p297": {"gender": "Female", "accent": "American", "desc": "New York, age 20, young"},
+    "p299": {"gender": "Female", "accent": "American", "desc": "California, age 25, soft"},
+    "p300": {"gender": "Female", "accent": "American", "desc": "California, age 23, relaxed"},
+    "p301": {"gender": "Female", "accent": "American", "desc": "North Carolina, age 23"},
+    "p305": {"gender": "Female", "accent": "American", "desc": "Philadelphia, age 19, young"},
+    "p306": {"gender": "Female", "accent": "American", "desc": "New York, age 21"},
+    "p308": {"gender": "Female", "accent": "American", "desc": "Alabama, age 18, Southern"},
+    "p310": {"gender": "Female", "accent": "American", "desc": "Tennessee, age 21, Southern"},
+    "p318": {"gender": "Female", "accent": "American", "desc": "Napa, age 32, mature California"},
+    "p329": {"gender": "Female", "accent": "American", "desc": "Age 23"},
+    "p330": {"gender": "Female", "accent": "American", "desc": "Age 26"},
+    "p333": {"gender": "Female", "accent": "American", "desc": "Indiana, age 19, young"},
+    "p339": {"gender": "Female", "accent": "American", "desc": "Pennsylvania, age 21, soft (default)"},
+    "p341": {"gender": "Female", "accent": "American", "desc": "Ohio, age 26"},
+    "p361": {"gender": "Female", "accent": "American", "desc": "New Jersey, age 19, young"},
+    "p362": {"gender": "Female", "accent": "American", "desc": "Age 29"},
 }
 
 
@@ -358,7 +381,7 @@ async def list_voices():
             
             if meta:
                 desc = f"{meta['desc']} ({meta['gender']}, {meta['accent']})"
-                is_recommended = speaker == "p226"
+                is_recommended = speaker == "p339"
             else:
                 desc = f"Speaker: {speaker}"
                 is_recommended = False
