@@ -168,10 +168,11 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 - **Dual Provider Support** - Browser-native Web Speech API + external OpenAI-compatible endpoints
 - **Browser-Native TTS** - Built-in Web Speech API for instant playback without API keys
 - **Coqui TTS with Multi-Model Support** - 7+ high-quality English voice models with runtime switching:
-  - Jenny (default, fastest)
+  - VCTK VITS (109 multi-speaker voices, default — **p339**, soft American female)
+  - Jenny (single-speaker, fast)
   - LJSpeech VITS, Tacotron2, Glow-TTS, FastPitch
-  - VCTK VITS (109 multi-speaker voices)
   - XTTS v2 (multilingual voice cloning)
+- **17 American Female Voices** - Curated selection from the VCTK corpus with detailed metadata (region, age, vocal quality)
 - **AI Message Playback** - Listen to assistant responses with TTS
 - **OpenAI-Compatible** - Works with any OpenAI-compatible TTS endpoint
 - **Voice & Speed Discovery** - Automatic voice detection with caching (1hr TTL)
@@ -180,6 +181,30 @@ We regularly sync our fork with upstream sst/opencode to incorporate new feature
 - **Markdown Sanitization** - Filters unreadable symbols for smooth playback
 - **Floating Controls** - Persistent stop button for audio control
 - **Custom Endpoints** - Connect to local or self-hosted TTS services
+
+**Available American Female Voices (VCTK model):**
+
+| Voice ID | Region | Age | Description |
+|----------|--------|-----|-------------|
+| **p339** (default) | Pennsylvania | 21 | Soft, warm tone |
+| p294 | San Francisco | 33 | Mature |
+| p297 | New York | 20 | Young |
+| p299 | California | 25 | Soft |
+| p300 | California | 23 | Relaxed |
+| p301 | North Carolina | 23 | — |
+| p305 | Philadelphia | 19 | Young |
+| p306 | New York | 21 | — |
+| p308 | Alabama | 18 | Southern |
+| p310 | Tennessee | 21 | Southern |
+| p318 | Napa | 32 | Mature California |
+| p329 | — | 23 | — |
+| p330 | — | 26 | — |
+| p333 | Indiana | 19 | Young |
+| p341 | Ohio | 26 | — |
+| p361 | New Jersey | 19 | Young |
+| p362 | — | 29 | — |
+
+The VCTK model also includes British, Scottish, Irish, and Indian English speakers (109 total). Change the voice in Settings → Voice → TTS Voice.
 
 ### Session Management
 - **Session Pruning** - Automatic cleanup of old sessions to save disk space
@@ -325,7 +350,8 @@ stt:
 tts:
   status: running
   provider: coqui
-  model: tts_models/en/jenny/jenny
+  model: tts_models/en/vctk/vits
+  voice: p339
 
 tunnel:
   status: connected
