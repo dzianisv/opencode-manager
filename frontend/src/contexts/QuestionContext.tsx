@@ -33,6 +33,8 @@ interface QuestionContextValue {
   rejectQuestion: (requestId: string) => Promise<void>
   addQuestion: (question: QuestionRequest) => void
   removeQuestion: (requestId: string) => void
+  dismissDialog: () => void
+  isDialogDismissed: boolean
 }
 
 const QuestionContext = createContext<QuestionContextValue | null>(null)
@@ -40,6 +42,7 @@ const QuestionContext = createContext<QuestionContextValue | null>(null)
 export function QuestionProvider({ children }: { children: React.ReactNode }) {
   const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([])
   const answeredRef = useRef<Set<string>>(new Set())
+  const [isDialogDismissed, setIsDialogDismissed] = useState(false)
 
   const currentQuestion = useMemo(() => {
     return pendingQuestions[0] ?? null
@@ -55,6 +58,7 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
       }
       return [...prev, question]
     })
+    setIsDialogDismissed(false)
   }, [])
 
   const removeQuestion = useCallback((requestId: string) => {
@@ -103,6 +107,10 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
     removeQuestion(requestId)
   }, [pendingQuestions, removeQuestion])
 
+  const dismissDialog = useCallback(() => {
+    setIsDialogDismissed(true)
+  }, [])
+
   useEffect(() => {
     const fetchPendingQuestions = async () => {
       try {
@@ -136,8 +144,10 @@ export function QuestionProvider({ children }: { children: React.ReactNode }) {
       rejectQuestion,
       addQuestion,
       removeQuestion,
+      dismissDialog,
+      isDialogDismissed,
     }),
-    [currentQuestion, pendingQuestions, respondToQuestion, rejectQuestion, addQuestion, removeQuestion]
+    [currentQuestion, pendingQuestions, respondToQuestion, rejectQuestion, addQuestion, removeQuestion, dismissDialog, isDialogDismissed]
   )
 
   return <QuestionContext.Provider value={value}>{children}</QuestionContext.Provider>
